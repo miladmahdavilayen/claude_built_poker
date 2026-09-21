@@ -242,9 +242,15 @@ export function TablePage(): React.JSX.Element {
             Verify hand fairness
           </a>
         )}
-        {state.betting.actingSeat !== null && (
-          <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
-        )}
+        {/* Always mounted — ActionTimer.tsx handles `deadline === null` itself
+            (fades out via CSS opacity, ticks nothing). Wrapping this in
+            `actingSeat !== null &&` here would unmount/remount the whole
+            component on every transition through a null actingSeat (a bot's
+            turn, or the brief gap between one action resolving and the next
+            actor being assigned), reproducing exactly the remount-flash bug
+            ActionTimer.tsx's own fix was written to eliminate — see its
+            doc comment and DECISIONS.md. */}
+        <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
         <DealAnimation events={sock.latestEvents} positions={positions} />
         <WinCelebration events={sock.latestEvents} positions={positions} viewerSeatId={state.viewerSeatId} />
         {state.phase !== 'in-hand' && (

@@ -1226,3 +1226,26 @@ on an iPhone in Safari" bucket:
   and `viewport-fit=cover` added to the viewport meta tag (without
   which `env(safe-area-inset-*)` resolves to `0` everywhere and does
   nothing).
+
+## The action-timer remount fix was real, but incomplete — its caller undid it
+
+`actionTimer.spec.ts` (the regression test written for the remount-flash
+fix documented above) passed locally every time but failed once on CI's
+Ubuntu runner, with the `MutationObserver` recording one real
+`.action-timer` removal during the hand. Not a flake to retry past —
+`ActionTimer.tsx` was fixed to never unmount itself (see its own doc
+comment: stays mounted, fades via CSS opacity when `deadline` is
+`null`), but `Table.tsx` was still wrapping it in `{state.betting.actingSeat
+!== null && <ActionTimer .../>}` — which unmounts the entire component,
+from the OUTSIDE, every time `actingSeat` passes through `null`. That's
+not just "between hands": it's also the brief gap between one player's
+action resolving and the next actor being assigned, a window a fast
+local machine's rendering can coalesce away (never actually painted as
+its own frame) but a slower CI runner does not.
+
+Fixed by always rendering `<ActionTimer>` unconditionally, letting its
+own `deadline === null` handling (already built for exactly this) do
+the hiding instead of the parent doing it by unmounting. General
+lesson: a component fixed to "never unmount itself" can still be
+unmounted by whoever renders it — the guard has to be removed at every
+level, not just the one that was visibly flashing.

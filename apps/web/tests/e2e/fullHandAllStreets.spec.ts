@@ -78,8 +78,16 @@ test('a full hand plays correctly through every street with real raises/bets, an
   // Both hole cards get revealed at a genuine showdown.
   await expect(page.locator('[data-testid="seat-1"] .card:not(.card-back)')).toHaveCount(2);
 
-  // Stacks actually moved — a real pot was won, not a no-op. Stack text
-  // has a cosmetic "$" prefix (see chips.ts's formatChips — DECISIONS.md).
+  // A real pot was settled, not a no-op — but NOT asserted as "the stack
+  // must differ from the 200 buy-in": a genuine chop (both players
+  // holding the same best five-card hand, e.g. both playing the board)
+  // is a real, not-rare outcome with random cards to a natural showdown,
+  // and legitimately returns the stack to exactly its starting value —
+  // see winCelebration.spec.ts's own note on this same class of bug in
+  // DECISIONS.md. The board reaching the river and both hole cards
+  // revealing above are already the load-bearing proof a real hand was
+  // played through bet/raise buttons to a genuine showdown, not a no-op;
+  // this just confirms the stack display itself rendered a real number.
   const stackText = await page.locator('[data-testid="seat-0"] .seat-stack').textContent();
-  expect(Number(stackText?.replace(/[$,]/g, ''))).not.toBe(200);
+  expect(Number(stackText?.replace(/[$,]/g, ''))).not.toBeNaN();
 });

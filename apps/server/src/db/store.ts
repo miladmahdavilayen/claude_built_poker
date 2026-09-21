@@ -124,6 +124,8 @@ export interface Store {
   adjustUserChips(userId: string, delta: number): Promise<UserRecord>;
   setUserRole(userId: string, role: 'player' | 'admin'): Promise<void>;
   updateDisplayName(userId: string, displayName: string): Promise<UserRecord>;
+  /** Used only by ensureAdminAccount (index.ts) to keep the owner's password in sync with ADMIN_PASSWORD on every boot — there's no "change my password" flow for a real account otherwise. */
+  updatePasswordHash(userId: string, passwordHash: string): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
 
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;

@@ -146,6 +146,14 @@ export class MemoryStore implements Store {
     return Promise.resolve(updated);
   }
 
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<UserRecord> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('USER_NOT_FOUND');
+    const updated: UserRecord = { ...user, passwordHash };
+    this.users.set(userId, updated);
+    return Promise.resolve(updated);
+  }
+
   async listUsers(): Promise<UserRecord[]> {
     return Promise.resolve([...this.users.values()]);
   }

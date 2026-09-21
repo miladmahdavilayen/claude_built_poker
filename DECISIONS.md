@@ -1404,3 +1404,30 @@ database directly, since nothing in the app itself exposes a "remove
 someone's admin role" affordance yet (`setUserRole` exists on the
 `Store` interface and is used internally, but isn't wired to any HTTP
 or socket route at all).
+
+## `ensureAdminAccount` also never actually rotated a password, once the account existed
+
+Same shape of bug as the `docker-compose.yml` one directly above,
+found immediately after fixing that one while actually trying to
+change a real deployment's admin password a second time: the
+account-already-exists branch only ever checked/fixed the `role`
+field, never the password. Changing `ADMIN_PASSWORD` and redeploying
+looked like the supported way to rotate it (that's the whole point of
+it being an env var), but silently did nothing once the account had
+already been created once — which, for a persistent Postgres-backed
+deployment, is every boot after the first.
+
+There's no other way to change a real (non-guest) account's password
+anywhere in this app — no "forgot password" flow, no "change password"
+settings page — so `ADMIN_PASSWORD` being the actual, always-honored
+source of truth for the owner's password matters more here than it
+would for a normal user account. Fixed by re-hashing and writing it on
+EVERY boot, not just at creation — added `updatePasswordHash` to the
+`Store` interface (same shape as `updateDisplayName`, added earlier
+for the same reason: no direct way to update a real account field
+existed yet), implemented in both `MemoryStore` and `DrizzleStore`.
+Re-hashing on every boot even when unchanged is a bit wasteful (one
+argon2 hash, once, at startup) but not worth optimizing away — boot
+time isn't a hot path, and comparing against the OLD hash to skip it
+would need a `verifyPassword` call anyway, no cheaper than just
+re-hashing.

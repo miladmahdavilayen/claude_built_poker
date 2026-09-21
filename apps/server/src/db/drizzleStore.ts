@@ -143,6 +143,12 @@ export class DrizzleStore implements Store {
     return toUserRecord(row);
   }
 
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<UserRecord> {
+    const [row] = await this.db.update(schema.users).set({ passwordHash }).where(eq(schema.users.id, userId)).returning();
+    if (!row) throw new Error('USER_NOT_FOUND');
+    return toUserRecord(row);
+  }
+
   async listUsers(): Promise<UserRecord[]> {
     const rows = await this.db.select().from(schema.users);
     return rows.map(toUserRecord);

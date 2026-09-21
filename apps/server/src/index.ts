@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { register } from './auth/authService.js';
+import { hashPassword } from './auth/passwords.js';
 import { closeDb, getDb } from './db/client.js';
 import { DrizzleStore } from './db/drizzleStore.js';
 import { MemoryStore } from './db/memoryStore.js';
@@ -67,6 +68,14 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
  * time for the in-memory store (nothing survives a restart there
  * anyway). Credentials are configurable via env vars so a real
  * deployment isn't stuck with a published default password.
+ *
+ * The password is re-synced to ADMIN_PASSWORD on EVERY boot too, not
+ * just checked at creation — there's no "change my password" UI for a
+ * real account anywhere in this app, so ADMIN_PASSWORD is the only way
+ * to rotate the owner's password at all. An earlier version only ever
+ * set it once at creation, silently leaving an old password in place
+ * forever after — changing the env var and redeploying looked like it
+ * should rotate the password but did nothing. See DECISIONS.md.
  */
 async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise<string> {
   const email = process.env.ADMIN_EMAIL ?? 'admin@pokerclause.local';
@@ -74,6 +83,7 @@ async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise
   const existing = await store.findUserByEmail(email);
   if (existing) {
     if (existing.role !== 'admin') await store.setUserRole(existing.id, 'admin');
+    await store.updatePasswordHash(existing.id, await hashPassword(password));
     return existing.id;
   }
   // Reuses the real registration path (not a hand-rolled duplicate of

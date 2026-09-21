@@ -49,6 +49,25 @@ jobs:
           path: apps/web/playwright-report/
           if-no-files-found: ignore
 
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint-typecheck-test, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH in and redeploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/pokerclause
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose up -d --build
+            docker image prune -f
+
   simulation-smoke:
     if: github.event_name != 'schedule'
     needs: lint-typecheck-test

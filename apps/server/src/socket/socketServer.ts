@@ -1,4 +1,5 @@
 import type { Server as HttpServer } from 'node:http';
+import type { GameEvent } from '@pokerclause/engine';
 import {
   AddBotSchema,
   AdminRebuySchema,
@@ -6,6 +7,7 @@ import {
   ChatMessageSchema,
   JoinTableSchema,
   PlayerActionIntentSchema,
+  projectEvent,
   RedeemAssignmentSchema,
   RemoveBotSchema,
   RtcSignalSchema,
@@ -34,6 +36,21 @@ function seatRoom(tableId: string, seatId: number): string {
 function spectatorRoom(tableId: string): string {
   return `table:${tableId}:spectators`;
 }
+/**
+ * Every admin socket joins this too (in ADDITION to its normal seat/
+ * spectator room — see join-table below, kept for everything ELSE room
+ * membership drives: voice signaling, eviction on reset, etc.) and gets
+ * its 'state' updates from here instead — a projection with
+ * `viewerIsAdmin: true` (owner-only `ownerNickname` fields included —
+ * see projection.ts). Every broadcast excludes this room from the
+ * regular seat/spectator emit via `.except(adminRoom(...))`
+ * specifically so the admin socket gets exactly ONE 'state' event per
+ * update, never two — see broadcastAdminView's own doc comment for why
+ * that mattered in practice, not just in theory.
+ */
+function adminRoom(tableId: string): string {
+  return `table:${tableId}:admin`;
+}
 
 /**
  * Moves every socket currently in a seat's room into the shared
@@ -56,20 +73,59 @@ function evictSeatToSpectator(io: Server, tableId: string, seatId: number): void
 const actionLimiter = new RateLimiter(10, 5); // 10 burst, 5/sec refill
 const chatLimiter = new RateLimiter(5, 1); // 5 burst, 1/sec refill
 
-export function attachSocketServer(httpServer: HttpServer, deps: { store: Store; corsOrigin: string }): { io: Server; registry: TableRegistry } {
+export function attachSocketServer(
+  httpServer: HttpServer,
+  deps: { store: Store; corsOrigin: string; adminUserId: string },
+): { io: Server; registry: TableRegistry } {
   const io = new Server(httpServer, {
     cors: { origin: deps.corsOrigin, credentials: true },
   });
 
-  const registry = new TableRegistry(deps.store, (tableId, perSeat) => {
+  const registry = new TableRegistry(deps.store, (tableId, perSeat, rawEvents) => {
     for (const [seatId, payload] of perSeat) {
       const room = seatId === null ? spectatorRoom(tableId) : seatRoom(tableId, seatId);
-      io.to(room).emit('state', { state: payload.state, events: payload.events });
+      // .except(adminRoom) — see broadcastAdminView's doc comment for why
+      // the admin socket must never receive BOTH this emit and that one
+      // for the same update.
+      io.to(room).except(adminRoom(tableId)).emit('state', { state: payload.state, events: payload.events });
     }
     // Deliberately no auto-continuation into the next hand once phase
     // becomes 'hand-complete' — every hand, including the next one, waits
     // for an explicit 'start-hand' from a seated player. See DECISIONS.md.
+    const table = registry.get(tableId);
+    if (table) broadcastAdminView(table, rawEvents);
   });
+
+  /**
+   * The admin socket's ONLY 'state' event for a given update — never a
+   * second one alongside the regular seat/spectator broadcast (both
+   * `broadcastTable` and the callback above exclude `adminRoom` from
+   * their own `io.to(...)` via `.except()`, specifically so this is the
+   * only place admin ever gets one). Two emissions per update for the
+   * same socket looked harmless (a persistent `.on('state', ...)`
+   * listener just re-renders twice, second one winning) but was a real
+   * bug for anything using a ONE-SHOT listener assuming exactly one
+   * event per action — a leftover second event from the PREVIOUS action
+   * could get consumed by a `.once()` registered for the NEXT one. Found
+   * via real flakiness in socketServer.test.ts, not by inspection — see
+   * DECISIONS.md.
+   *
+   * `rawEvents` (only ever non-empty from the hand-driven callback above
+   * — take-seat/add-bot/etc. never carry real game events, same as
+   * their own regular broadcast) gets redacted for the admin's own
+   * seat the exact same way `perSeat`'s entries already are for every
+   * other viewer — via `projectEvent`. Skipping this and hardcoding
+   * `events: []` here was a real bug: it's what the client's deal/chip/
+   * win animations are driven by, so the admin socket went from
+   * "receives them via the regular broadcast it used to also get" to
+   * "never receives them at all" the moment `.except(adminRoom)` above
+   * stopped that regular broadcast from reaching it too.
+   */
+  function broadcastAdminView(table: LiveTable, rawEvents: readonly GameEvent[] = []): void {
+    const adminSeatId = table.seatOfUser(deps.adminUserId);
+    const events = rawEvents.flatMap((e) => projectEvent(e, adminSeatId));
+    io.to(adminRoom(table.tableId)).emit('state', { state: table.projectionFor(adminSeatId, true), events });
+  }
 
   /**
    * Terminates a table for good — notifies everyone still connected to
@@ -103,8 +159,9 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
   function broadcastTable(table: LiveTable): void {
     for (const viewer of [...table.seats.filter((s) => s.userId !== null).map((s) => s.seatId), null]) {
       const room = viewer === null ? spectatorRoom(table.tableId) : seatRoom(table.tableId, viewer);
-      io.to(room).emit('state', { state: table.projectionFor(viewer), events: [] });
+      io.to(room).except(adminRoom(table.tableId)).emit('state', { state: table.projectionFor(viewer), events: [] });
     }
+    broadcastAdminView(table);
   }
 
   /**
@@ -120,12 +177,19 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
     userId: string,
     seatId: number,
     buyIn: number,
+    ownerNickname: string | null = null,
   ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
     const user = await deps.store.findUserById(userId);
     if (!user) return { ok: false, code: 'USER_NOT_FOUND', message: 'User not found.' };
     if (user.chips < buyIn) return { ok: false, code: 'INSUFFICIENT_CHIPS', message: 'Not enough chips for that buy-in.' };
     try {
-      table.takeSeat(seatId, user.id, { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed }, buyIn);
+      table.takeSeat(
+        seatId,
+        user.id,
+        { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed },
+        buyIn,
+        ownerNickname,
+      );
     } catch (err) {
       return { ok: false, code: 'SEAT_TAKEN', message: err instanceof Error ? err.message : 'Seat unavailable.' };
     }
@@ -213,6 +277,9 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
 
       joinedTableId = table.tableId;
       void socket.join(seatId !== null ? seatRoom(table.tableId, seatId) : spectatorRoom(table.tableId));
+      // Stays joined for the lifetime of this connection regardless of
+      // later seat changes — see adminRoom's own doc comment.
+      if (data.role === 'admin') void socket.join(adminRoom(table.tableId));
       if (data.userId) table.setConnected(data.userId, true);
 
       // An authenticated join flips this seat/viewer's connection status,
@@ -276,7 +343,7 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       const redeemed = table.redeemSeatAssignment(parsed.data.token);
       if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
       const userId = data.userId;
-      void performTakeSeat(table, socket, userId, redeemed.seatId, redeemed.buyIn).then((result) => {
+      void performTakeSeat(table, socket, userId, redeemed.seatId, redeemed.buyIn, redeemed.ownerNickname).then((result) => {
         if (!result.ok) emitError(result.code, result.message);
       });
     });
@@ -293,7 +360,7 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
         callback?.({ ok: false, code: 'INVALID_PAYLOAD', message: 'Malformed assign-seat payload.' });
         return;
       }
-      const result = table.createSeatAssignment(parsed.data.seatId, parsed.data.buyIn);
+      const result = table.createSeatAssignment(parsed.data.seatId, parsed.data.buyIn, parsed.data.nickname?.trim() || null);
       callback?.(result);
     });
 

@@ -67,6 +67,8 @@ export interface LiveSeat {
   sittingOutRequested: boolean;
   /** Non-null for a computer player — see `addBot`. Never has a real `userId`. */
   botPolicyName: string | null;
+  /** Owner-private label given to this seat's invite link at creation time — see createSeatAssignment. Never shown to anyone but the owner (see projection.ts's viewerIsAdmin gate). */
+  ownerNickname: string | null;
 }
 
 interface PendingActionLogEntry {
@@ -86,7 +88,8 @@ export interface BroadcastPayload {
 }
 
 export interface LiveTableCallbacks {
-  onBroadcast: (tableId: string, perSeat: Map<number | null, BroadcastPayload>) => void;
+  /** `rawEvents` — the un-redacted events for this one broadcast — is passed alongside `perSeat` so a caller can compute its OWN projection for a viewer not already covered by `perSeat` (see socketServer.ts's broadcastAdminView). `perSeat`'s own `events` are already correctly redacted per viewer; this is purely an escape hatch for that one extra case. */
+  onBroadcast: (tableId: string, perSeat: Map<number | null, BroadcastPayload>, rawEvents: readonly GameEvent[]) => void;
   onChipsSettled: (userId: string, delta: number) => Promise<void>;
   now: () => number;
 }
@@ -111,7 +114,7 @@ export class LiveTable {
   private clockTimer: ReturnType<typeof setTimeout> | null = null;
   private waitlist: WaitlistEntry[] = [];
   /** token -> pending owner-generated seat assignment. See createSeatAssignment/redeemSeatAssignment. */
-  private readonly seatAssignments = new Map<string, { seatId: number; buyIn: number }>();
+  private readonly seatAssignments = new Map<string, { seatId: number; buyIn: number; ownerNickname: string | null }>();
   private botMoveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly botRng: RandomSource = cryptoSource();
   private readonly botPolicies = new Map<string, BotPolicy>(SELECTABLE_BOT_POLICIES.map((p) => [p.name, p]));
@@ -158,6 +161,7 @@ export class LiveTable {
       consecutiveTimeouts: 0,
       sittingOutRequested: false,
       botPolicyName: null,
+      ownerNickname: null,
     };
   }
 
@@ -165,8 +169,14 @@ export class LiveTable {
     return this.seats.find((s) => s.userId === userId)?.seatId ?? null;
   }
 
-  /** Seat a player (must be an empty seat) with a buy-in, deducted from their chip balance by the caller before this is invoked. */
-  takeSeat(seatId: number, userId: string, meta: { displayName: string; isGuest: boolean; avatarSeed: string; clientSeed: string }, buyIn: number): void {
+  /** Seat a player (must be an empty seat) with a buy-in, deducted from their chip balance by the caller before this is invoked. `ownerNickname` carries over from the invite link that seated them, if any (see redeemSeatAssignment) — never set for the owner seating themselves directly. */
+  takeSeat(
+    seatId: number,
+    userId: string,
+    meta: { displayName: string; isGuest: boolean; avatarSeed: string; clientSeed: string },
+    buyIn: number,
+    ownerNickname: string | null = null,
+  ): void {
     const engineSeat = this.state.seats[seatId];
     if (!engineSeat || engineSeat.status !== 'empty') throw new Error('SEAT_TAKEN');
     const newEngineSeats = this.state.seats.map((s, i) =>
@@ -183,6 +193,7 @@ export class LiveTable {
       avatarSeed: meta.avatarSeed,
       clientSeed: meta.clientSeed,
       isConnected: true,
+      ownerNickname,
     };
     this.removeFromWaitlist(userId);
   }
@@ -196,19 +207,25 @@ export class LiveTable {
    * everything else about a live table (no DB row — these don't need to
    * survive a restart any more than an in-progress hand does).
    */
-  createSeatAssignment(seatId: number, buyIn: number): { ok: true; token: string } | { ok: false; code: string; message: string } {
+  createSeatAssignment(
+    seatId: number,
+    buyIn: number,
+    ownerNickname: string | null = null,
+  ): { ok: true; token: string } | { ok: false; code: string; message: string } {
     const engineSeat = this.state.seats[seatId];
     if (!engineSeat || engineSeat.status !== 'empty') return { ok: false, code: 'SEAT_TAKEN', message: 'That seat is not empty.' };
     if (buyIn < this.settings.minBuyIn || buyIn > this.settings.maxBuyIn) {
       return { ok: false, code: 'BUY_IN_OUT_OF_RANGE', message: `Buy-in must be between ${String(this.settings.minBuyIn)} and ${String(this.settings.maxBuyIn)}.` };
     }
     const token = randomUUID();
-    this.seatAssignments.set(token, { seatId, buyIn });
+    this.seatAssignments.set(token, { seatId, buyIn, ownerNickname });
     return { ok: true, token };
   }
 
-  /** Validates and consumes a seat-assignment token — the caller (socketServer.ts) still does the actual takeSeat + chip-ledger work, exactly like a normal take-seat, just sourcing seatId/buyIn from here instead of the client's own say-so. */
-  redeemSeatAssignment(token: string): { ok: true; seatId: number; buyIn: number } | { ok: false; code: string; message: string } {
+  /** Validates and consumes a seat-assignment token — the caller (socketServer.ts) still does the actual takeSeat + chip-ledger work, exactly like a normal take-seat, just sourcing seatId/buyIn/ownerNickname from here instead of the client's own say-so. */
+  redeemSeatAssignment(
+    token: string,
+  ): { ok: true; seatId: number; buyIn: number; ownerNickname: string | null } | { ok: false; code: string; message: string } {
     const assignment = this.seatAssignments.get(token);
     if (!assignment) return { ok: false, code: 'INVALID_ASSIGNMENT', message: 'This invite link is invalid or has already been used.' };
     const engineSeat = this.state.seats[assignment.seatId];
@@ -217,7 +234,7 @@ export class LiveTable {
       return { ok: false, code: 'SEAT_TAKEN', message: 'That seat was taken before this link was used.' };
     }
     this.seatAssignments.delete(token);
-    return { ok: true, seatId: assignment.seatId, buyIn: assignment.buyIn };
+    return { ok: true, seatId: assignment.seatId, buyIn: assignment.buyIn, ownerNickname: assignment.ownerNickname };
   }
 
   /**
@@ -731,6 +748,7 @@ export class LiveTable {
         lastAction: s.lastAction,
         timeBankMs: s.timeBankMsRemaining,
         isBot: s.botPolicyName !== null,
+        ownerNickname: s.ownerNickname,
       });
     }
     return map;
@@ -740,7 +758,8 @@ export class LiveTable {
     return this.currentHandId;
   }
 
-  projectionFor(viewerSeatId: number | null): ProjectedTableState {
+  /** `viewerIsAdmin` reveals every seat's `ownerNickname` — see projectStateForSeat's own doc comment. Only ever passed `true` for the owner's own dedicated broadcast (adminRoom in socketServer.ts). */
+  projectionFor(viewerSeatId: number | null, viewerIsAdmin = false): ProjectedTableState {
     return projectStateForSeat(
       this.state,
       {
@@ -756,6 +775,7 @@ export class LiveTable {
         rakePot: 0,
       },
       viewerSeatId,
+      viewerIsAdmin,
     );
   }
 
@@ -769,7 +789,7 @@ export class LiveTable {
         events: events.flatMap((e) => projectEvent(e, viewer)),
       });
     }
-    this.callbacks.onBroadcast(this.tableId, perSeat);
+    this.callbacks.onBroadcast(this.tableId, perSeat, events);
   }
 
   dispose(): void {

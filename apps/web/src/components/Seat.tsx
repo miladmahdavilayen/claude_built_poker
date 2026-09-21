@@ -121,6 +121,12 @@ export function Seat({
           </span>
           {!seat.isConnected && <span className="disconnected-dot" title="Disconnected" />}
           {seat.displayName ?? 'Player'}
+          {/* Server-redacted to null for every viewer except the owner themselves — see projection.ts's viewerIsAdmin gate — so this simply never renders for anyone else, no client-side role check needed. */}
+          {seat.ownerNickname && (
+            <span className="seat-owner-nickname" title="Only visible to you">
+              ({seat.ownerNickname})
+            </span>
+          )}
           {seat.isBot && <span className="seat-tag seat-tag-bot" title="Computer player">🤖 bot</span>}
           {inVoiceCall && !hasVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
           {seat.status === 'sitting-out' && <span className="seat-tag">sitting out</span>}

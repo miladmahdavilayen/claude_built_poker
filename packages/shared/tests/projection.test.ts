@@ -23,7 +23,7 @@ const SETTINGS: TableSettings = {
   disableChatInHand: false,
 };
 
-function seatMeta(seatId: number): SeatMeta {
+function seatMeta(seatId: number, ownerNickname: string | null = null): SeatMeta {
   return {
     playerId: `user-${String(seatId)}`,
     displayName: `Player${String(seatId)}`,
@@ -33,6 +33,7 @@ function seatMeta(seatId: number): SeatMeta {
     lastAction: null,
     timeBankMs: 60000,
     isBot: false,
+    ownerNickname,
   };
 }
 
@@ -178,5 +179,30 @@ describe('projectStateForSeat: the anti-cheat boundary', () => {
         expect(yours).toEqual({ type: 'your-cards', cards: own.cards });
       }
     }
+  });
+
+  it('ownerNickname is redacted to null for every viewer except viewerIsAdmin=true', () => {
+    const config = { smallBlind: 1, bigBlind: 2, ante: 0, maxSeats: 2, straddleEnabled: false };
+    const state = createTableState(config, [
+      { seatId: 0, playerId: 'A', stack: 100 },
+      { seatId: 1, playerId: 'B', stack: 100 },
+    ]);
+    const seatMetaMap = new Map<number, SeatMeta>([
+      [0, seatMeta(0, 'Dave from work')],
+      [1, seatMeta(1)],
+    ]);
+    const ctx: ProjectionContext = { ...makeContext(), seatMeta: seatMetaMap };
+
+    for (const viewer of [0, 1, null] as const) {
+      const projected = projectStateForSeat(state, ctx, viewer);
+      expect(projected.seats[0]!.ownerNickname).toBeNull();
+      // Belt and suspenders — the label itself never appears anywhere in the payload.
+      expect(JSON.stringify(projected).includes('Dave from work')).toBe(false);
+    }
+
+    // Only the owner's own dedicated projection includes it.
+    const adminProjected = projectStateForSeat(state, ctx, null, true);
+    expect(adminProjected.seats[0]!.ownerNickname).toBe('Dave from work');
+    expect(adminProjected.seats[1]!.ownerNickname).toBeNull();
   });
 });

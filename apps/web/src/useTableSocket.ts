@@ -50,7 +50,7 @@ export interface TableSocketApi {
   /** Owner-only (admin role) — rebuys a specific seat's occupant. Self-serve rebuy no longer exists. */
   adminRebuy: (seatId: number, amount: number) => void;
   /** Owner-only (admin role) — generates a one-time, seat-and-amount-specific invite link. */
-  assignSeat: (seatId: number, buyIn: number) => Promise<{ ok: true; token: string } | { ok: false; code: string; message: string }>;
+  assignSeat: (seatId: number, buyIn: number, nickname?: string) => Promise<{ ok: true; token: string } | { ok: false; code: string; message: string }>;
   /** Redeems an owner-generated invite link — the buy-in comes from the link itself. */
   redeemSeatAssignment: (token: string) => void;
 }
@@ -127,14 +127,16 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       terminateTable: () => new Promise<void>((resolve) => (socket ? socket.emit('terminate-table', () => resolve()) : resolve())),
       resetTable: () => new Promise<void>((resolve) => (socket ? socket.emit('reset-table', () => resolve()) : resolve())),
       adminRebuy: (seatId, amount) => socket?.emit('admin-rebuy', { seatId, amount }),
-      assignSeat: (seatId, buyIn) =>
+      assignSeat: (seatId, buyIn, nickname) =>
         new Promise((resolve) => {
           if (!socket) {
             resolve({ ok: false, code: 'NOT_CONNECTED', message: 'Not connected.' });
             return;
           }
-          socket.emit('assign-seat', { seatId, buyIn }, (result: { ok: true; token: string } | { ok: false; code: string; message: string }) =>
-            resolve(result),
+          socket.emit(
+            'assign-seat',
+            nickname ? { seatId, buyIn, nickname } : { seatId, buyIn },
+            (result: { ok: true; token: string } | { ok: false; code: string; message: string }) => resolve(result),
           );
         }),
       redeemSeatAssignment: (token) => socket?.emit('redeem-seat-assignment', { token }),

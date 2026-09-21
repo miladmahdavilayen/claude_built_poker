@@ -18,6 +18,7 @@ import { formatChips } from '../chips.js';
 import { computePositionLabels } from '../positionLabels.js';
 import { livePotTotal } from '../potTotal.js';
 import { seatPositions, seatSizeVars } from '../seatLayout.js';
+import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
@@ -30,6 +31,7 @@ export function TablePage(): React.JSX.Element {
   const { socket, connected } = useSocket(accessToken);
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
+  const immersive = useImmersiveMode();
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
   const [buyIn, setBuyIn] = useState(0);
@@ -44,6 +46,7 @@ export function TablePage(): React.JSX.Element {
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [assignModal, setAssignModal] = useState<number | null>(null);
   const [assignBuyIn, setAssignBuyIn] = useState(0);
+  const [assignNickname, setAssignNickname] = useState('');
   const [assignedLink, setAssignedLink] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
   const assignToken = searchParams.get('assign');
@@ -155,6 +158,7 @@ export function TablePage(): React.JSX.Element {
 
   const openAssignModal = (seatId: number): void => {
     setAssignBuyIn(state.settings.minBuyIn);
+    setAssignNickname('');
     setAssignedLink(null);
     setAssignError(null);
     setAssignModal(seatId);
@@ -163,7 +167,7 @@ export function TablePage(): React.JSX.Element {
   const confirmAssignSeat = (): void => {
     if (assignModal === null) return;
     setAssignError(null);
-    void sock.assignSeat(assignModal, assignBuyIn).then((result) => {
+    void sock.assignSeat(assignModal, assignBuyIn, assignNickname.trim() || undefined).then((result) => {
       if (!result.ok) {
         setAssignError(result.message);
         return;
@@ -178,7 +182,7 @@ export function TablePage(): React.JSX.Element {
   };
 
   return (
-    <div className="table-page">
+    <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
       <div className="table-header">
         <Link to="/lobby">&larr; Lobby</Link>
         <div className="table-header-name">
@@ -251,6 +255,14 @@ export function TablePage(): React.JSX.Element {
             ActionTimer.tsx's own fix was written to eliminate — see its
             doc comment and DECISIONS.md. */}
         <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
+        <button
+          type="button"
+          className="immersive-toggle"
+          onClick={immersive.toggle}
+          title={immersive.active ? 'Show the rest of the page' : 'Hide the rest of the page while playing'}
+        >
+          {immersive.active ? '⤡ Exit full screen' : '⛶ Full screen'}
+        </button>
         <DealAnimation events={sock.latestEvents} positions={positions} />
         <WinCelebration events={sock.latestEvents} positions={positions} viewerSeatId={state.viewerSeatId} />
         {state.phase !== 'in-hand' && (
@@ -447,6 +459,16 @@ export function TablePage(): React.JSX.Element {
             {!assignedLink ? (
               <>
                 <p>Generates a one-time link — whoever opens it is seated here with exactly this buy-in, no prompt shown to them.</p>
+                <label>
+                  Nickname (only visible to you)
+                  <input
+                    type="text"
+                    maxLength={40}
+                    placeholder="e.g. Dave from work"
+                    value={assignNickname}
+                    onChange={(e) => setAssignNickname(e.target.value)}
+                  />
+                </label>
                 <label>
                   Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
                   <input

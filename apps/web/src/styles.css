@@ -812,6 +812,39 @@ input[type='range']::-moz-range-thumb {
   font-family: ui-monospace, monospace;
 }
 
+/* See useImmersiveMode.ts's own doc comment for what this actually does
+   (and doesn't) hide on each platform. Bottom-left — the only felt
+   corner not already used by the fairness commitment (top-left), action
+   timer (top-right), or fairness-verify link (bottom-right). */
+.immersive-toggle {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  z-index: 4;
+  font-size: 11px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--muted);
+}
+.immersive-toggle:hover {
+  color: var(--text);
+}
+
+/* Everything but the felt and the action bar — see useImmersiveMode.ts. */
+.table-page.immersive .table-header,
+.table-page.immersive .voice-panel,
+.table-page.immersive .waitlist-panel,
+.table-page.immersive .bottom-tabs,
+.table-page.immersive .chat-panel,
+.table-page.immersive .action-log,
+.table-page.immersive .error-banner {
+  display: none;
+}
+.table-page.immersive .felt {
+  flex: 1;
+  margin: 8px;
+}
+
 .card {
   width: 38px;
   height: 54px;
@@ -977,6 +1010,14 @@ input[type='range']::-moz-range-thumb {
 .seat-stack {
   font-weight: 700;
   color: var(--accent);
+}
+/* Owner-only private label from an invite link — see Seat.tsx and
+   projection.ts's viewerIsAdmin gate. Muted/italic so it visually reads
+   as a private annotation, distinct from the player's own real name. */
+.seat-owner-nickname {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 400;
 }
 .seat-tag {
   font-size: 10px;

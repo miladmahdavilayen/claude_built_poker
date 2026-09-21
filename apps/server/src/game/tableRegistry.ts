@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { GameEvent } from '@pokerclause/engine';
 import type { TableSettings } from '@pokerclause/shared';
 import type { Store } from '../db/store.js';
 import { LiveTable, type BroadcastPayload } from './liveTable.js';
@@ -12,7 +13,7 @@ export interface TableSummary {
   isPrivate: boolean;
 }
 
-export type BroadcastHandler = (tableId: string, perSeat: Map<number | null, BroadcastPayload>) => void;
+export type BroadcastHandler = (tableId: string, perSeat: Map<number | null, BroadcastPayload>, rawEvents: readonly GameEvent[]) => void;
 
 /**
  * Holds every live table in-process. Single-node by design (see project

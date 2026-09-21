@@ -90,3 +90,48 @@ test('a fresh visitor (not yet signed in) opening an invite link lands directly 
   await ctxOwner.close();
   await ctxVisitor.close();
 });
+
+// Regression test: the owner can privately label an invite link (see
+// DECISIONS.md) — the label shows up next to the redeemer's own chosen
+// name, in parentheses, but ONLY on the owner's own view. This is
+// server-redacted (see projection.ts's viewerIsAdmin gate), not just
+// hidden in the UI, so this checks BOTH sides: the owner sees it, and
+// neither the redeemer nor an unrelated third player ever does.
+test("the owner's private nickname for an invite link shows only on the owner's own view", async ({ browser }) => {
+  const ctxOwner = await browser.newContext();
+  const ctxAlice = await browser.newContext();
+  const ctxBob = await browser.newContext();
+  const pageOwner = await ctxOwner.newPage();
+  const pageAlice = await ctxAlice.newPage();
+  const pageBob = await ctxBob.newPage();
+
+  await adminLogin(pageOwner);
+  await createTable(pageOwner, { name: 'Nickname Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  const tableUrl = pageOwner.url();
+
+  await guestSignup(pageAlice, 'Alice');
+  await pageAlice.goto(tableUrl);
+  await guestSignup(pageBob, 'Bob');
+  await pageBob.goto(tableUrl);
+
+  await inviteToSeat(pageOwner, pageAlice, 1, 100, 'Dave from work');
+
+  // The owner sees Alice's own chosen name, plus the private label in parentheses.
+  const ownerSeatName = pageOwner.locator('[data-testid="seat-1"] .seat-name');
+  await expect(ownerSeatName).toContainText('Alice');
+  await expect(ownerSeatName).toContainText('(Dave from work)');
+
+  // Alice sees her own name on her own seat, but never the owner's private label for it.
+  const aliceSeatName = pageAlice.locator('[data-testid="seat-1"] .seat-name');
+  await expect(aliceSeatName).toContainText('Alice');
+  await expect(aliceSeatName).not.toContainText('Dave from work');
+
+  // Neither does an unrelated third player.
+  const bobSeatName = pageBob.locator('[data-testid="seat-1"] .seat-name');
+  await expect(bobSeatName).toContainText('Alice');
+  await expect(bobSeatName).not.toContainText('Dave from work');
+
+  await ctxOwner.close();
+  await ctxAlice.close();
+  await ctxBob.close();
+});

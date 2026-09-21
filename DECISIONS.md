@@ -1311,3 +1311,66 @@ what polling happened to catch mid-hand) at all — the reliable check
 is the board's actual state once showdown is confirmed reached
 (`.board-cards .card:not(.card-placeholder)` should be 5 at that
 point), not a racy sample of the streets in between.
+
+## Owner-private seat nicknames: why they needed a THIRD room, not just a redacted field
+
+An invite link can carry a private label (e.g. "Dave from work") that
+shows next to the redeemer's own chosen display name, in parentheses,
+visible only to the owner — never the redeemer, never anyone else. The
+redaction itself is the easy, already-established part:
+`projectStateForSeat` gained a `viewerIsAdmin` parameter that forces
+`ownerNickname` to `null` on every seat unless it's `true`, the exact
+same shape as the existing `viewerSeatId` gate on hole cards.
+
+The hard part was routing that value to the right SOCKET at all. Every
+existing broadcast in this app fans out over exactly two kinds of
+room: one per occupied seat, and one shared `spectatorRoom` for
+everyone not seated. The owner, when not seated, shares that
+spectator room with every OTHER unseated visitor — there was no
+existing room that meant "just the owner," seated or not, to target an
+enriched payload at. Two options considered:
+
+1. Compute a per-SOCKET projection (via `fetchSockets()`, checking each
+   connected socket's own role) instead of per-room. Rejected: makes
+   every broadcast async and touches the hot path (every action in
+   every hand), for a feature only one socket in the whole app ever
+   needs.
+2. A new `adminRoom(tableId)`, joined once by any admin-role socket
+   alongside its normal seat/spectator room (never INSTEAD of — voice
+   signaling, reset-eviction, and everything else keyed off that
+   membership still needs it), that gets its own separately-computed
+   'state' emit — `table.projectionFor(adminSeatId, true)`. Chosen: the
+   admin's own userId is resolved ONCE at boot (`ensureAdminAccount` in
+   index.ts now returns it, threaded into `attachSocketServer` as
+   `deps.adminUserId`) rather than looked up per-broadcast, so this
+   adds one cheap extra `io.to(room).emit(...)` call per broadcast, no
+   new async path.
+
+**First version of this shipped with a real bug**, caught by
+`socketServer.test.ts` genuinely flaking (not by inspection): the
+regular per-seat/spectator emit still reached the admin's socket too
+(it's still a member of that room, on purpose — see above), so an
+admin who was ALSO seated received TWO 'state' events per update, not
+one. That looked harmless at first — the redacted one, then the
+enriched one strictly after, deterministic emit order within one
+synchronous function, enriched always "wins" as the final client
+state — and it IS harmless for the real app's persistent `.on('state',
+...)` listener (just one extra re-render). It is NOT harmless for
+anything using a ONE-SHOT listener assuming exactly one event per
+action: a test doing `await waitFor(socket, 'state')` (a `.once()`)
+right after one action, then registering a FRESH one for the next
+action, could have the fresh listener consume a STALE leftover event
+from the PREVIOUS action's now-doubled broadcast — which is exactly
+what happened (`isBot` intermittently read as `false` right after
+`add-bot`, because the consumed event was really the tail end of the
+PRIOR `take-seat` broadcast). Two 'state' events for one logical
+update is a real design smell regardless of whether anything downstream
+happens to tolerate it.
+
+Fixed properly, not worked around: Socket.IO's `.except(room)`
+excludes a room from a broadcast outright. Every regular per-seat/
+spectator emit is now `io.to(seatOrSpectatorRoom).except(adminRoom(tableId)).emit(...)`
+— the admin socket is structurally incapable of receiving that one at
+all, and gets exactly one 'state' event per update, always the
+enriched one, full stop. No event ordering to reason about, nothing
+for a `.once()` listener to race.

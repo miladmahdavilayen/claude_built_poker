@@ -47,6 +47,8 @@ export const AssignSeatSchema = z
   .object({
     seatId: z.number().int().min(0).max(8),
     buyIn: z.number().int().positive(),
+    /** Owner-private label for this invite (e.g. "Dave from work") — shown only to the owner, in parentheses next to the redeemer's own chosen display name. Never seen by anyone else. */
+    nickname: z.string().max(40).optional(),
   })
   .strict();
 export type AssignSeatIntent = z.infer<typeof AssignSeatSchema>;

@@ -39,6 +39,13 @@ export interface ProjectedSeat {
   timeBankMs: number;
   /** A computer player (see packages/sim's bot policies) — never a real user, never in the chip ledger. */
   isBot: boolean;
+  /**
+   * A private label the owner gave this seat's invite link when they
+   * generated it (e.g. "Dave from work") — ALWAYS `null` in every
+   * projection except the one sent to the owner's own admin room, same
+   * anti-cheat boundary as hole cards. See `projection.ts`.
+   */
+  ownerNickname: string | null;
 }
 
 /**

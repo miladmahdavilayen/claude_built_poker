@@ -256,6 +256,29 @@ Two real constraints worth knowing before you rely on it:
   `useVoiceChat.ts` would close that gap if it matters for your
   deployment.
 
+## Playing on a phone
+
+The felt itself is responsive and scales with how many seats a table
+has (a heads-up table gets noticeably bigger seats/cards than a 9-max
+one) — see `seatLayout.ts`'s `seatSizeVars()`. Two things specific to
+actually playing on a phone, iPhones in particular:
+
+- **The "⛶ Full screen" button** (bottom-left of the felt) hides this
+  app's own header/voice/waitlist/chat panels, leaving just the felt
+  and action bar. On desktop, Android, and iPad it also triggers the
+  browser's real Fullscreen API. On an iPhone specifically it can only
+  do the first part — iOS Safari doesn't support the Fullscreen API for
+  an arbitrary page element at all (only a `<video>` gets that), so
+  Safari's own address bar/tab UI stays put no matter what a web page
+  does.
+- **To actually get rid of Safari's own chrome on an iPhone**, the
+  visitor adds the site to their home screen (Share → Add to Home
+  Screen) and launches it from there — the `apple-mobile-web-app-
+  capable` meta tag in `index.html` is what makes that launch as a
+  genuine standalone window instead of a normal Safari tab. This is a
+  one-time action only the visitor can take; nothing server- or
+  code-side can trigger it automatically.
+
 ## Putting a real domain + HTTPS in front of a deployment
 
 `docker-compose.yml`'s `server`/`web`/`postgres`/`redis` ports are all

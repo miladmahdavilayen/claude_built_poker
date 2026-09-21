@@ -35,11 +35,18 @@ describe('socketServer: live signaling and access control', () => {
   let io: Server;
   let registry: TableRegistry;
   let baseUrl: string;
+  // Held by reference (not destructured) so a test can set `deps.adminUserId`
+  // AFTER attachSocketServer is already running — the real app resolves this
+  // once at boot (see index.ts's ensureAdminAccount), but here the admin
+  // account doesn't exist yet until a test calls makeAdminUser(), which is
+  // necessarily after this shared beforeEach already wired the server up.
+  let deps: { store: MemoryStore; corsOrigin: string; adminUserId: string };
 
   beforeEach(async () => {
     store = new MemoryStore();
     httpServer = createServer();
-    ({ io, registry } = attachSocketServer(httpServer, { store, corsOrigin: 'http://localhost:5173' }));
+    deps = { store, corsOrigin: 'http://localhost:5173', adminUserId: '' };
+    ({ io, registry } = attachSocketServer(httpServer, deps));
     await new Promise<void>((resolve) => httpServer.listen(0, resolve));
     const { port } = httpServer.address() as AddressInfo;
     baseUrl = `http://localhost:${String(port)}`;
@@ -62,6 +69,7 @@ describe('socketServer: live signaling and access control', () => {
     await store.setUserRole(created.id, 'admin');
     const user = await store.findUserById(created.id);
     if (!user) throw new Error('unreachable: just created');
+    deps.adminUserId = user.id; // see deps's own comment above — mirrors index.ts resolving this once at boot
     return { userId: user.id, token: issueAccessToken(user) };
   }
 
@@ -513,6 +521,49 @@ describe('socketServer: live signaling and access control', () => {
     adminSocket.close();
     aliceSocket.close();
     bobSocket.close();
+  });
+
+  it("assign-seat's nickname is visible only to the admin, never to the redeemer or a spectator", async () => {
+    const admin = await makeAdminUser('Owner');
+    const alice = await makeUser('Alice');
+    const table = await registry.createTable('Nickname Table', SETTINGS, null, null);
+
+    const adminSocket = connect(admin.token);
+    const aliceSocket = connect(alice.token);
+    const spectator = await makeUser('Spectator');
+    const spectatorSocket = connect(spectator.token);
+    await Promise.all([waitFor(adminSocket, 'connect'), waitFor(aliceSocket, 'connect'), waitFor(spectatorSocket, 'connect')]);
+    adminSocket.emit('join-table', { tableId: table.tableId });
+    aliceSocket.emit('join-table', { tableId: table.tableId });
+    spectatorSocket.emit('join-table', { tableId: table.tableId });
+    await Promise.all([waitFor(adminSocket, 'state'), waitFor(aliceSocket, 'state'), waitFor(spectatorSocket, 'state')]);
+
+    const token = await new Promise<string>((resolve) => {
+      adminSocket.emit('assign-seat', { seatId: 1, buyIn: 100, nickname: 'Dave from work' }, (result: { ok: true; token: string } | { ok: false }) => {
+        if (result.ok) resolve(result.token);
+      });
+    });
+
+    type SeatsPayload = { state: { seats: { seatId: number; ownerNickname: string | null }[] } };
+    // The admin socket is excluded from the regular spectator-room emit
+    // (`.except(adminRoom(...))`) specifically so it gets exactly ONE
+    // 'state' event per update, always the enriched one — see
+    // broadcastAdminView's doc comment for why a SECOND one here was a
+    // real bug, not just harmless. Alice and the plain spectator each
+    // get their own single, redacted one.
+    const adminStatePromise = waitFor<SeatsPayload>(adminSocket, 'state');
+    const aliceStatePromise = waitFor<SeatsPayload>(aliceSocket, 'state');
+    const spectatorStatePromise = waitFor<SeatsPayload>(spectatorSocket, 'state');
+    aliceSocket.emit('redeem-seat-assignment', { token });
+    const [adminState, aliceState, spectatorState] = await Promise.all([adminStatePromise, aliceStatePromise, spectatorStatePromise]);
+
+    expect(aliceState.state.seats.find((s) => s.seatId === 1)?.ownerNickname).toBeNull();
+    expect(spectatorState.state.seats.find((s) => s.seatId === 1)?.ownerNickname).toBeNull();
+    expect(adminState.state.seats.find((s) => s.seatId === 1)?.ownerNickname).toBe('Dave from work');
+
+    adminSocket.close();
+    aliceSocket.close();
+    spectatorSocket.close();
   });
 
   it('admin-rebuy tops up a specific seat, requires the admin role, and is capped at the table max buy-in', async () => {

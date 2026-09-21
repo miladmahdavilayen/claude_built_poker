@@ -12,6 +12,7 @@ export interface SeatMeta {
   lastAction: { type: string; amountTo?: number } | null;
   timeBankMs: number;
   isBot: boolean;
+  ownerNickname: string | null;
 }
 
 export interface ProjectionContext {
@@ -40,6 +41,7 @@ const EMPTY_SEAT_META: SeatMeta = {
   lastAction: null,
   timeBankMs: 0,
   isBot: false,
+  ownerNickname: null,
 };
 
 /**
@@ -50,8 +52,19 @@ const EMPTY_SEAT_META: SeatMeta = {
  * `legalActions` is only ever populated when it's genuinely this
  * viewer's own seat's turn. See `projection.test.ts` for the dedicated
  * leak assertion this function must satisfy.
+ *
+ * `viewerIsAdmin` gates `ownerNickname` the same way `viewerSeatId` gates
+ * hole cards — `false` (the default, used for every regular seat/
+ * spectator broadcast) forces every seat's `ownerNickname` to `null`
+ * regardless of what's actually stored; only the table owner's own
+ * dedicated broadcast (see `adminRoom` in socketServer.ts) passes `true`.
  */
-export function projectStateForSeat(state: TableState, ctx: ProjectionContext, viewerSeatId: number | null): ProjectedTableState {
+export function projectStateForSeat(
+  state: TableState,
+  ctx: ProjectionContext,
+  viewerSeatId: number | null,
+  viewerIsAdmin = false,
+): ProjectedTableState {
   const seats: ProjectedSeat[] = state.seats.map((s) => {
     const meta = ctx.seatMeta.get(s.seatId) ?? EMPTY_SEAT_META;
     const showRealCards = s.seatId === viewerSeatId || ctx.revealedSeatIds.has(s.seatId);
@@ -74,6 +87,7 @@ export function projectStateForSeat(state: TableState, ctx: ProjectionContext, v
       lastAction: meta.lastAction,
       timeBankMs: meta.timeBankMs,
       isBot: meta.isBot,
+      ownerNickname: viewerIsAdmin ? meta.ownerNickname : null,
     };
   });
 

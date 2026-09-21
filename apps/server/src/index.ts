@@ -68,13 +68,13 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
  * anyway). Credentials are configurable via env vars so a real
  * deployment isn't stuck with a published default password.
  */
-async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise<void> {
+async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise<string> {
   const email = process.env.ADMIN_EMAIL ?? 'admin@pokerclause.local';
   const password = process.env.ADMIN_PASSWORD ?? 'admin12345';
   const existing = await store.findUserByEmail(email);
   if (existing) {
     if (existing.role !== 'admin') await store.setUserRole(existing.id, 'admin');
-    return;
+    return existing.id;
   }
   // Reuses the real registration path (not a hand-rolled duplicate of
   // it) specifically so the owner account gets the same starting chip
@@ -86,6 +86,7 @@ async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise
   const result = await register(store, email, password, 'Owner');
   await store.setUserRole(result.user.id, 'admin');
   log.info(`Created owner/admin account: ${email} / ${password} (set ADMIN_EMAIL/ADMIN_PASSWORD to override).`);
+  return result.user.id;
 }
 
 async function main(): Promise<void> {
@@ -134,13 +135,13 @@ async function main(): Promise<void> {
     app.log.warn('DATABASE_URL not set — using in-memory storage. Data will NOT persist across restarts. Set DATABASE_URL for production use.');
   }
 
-  await ensureAdminAccount(store, app.log);
+  const adminUserId = await ensureAdminAccount(store, app.log);
 
   registerHealthRoute(app);
   registerAuthRoutes(app, store);
   registerFairnessRoutes(app, store);
 
-  const { io, registry } = attachSocketServer(app.server, { store, corsOrigin });
+  const { io, registry } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerTableRoutes(app, store, registry);
   registerAdminRoutes(app, store, registry);
 

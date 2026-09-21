@@ -85,8 +85,9 @@ export async function addBot(page: Page, seatId: number, persona: string, buyIn:
  * logged in as the owner; `targetPage` must already be signed in (e.g.
  * via `guestSignup`) but not yet on this table.
  */
-export async function inviteToSeat(ownerPage: Page, targetPage: Page, seatId: number, buyIn: number): Promise<void> {
+export async function inviteToSeat(ownerPage: Page, targetPage: Page, seatId: number, buyIn: number, nickname?: string): Promise<void> {
   await ownerPage.locator(`[data-testid="seat-${String(seatId)}"]`).getByText('+ Assign human').click();
+  if (nickname) await ownerPage.getByLabel('Nickname (only visible to you)').fill(nickname);
   await ownerPage.getByLabel(/Buy-in/).fill(String(buyIn));
   await ownerPage.getByRole('button', { name: 'Generate link' }).click();
   const link = await ownerPage.locator('.assign-link-input').inputValue();

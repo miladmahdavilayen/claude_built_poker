@@ -51,7 +51,7 @@ jobs:
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint-typecheck-test, e2e]
+    needs: [lint-typecheck-test, e2e, simulation-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: SSH in and redeploy
@@ -65,8 +65,29 @@ jobs:
             cd /opt/pokerclause
             git fetch origin main
             git reset --hard origin/main
-            docker compose up -d --build
+            # Build the new images WITHOUT starting them yet — a schema
+            # migration (if this release has one) needs to run against the
+            # NEW code before the server itself restarts, or it boots
+            # straight into "relation does not exist" and crash-loops
+            # (see DECISIONS.md — this happened on the very first manual
+            # deploy, before this pipeline existed).
+            docker compose build
+            docker compose run --rm server pnpm db:migrate
+            docker compose up -d
             docker image prune -f
+            # Fail the job loudly if the server didn't actually come back up
+            # healthy — a broken deploy should turn this run red, not look
+            # identical to a working one in the Actions UI.
+            for i in $(seq 1 15); do
+              if curl -sf http://127.0.0.1:4000/health > /dev/null; then
+                echo "Server healthy."
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "Server did not become healthy after deploy — logs:"
+            docker compose logs server --tail 50
+            exit 1
 
   simulation-smoke:
     if: github.event_name != 'schedule'

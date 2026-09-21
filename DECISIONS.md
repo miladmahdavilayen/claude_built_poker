@@ -1249,3 +1249,39 @@ the hiding instead of the parent doing it by unmounting. General
 lesson: a component fixed to "never unmount itself" can still be
 unmounted by whoever renders it — the guard has to be removed at every
 level, not just the one that was visibly flashing.
+
+## Continuous deployment: three gaps a first pass at "SSH in and restart" doesn't cover
+
+The first version of the `deploy` job in `ci.yml` did exactly what it
+sounds like it should: wait for CI to pass, SSH into the VPS, `git
+reset --hard origin/main`, `docker compose up -d --build`. That's
+enough for a pure code change, but three real gaps only showed up
+under closer audit (prompted by being asked directly "will this
+correctly apply and restart for any new release," which is a fair
+question a green checkmark alone doesn't answer):
+
+1. **It only waited on `lint-typecheck-test` and `e2e`, not
+   `simulation-smoke`.** A real game-logic bug caught by the
+   20,000-hand adversarial simulation wouldn't have blocked a deploy
+   at all — `needs` has to list every job whose failure should be a
+   hard stop, not just the obvious ones.
+2. **No DB migration step.** `docker compose up -d --build` rebuilds
+   and restarts the server on the NEW code, but a schema migration
+   that new code depends on never runs on its own — this is exactly
+   the "relation 'users' does not exist" crash loop hit manually on
+   this deployment's very first boot (before this pipeline existed),
+   just now with nobody watching when it happens automatically. Fixed
+   by splitting `up -d --build` into `docker compose build` (new
+   images, nothing started yet) → `docker compose run --rm server
+   pnpm db:migrate` (runs on the NEW code, against Postgres, which
+   doesn't need rebuilding) → `docker compose up -d` (restart
+   everything now that the schema's caught up).
+3. **No verification the server actually came back up.** The SSH
+   command returning success only means the `docker compose` commands
+   themselves didn't error — a container that starts fine and then
+   crash-loops a second later (again, exactly the migration scenario
+   above) would leave the GitHub Actions run green regardless. Fixed
+   with a short poll of `/health` after the restart, printing the
+   server's own logs and exiting non-zero if it never comes up —
+   a broken release should turn the Actions run red, not look
+   identical to a working one.

@@ -1,5 +1,6 @@
 import type { ProjectedSeat } from '@pokerclause/shared';
 import { avatarHue } from '../avatarColor.js';
+import { formatChips } from '../chips.js';
 import { PlayingCard } from './PlayingCard.js';
 import { StreamMedia } from './StreamMedia.js';
 
@@ -13,9 +14,9 @@ function describeAction(action: { type: string; amountTo?: number } | null): str
     case 'call':
       return 'Call';
     case 'bet':
-      return `Bet ${String(action.amountTo ?? '')}`;
+      return `Bet ${action.amountTo !== undefined ? formatChips(action.amountTo) : ''}`;
     case 'raise':
-      return `Raise to ${String(action.amountTo ?? '')}`;
+      return `Raise to ${action.amountTo !== undefined ? formatChips(action.amountTo) : ''}`;
     default:
       return action.type;
   }
@@ -32,20 +33,32 @@ export function Seat({
   isActing,
   isViewer,
   positionLabel,
+  showCards,
   voice,
   onEmptySeatClick,
   onAddBotClick,
   onRemoveBotClick,
+  onAssignHumanClick,
+  onRebuyClick,
 }: {
   seat: ProjectedSeat;
   isButton: boolean;
   isActing: boolean;
   isViewer: boolean;
   positionLabel?: string | undefined;
+  /** False before this table's very first hand has ever been dealt — an occupied seat shouldn't show placeholder card-backs for a hand that hasn't started. */
+  showCards: boolean;
   voice?: SeatVoiceStream | null | undefined;
+  /** Owner-only — self-serve seating no longer exists (see DECISIONS.md); this lets the owner seat THEMSELVES directly. */
   onEmptySeatClick?: (() => void) | undefined;
+  /** Owner-only. */
   onAddBotClick?: (() => void) | undefined;
+  /** Owner-only. */
   onRemoveBotClick?: (() => void) | undefined;
+  /** Owner-only — generates a one-time invite link for a human to redeem into this exact seat. */
+  onAssignHumanClick?: (() => void) | undefined;
+  /** Owner-only — rebuys THIS seat's occupant (a human, not a bot). Self-serve rebuy no longer exists. */
+  onRebuyClick?: (() => void) | undefined;
 }): React.JSX.Element {
   // `status === 'empty'` is the authoritative "is this seat occupied?"
   // signal from the engine. `playerId` is NOT a reliable proxy for that —
@@ -67,7 +80,12 @@ export function Seat({
             + Add bot
           </span>
         )}
-        {!onEmptySeatClick && !onAddBotClick && <span className="seat-empty-label">Empty</span>}
+        {onAssignHumanClick && (
+          <span className="seat-empty-action seat-empty-action-assign" onClick={onAssignHumanClick} role="button">
+            + Assign human
+          </span>
+        )}
+        {!onEmptySeatClick && !onAddBotClick && !onAssignHumanClick && <span className="seat-empty-label">Empty</span>}
       </div>
     );
   }
@@ -87,10 +105,12 @@ export function Seat({
         </div>
       )}
       {voice && !hasVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />}
-      <div className="seat-cards">
-        <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} />
-        <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
-      </div>
+      {showCards && (
+        <div className="seat-cards">
+          <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} />
+          <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
+        </div>
+      )}
       <div className="seat-info">
         <div className="seat-name">
           <span
@@ -106,11 +126,16 @@ export function Seat({
           {seat.status === 'sitting-out' && <span className="seat-tag">sitting out</span>}
           {seat.status === 'all-in' && <span className="seat-tag seat-tag-allin">all-in</span>}
         </div>
-        <div className="seat-stack">{seat.stack.toLocaleString()}</div>
+        <div className="seat-stack">{formatChips(seat.stack)}</div>
         {/* The current-street bet itself renders as chip visuals on the felt, in front of the seat (see Table.tsx's bet-chips-slot) — not duplicated as plain text here. */}
         {seat.isBot && onRemoveBotClick && (
           <button type="button" className="seat-remove-bot" onClick={onRemoveBotClick}>
             Remove
+          </button>
+        )}
+        {!seat.isBot && onRebuyClick && (
+          <button type="button" className="seat-remove-bot" onClick={onRebuyClick}>
+            Rebuy
           </button>
         )}
       </div>

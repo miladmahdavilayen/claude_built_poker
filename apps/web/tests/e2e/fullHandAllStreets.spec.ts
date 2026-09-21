@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, takeSeat } from './helpers.js';
+import { adminLogin, createTable, startHand, takeSeat } from './helpers.js';
 
 // Regression test for a full hand driven by real bets/raises, not just
 // checks/calls — the existing gameplay.spec.ts only ever exercises
@@ -8,7 +8,8 @@ import { createTable, guestSignup, takeSeat } from './helpers.js';
 // bug). Asserts the board genuinely progresses preflop → flop → turn →
 // river → showdown, with the human betting on every street it's free to.
 test('a full hand plays correctly through every street with real raises/bets, and settles the pot', async ({ page }) => {
-  await guestSignup(page, 'Solo');
+  // Self-seating and adding a bot are both owner-only now (see DECISIONS.md).
+  await adminLogin(page);
   await createTable(page, { name: 'All Streets Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 200);
   await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
@@ -22,6 +23,7 @@ test('a full hand plays correctly through every street with real raises/bets, an
   await page.getByLabel('Persona').selectOption('maniac');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
 
+  await startHand(page);
   await expect(page.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
   await expect(page.locator('.board-cards .card')).toHaveCount(5); // 5 placeholder/card slots, pre-flop
 
@@ -76,7 +78,8 @@ test('a full hand plays correctly through every street with real raises/bets, an
   // Both hole cards get revealed at a genuine showdown.
   await expect(page.locator('[data-testid="seat-1"] .card:not(.card-back)')).toHaveCount(2);
 
-  // Stacks actually moved — a real pot was won, not a no-op.
+  // Stacks actually moved — a real pot was won, not a no-op. Stack text
+  // has a cosmetic "$" prefix (see chips.ts's formatChips — DECISIONS.md).
   const stackText = await page.locator('[data-testid="seat-0"] .seat-stack').textContent();
-  expect(Number(stackText?.replace(/,/g, ''))).not.toBe(200);
+  expect(Number(stackText?.replace(/[$,]/g, ''))).not.toBe(200);
 });

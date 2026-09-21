@@ -1,5 +1,6 @@
 import type { LegalActions } from '@pokerclause/engine';
 import { useEffect, useState } from 'react';
+import { formatChips } from '../chips.js';
 
 export function ActionBar({
   legalActions,
@@ -68,7 +69,7 @@ export function ActionBar({
         )}
         {legalActions.canCall && (
           <button type="button" className="btn-call" onClick={() => onAction('call')}>
-            Call {legalActions.callAmount.toLocaleString()}
+            Call {formatChips(legalActions.callAmount)}
           </button>
         )}
         {legalActions.canBet && (

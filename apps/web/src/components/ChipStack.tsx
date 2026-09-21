@@ -1,4 +1,4 @@
-import { chipBreakdown } from '../chips.js';
+import { chipBreakdown, formatChips } from '../chips.js';
 
 export function ChipStack({
   amount,
@@ -22,7 +22,7 @@ export function ChipStack({
           />
         ))}
       </div>
-      {showAmount && <span className="chip-stack-amount">{amount.toLocaleString()}</span>}
+      {showAmount && <span className="chip-stack-amount">{formatChips(amount)}</span>}
     </div>
   );
 }

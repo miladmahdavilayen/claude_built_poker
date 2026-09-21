@@ -1,4 +1,5 @@
 import type { Card, Pot } from '@pokerclause/engine';
+import { formatChips } from '../chips.js';
 import { ChipStack } from './ChipStack.js';
 import { PlayingCard } from './PlayingCard.js';
 
@@ -26,10 +27,8 @@ export function BoardAndPot({
       {total > 0 && (
         <div className="pot-display">
           <ChipStack amount={total} size="md" showAmount={false} />
-          <span>Pot: {total.toLocaleString()}</span>
-          {pots.length > 1 && (
-            <span className="side-pots"> ({pots.map((p) => `${String(p.amount)}`).join(' + ')})</span>
-          )}
+          <span>Pot: {formatChips(total)}</span>
+          {pots.length > 1 && <span className="side-pots"> ({pots.map((p) => formatChips(p.amount)).join(' + ')})</span>}
         </div>
       )}
     </div>

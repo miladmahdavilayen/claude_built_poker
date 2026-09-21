@@ -82,6 +82,17 @@ export function projectStateForSeat(state: TableState, ctx: ProjectionContext, v
       ? getLegalActions(state, viewerSeatId)
       : null;
 
+  // Mirrors LiveTable.canStartHand() exactly (same underlying seat data,
+  // just read from the engine's own TableState + this projection's seat
+  // metadata instead of LiveTable's private bookkeeping). In particular,
+  // "dealt-in" here means "will be active on the next deal" (not empty,
+  // not sitting out, has chips) — NOT literally status === 'active' right
+  // now, since a seat that folded or went all-in last hand stays that way
+  // until the next hand's dealing resets it. See LiveTable.dealtInCount.
+  const dealtInCount = state.seats.filter((s) => s.status !== 'empty' && s.status !== 'sitting-out' && s.stack > 0).length;
+  const hasHuman = state.seats.some((s) => (ctx.seatMeta.get(s.seatId) ?? EMPTY_SEAT_META).playerId !== null);
+  const canStartHand = state.phase !== 'in-hand' && dealtInCount >= 2 && hasHuman;
+
   return {
     tableId: ctx.tableId,
     tableName: ctx.tableName,
@@ -98,6 +109,7 @@ export function projectStateForSeat(state: TableState, ctx: ProjectionContext, v
     pots: state.pots,
     anteTotal: state.anteTotal,
     phase: state.phase,
+    canStartHand,
     legalActions,
     viewerSeatId,
     actionDeadline: ctx.actionDeadline,

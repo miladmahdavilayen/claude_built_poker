@@ -40,6 +40,11 @@ export default defineConfig({
         PORT: String(API_PORT),
         CORS_ORIGIN: `http://localhost:${String(WEB_PORT)}`,
         SEED_DEFAULT_TABLES: 'false',
+        // The whole suite's tests share ONE server process for the
+        // entire run — production's per-minute HTTP rate limit (100)
+        // becomes test flakiness, not a real signal, once the suite has
+        // enough tests to add up to that many requests. See DECISIONS.md.
+        RATE_LIMIT_MAX: '100000',
       },
       url: `http://localhost:${String(API_PORT)}/health`,
       reuseExistingServer: false,

@@ -70,24 +70,6 @@ export class TableRegistry {
     await this.store.closeTable(tableId);
   }
 
-  /**
-   * Call whenever a table's broadcast shows `phase === 'hand-complete'`:
-   * gives the table a brief pause (for animation/UI), then starts the
-   * next hand if enough players are still seated with chips. A no-op if
-   * a hand is already running (e.g. it got restarted some other way) or
-   * too few players remain — safe to call every time, not just once.
-   */
-  scheduleNextHandIfReady(tableId: string, delayMs = 3000): void {
-    const table = this.tables.get(tableId);
-    if (!table) return;
-    setTimeout(() => {
-      const t = this.tables.get(tableId);
-      if (!t || !t.canStartHand()) return;
-      t.prepareNextOrbit();
-      t.startNextHand();
-    }, delayMs);
-  }
-
   newTableId(): string {
     return randomUUID();
   }

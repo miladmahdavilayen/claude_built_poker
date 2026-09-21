@@ -230,6 +230,10 @@ select:focus {
   gap: 8px;
   margin-top: 8px;
 }
+.assign-link-input {
+  width: 100%;
+  font-size: 11px;
+}
 
 .table-page {
   display: flex;
@@ -270,6 +274,19 @@ select:focus {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+.btn-owner-action {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
+.btn-owner-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-owner-danger:hover {
+  background: var(--danger);
+  color: var(--text);
 }
 
 .felt {
@@ -316,6 +333,45 @@ select:focus {
   font-weight: 400;
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Shown whenever no hand is running (before the very first deal, and
+   between hands) — nothing deals until a seated player presses this. */
+.start-hand-panel {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 4;
+}
+.btn-start-hand {
+  padding: 10px 28px;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 24px;
+  background: var(--accent);
+  color: #10151c;
+  border: none;
+  cursor: pointer;
+}
+.btn-start-hand:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+.btn-start-hand:disabled {
+  background: var(--panel-border);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.start-hand-hint {
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.35);
+  padding: 3px 10px;
+  border-radius: 10px;
 }
 
 /* Casino-style chip discs (see chips.ts for the standard denomination
@@ -365,12 +421,241 @@ select:focus {
   z-index: 3;
 }
 
+/* Lightweight shuffle + deal animation (see components/DealAnimation.tsx)
+   — pure CSS, no image assets. A tiny card-back gradient reused from
+   .card-back so both animations match the real dealt-card look. */
+.shuffle-deck {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  z-index: 6;
+  pointer-events: none;
+}
+.shuffle-card {
+  width: 24px;
+  height: 34px;
+  margin-left: -16px;
+  border-radius: 4px;
+  border: 1px solid #0e2038;
+  background: repeating-linear-gradient(45deg, #24466f, #24466f 3px, #1c3a5c 3px, #1c3a5c 6px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  animation: shuffle-riffle 220ms ease-in-out infinite alternate;
+}
+.shuffle-card:nth-child(1) {
+  animation-delay: 0ms;
+}
+.shuffle-card:nth-child(2) {
+  animation-delay: 60ms;
+}
+.shuffle-card:nth-child(3) {
+  animation-delay: 120ms;
+}
+@keyframes shuffle-riffle {
+  from {
+    transform: translateY(0) rotate(-4deg);
+  }
+  to {
+    transform: translateY(-7px) rotate(4deg);
+  }
+}
+
+.flying-card {
+  position: absolute;
+  left: var(--from-left);
+  top: var(--from-top);
+  width: 20px;
+  height: 28px;
+  border-radius: 3px;
+  border: 1px solid #0e2038;
+  background: repeating-linear-gradient(45deg, #24466f, #24466f 3px, #1c3a5c 3px, #1c3a5c 6px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  z-index: 6;
+  pointer-events: none;
+  opacity: 0;
+  /* Duration here must match DealAnimation.tsx's CARD_FLIGHT_MS (380ms) so the cleanup timer and the visual finish together. */
+  animation: deal-fly 380ms ease-out forwards;
+  animation-delay: var(--delay);
+}
+@keyframes deal-fly {
+  0% {
+    left: var(--from-left);
+    top: var(--from-top);
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6) rotate(-10deg);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    left: var(--to-left);
+    top: var(--to-top);
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+  }
+}
+
+.flying-chip {
+  position: absolute;
+  left: var(--from-left);
+  top: var(--from-top);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px dashed #10151c;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  z-index: 6;
+  pointer-events: none;
+  opacity: 0;
+  /* Duration here must match DealAnimation.tsx's CHIP_FLIGHT_MS (260ms). */
+  animation: chip-fly 260ms ease-out forwards;
+}
+@keyframes chip-fly {
+  0% {
+    left: var(--from-left);
+    top: var(--from-top);
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.7);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    left: var(--to-left);
+    top: var(--to-top);
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Hand-winner announcement (see components/WinCelebration.tsx) —
+   deliberately asymmetric: a small badge + quiet chime for someone
+   else's win, a bigger animated banner + fanfare for the viewer's own
+   win, and a brief, quiet acknowledgment for the viewer losing a hand
+   they were actually dealt into. */
+.win-badge {
+  position: absolute;
+  transform: translate(-50%, -140%);
+  background: var(--accent);
+  color: #10151c;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  z-index: 7;
+  pointer-events: none;
+  animation: win-badge-pop 2.2s ease-out forwards;
+}
+@keyframes win-badge-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -120%) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -150%) scale(1.1);
+  }
+  25% {
+    transform: translate(-50%, -140%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -160%) scale(0.9);
+  }
+}
+
+.viewer-loss-badge {
+  position: absolute;
+  transform: translate(-50%, -140%);
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  z-index: 7;
+  pointer-events: none;
+  animation: loss-badge-fade 1.8s ease-out forwards;
+}
+@keyframes loss-badge-fade {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.viewer-win-banner {
+  position: absolute;
+  left: 50%;
+  top: 16%;
+  transform: translate(-50%, -50%);
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  animation: viewer-win-pop 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.viewer-win-text {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--accent-strong);
+  text-shadow: 0 0 16px rgba(224, 167, 48, 0.8), 0 2px 4px rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.02em;
+}
+.viewer-win-amount {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--good);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+@keyframes viewer-win-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.5) rotate(-4deg);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.15) rotate(2deg);
+  }
+  20% {
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+  }
+  85% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+
 .action-timer {
   position: absolute;
   right: 20px;
   top: 20px;
   width: 40px;
   height: 40px;
+  /* Stays mounted for the whole hand (see ActionTimer.tsx) — a bot's turn
+     just fades it out rather than unmounting the element, which is what
+     used to cause a visible flash on every bot/human handoff. */
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+.action-timer-hidden {
+  opacity: 0;
 }
 .action-timer-ring {
   width: 100%;
@@ -386,7 +671,11 @@ select:focus {
   fill: none;
   stroke-width: 3;
   stroke-linecap: round;
-  transition: stroke-dashoffset 0.2s linear, stroke 0.4s ease;
+  stroke-dashoffset: 0;
+  /* The sweep itself is driven directly by the Web Animations API in
+     ActionTimer.tsx (a fresh .animate() call per turn, on a persistent
+     element) — no CSS animation/keyframes needed for it here. */
+  transition: stroke 0.4s ease;
 }
 /* Calm by default — only shifts toward red as time genuinely runs low,
    never a flat alarming red for the whole duration. */
@@ -520,6 +809,13 @@ select:focus {
   color: var(--muted);
 }
 .seat-empty-action-bot:hover {
+  color: var(--accent);
+}
+.seat-empty-action-assign {
+  font-size: 11px;
+  color: var(--good);
+}
+.seat-empty-action-assign:hover {
   color: var(--accent);
 }
 .seat-video {

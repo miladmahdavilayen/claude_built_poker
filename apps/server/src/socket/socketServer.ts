@@ -1,10 +1,12 @@
 import type { Server as HttpServer } from 'node:http';
 import {
   AddBotSchema,
+  AdminRebuySchema,
+  AssignSeatSchema,
   ChatMessageSchema,
   JoinTableSchema,
   PlayerActionIntentSchema,
-  RebuySchema,
+  RedeemAssignmentSchema,
   RemoveBotSchema,
   RtcSignalSchema,
   TakeSeatSchema,
@@ -12,6 +14,7 @@ import {
 import { Server, type Socket } from 'socket.io';
 import { verifyAccessToken } from '../auth/session.js';
 import type { Store } from '../db/store.js';
+import type { LiveTable } from '../game/liveTable.js';
 import { TableRegistry } from '../game/tableRegistry.js';
 import { filterProfanity } from './profanityFilter.js';
 import { RateLimiter } from './rateLimiter.js';
@@ -32,6 +35,24 @@ function spectatorRoom(tableId: string): string {
   return `table:${tableId}:spectators`;
 }
 
+/**
+ * Moves every socket currently in a seat's room into the shared
+ * spectator room, and out of the seat room — for when a player is
+ * evicted from a seat by something OTHER than their own leave-table
+ * click (an admin reset, or the table filling back up after they left
+ * naturally). Without this, that socket's room membership goes stale:
+ * `broadcastTable` only ever targets rooms for CURRENTLY-seated userIds
+ * plus the spectator room, so a socket left behind in a now-empty seat's
+ * room would silently stop receiving any further 'state' updates at
+ * all — indistinguishable, from that player's side, from the app just
+ * being broken.
+ */
+function evictSeatToSpectator(io: Server, tableId: string, seatId: number): void {
+  const room = seatRoom(tableId, seatId);
+  io.in(room).socketsJoin(spectatorRoom(tableId));
+  io.in(room).socketsLeave(room);
+}
+
 const actionLimiter = new RateLimiter(10, 5); // 10 burst, 5/sec refill
 const chatLimiter = new RateLimiter(5, 1); // 5 burst, 1/sec refill
 
@@ -45,9 +66,79 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       const room = seatId === null ? spectatorRoom(tableId) : seatRoom(tableId, seatId);
       io.to(room).emit('state', { state: payload.state, events: payload.events });
     }
-    const table = registry.get(tableId);
-    if (table && table.state.phase === 'hand-complete') registry.scheduleNextHandIfReady(tableId);
+    // Deliberately no auto-continuation into the next hand once phase
+    // becomes 'hand-complete' — every hand, including the next one, waits
+    // for an explicit 'start-hand' from a seated player. See DECISIONS.md.
   });
+
+  /**
+   * Terminates a table for good — notifies everyone still connected to
+   * it (every occupied seat's room, plus spectators) with a
+   * 'table-closed' event before actually removing it from the registry,
+   * refunds every seated human's current stack back to their chip
+   * balance (same as leaving individually would; bots have no real
+   * ledger to refund — see DECISIONS.md), then disposes it. Used both by
+   * the owner's explicit "Terminate table" action and by the automatic
+   * rule that a table with no human players left has no reason to keep
+   * existing.
+   */
+  async function closeTableWithNotice(tableId: string, reason: string): Promise<void> {
+    const table = registry.get(tableId);
+    if (!table) return;
+    const humanSeats = table.seats.filter((s) => s.userId !== null);
+    for (const seat of humanSeats) {
+      const engineSeat = table.state.seats[seat.seatId];
+      if (!engineSeat) continue;
+      await deps.store.adjustUserChips(seat.userId!, engineSeat.stack);
+      await deps.store.recordLedgerEntries([
+        { userId: seat.userId, isHouse: false, amount: engineSeat.stack, reason: 'cash_out', tableId },
+        { userId: null, isHouse: true, amount: -engineSeat.stack, reason: 'cash_out', tableId },
+      ]);
+    }
+    const rooms = [spectatorRoom(tableId), ...humanSeats.map((s) => seatRoom(tableId, s.seatId))];
+    for (const room of rooms) io.to(room).emit('table-closed', { reason });
+    await registry.close(tableId);
+  }
+
+  function broadcastTable(table: LiveTable): void {
+    for (const viewer of [...table.seats.filter((s) => s.userId !== null).map((s) => s.seatId), null]) {
+      const room = viewer === null ? spectatorRoom(table.tableId) : seatRoom(table.tableId, viewer);
+      io.to(room).emit('state', { state: table.projectionFor(viewer), events: [] });
+    }
+  }
+
+  /**
+   * The actual chip-debit + seat-fill + room-join + broadcast, shared by
+   * 'take-seat' (the owner seating themselves directly) and
+   * 'redeem-seat-assignment' (a human redeeming an owner-generated
+   * invite link) — identical either way once seatId/buyIn are known, the
+   * only difference is where those two numbers came from.
+   */
+  async function performTakeSeat(
+    table: LiveTable,
+    socket: Socket,
+    userId: string,
+    seatId: number,
+    buyIn: number,
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    const user = await deps.store.findUserById(userId);
+    if (!user) return { ok: false, code: 'USER_NOT_FOUND', message: 'User not found.' };
+    if (user.chips < buyIn) return { ok: false, code: 'INSUFFICIENT_CHIPS', message: 'Not enough chips for that buy-in.' };
+    try {
+      table.takeSeat(seatId, user.id, { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed }, buyIn);
+    } catch (err) {
+      return { ok: false, code: 'SEAT_TAKEN', message: err instanceof Error ? err.message : 'Seat unavailable.' };
+    }
+    await deps.store.adjustUserChips(user.id, -buyIn);
+    await deps.store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: -buyIn, reason: 'buy_in', tableId: table.tableId },
+      { userId: null, isHouse: true, amount: buyIn, reason: 'buy_in', tableId: table.tableId },
+    ]);
+    void socket.join(seatRoom(table.tableId, seatId));
+    void socket.leave(spectatorRoom(table.tableId));
+    broadcastTable(table);
+    return { ok: true };
+  }
 
   // Voice/video signaling (WebRTC): the server only ever relays opaque SDP
   // offers/answers and ICE candidates between two sockets already at the
@@ -99,15 +190,8 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       }
     })();
 
-    function currentTable() {
+    function currentTable(): LiveTable | null {
       return joinedTableId ? registry.get(joinedTableId) : null;
-    }
-
-    function broadcastTable(table: NonNullable<ReturnType<typeof currentTable>>): void {
-      for (const viewer of [...table.seats.filter((s) => s.userId !== null).map((s) => s.seatId), null]) {
-        const room = viewer === null ? spectatorRoom(table.tableId) : seatRoom(table.tableId, viewer);
-        io.to(room).emit('state', { state: table.projectionFor(viewer), events: [] });
-      }
     }
 
     // Named so `return emitError(...)` is a clean, consistently-void early return
@@ -145,8 +229,16 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       void deps.store.listRecentChat(table.tableId, 50).then((messages) => socket.emit('chat-history', messages));
     });
 
+    // Owner-only chip economy (see DECISIONS.md): the ONLY way a regular
+    // player ends up seated is by redeeming an owner-generated invite
+    // link ('redeem-seat-assignment', below) — this direct path is left
+    // open ONLY to the admin/owner account itself, so the owner can seat
+    // themselves without needing to invite themselves first.
     socket.on('take-seat', (raw: unknown): void => {
       if (!data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to take a seat.');
+      if (data.role !== 'admin') {
+        return emitError('SELF_SERVE_DISABLED', 'Only the table owner can seat a player directly — ask them for an invite link.');
+      }
       const parsed = TakeSeatSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed take-seat payload.');
       const table = registry.get(parsed.data.tableId);
@@ -161,30 +253,48 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
         return emitError('BUY_IN_OUT_OF_RANGE', `Buy-in must be between ${String(table.settings.minBuyIn)} and ${String(table.settings.maxBuyIn)}.`);
       }
       const userId = data.userId;
-      void (async () => {
-        const user = await deps.store.findUserById(userId);
-        if (!user) return;
-        if (user.chips < buyIn) return emitError('INSUFFICIENT_CHIPS', 'Not enough chips for that buy-in.');
-        try {
-          table.takeSeat(seatId, user.id, { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed }, buyIn);
-        } catch (err) {
-          return emitError('SEAT_TAKEN', err instanceof Error ? err.message : 'Seat unavailable.');
-        }
-        await deps.store.adjustUserChips(user.id, -buyIn);
-        await deps.store.recordLedgerEntries([
-          { userId: user.id, isHouse: false, amount: -buyIn, reason: 'buy_in', tableId: table.tableId },
-          { userId: null, isHouse: true, amount: buyIn, reason: 'buy_in', tableId: table.tableId },
-        ]);
-        void socket.join(seatRoom(table.tableId, seatId));
-        void socket.leave(spectatorRoom(table.tableId));
-        broadcastTable(table);
-        if (table.canStartHand()) table.startNextHand();
-      })();
+      void performTakeSeat(table, socket, userId, seatId, buyIn).then((result) => {
+        if (!result.ok) emitError(result.code, result.message);
+        // Deliberately does NOT auto-deal, even once enough players are
+        // seated — a seated player must explicitly trigger 'start-hand'
+        // (the "Play Hand" button). See DECISIONS.md.
+      });
+    });
+
+    socket.on('redeem-seat-assignment', (raw: unknown): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to join with an invite link.');
+      const parsed = RedeemAssignmentSchema.safeParse(raw);
+      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed redeem payload.');
+      if (table.seatOfUser(data.userId) !== null) return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
+      const redeemed = table.redeemSeatAssignment(parsed.data.token);
+      if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
+      const userId = data.userId;
+      void performTakeSeat(table, socket, userId, redeemed.seatId, redeemed.buyIn).then((result) => {
+        if (!result.ok) emitError(result.code, result.message);
+      });
+    });
+
+    socket.on('assign-seat', (raw: unknown, callback?: (result: { ok: true; token: string } | { ok: false; code: string; message: string }) => void): void => {
+      const table = currentTable();
+      if (!table) return;
+      if (data.role !== 'admin') {
+        callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can assign a seat.' });
+        return;
+      }
+      const parsed = AssignSeatSchema.safeParse(raw);
+      if (!parsed.success) {
+        callback?.({ ok: false, code: 'INVALID_PAYLOAD', message: 'Malformed assign-seat payload.' });
+        return;
+      }
+      const result = table.createSeatAssignment(parsed.data.seatId, parsed.data.buyIn);
+      callback?.(result);
     });
 
     socket.on('add-bot', (raw: unknown): void => {
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to add a computer player.');
+      if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can add a computer player.');
       const parsed = AddBotSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed add-bot payload.');
       const { seatId, persona, buyIn } = parsed.data;
@@ -194,7 +304,7 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       const result = table.addBot(seatId, persona, buyIn);
       if (!result.ok) return emitError(result.code, result.message);
       broadcastTable(table);
-      if (table.canStartHand()) table.startNextHand();
+      // No auto-deal here either — see 'start-hand' below.
     });
 
     socket.on('remove-bot', (raw: unknown): void => {
@@ -207,25 +317,80 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       broadcastTable(table);
     });
 
-    socket.on('leave-table', () => {
+    // Takes an optional ack callback so the client can wait for the
+    // server to actually finish processing before navigating away and
+    // tearing down this very socket connection — navigating first would
+    // risk the 'leave-table' packet racing the disconnect and never
+    // arriving at all, silently leaving the seat (and its chips) stuck.
+    // See DECISIONS.md.
+    socket.on('leave-table', (callback?: () => void): void => {
       const table = currentTable();
-      if (!table || !data.userId) return;
+      if (!table || !data.userId) {
+        callback?.();
+        return;
+      }
       const seatId = table.seatOfUser(data.userId);
-      if (seatId === null) return;
-      try {
-        const result = table.leaveSeat(seatId);
-        if (result) {
-          void deps.store.adjustUserChips(result.userId, result.stack).then(() =>
-            deps.store.recordLedgerEntries([
+      if (seatId === null) {
+        callback?.();
+        return;
+      }
+      void (async () => {
+        try {
+          const result = table.leaveSeat(seatId);
+          // Without this, this socket's room membership goes stale — see
+          // evictSeatToSpectator's doc comment for why that matters.
+          void socket.leave(seatRoom(table.tableId, seatId));
+          void socket.join(spectatorRoom(table.tableId));
+          if (result) {
+            await deps.store.adjustUserChips(result.userId, result.stack);
+            await deps.store.recordLedgerEntries([
               { userId: result.userId, isHouse: false, amount: result.stack, reason: 'cash_out', tableId: table.tableId },
               { userId: null, isHouse: true, amount: -result.stack, reason: 'cash_out', tableId: table.tableId },
-            ]),
-          );
+            ]);
+          }
+          const hasHuman = table.seats.some((s) => s.userId !== null);
+          if (!hasHuman) {
+            await closeTableWithNotice(table.tableId, 'All players left.');
+          } else {
+            broadcastTable(table);
+          }
+          callback?.();
+        } catch (err) {
+          socket.emit('error', { code: 'CANNOT_LEAVE', message: err instanceof Error ? err.message : 'Cannot leave right now.' });
         }
-        broadcastTable(table);
-      } catch (err) {
-        socket.emit('error', { code: 'CANNOT_LEAVE', message: err instanceof Error ? err.message : 'Cannot leave right now.' });
-      }
+      })();
+    });
+
+    socket.on('terminate-table', (callback?: () => void): void => {
+      const table = currentTable();
+      if (!table) return;
+      if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can terminate a table.');
+      void closeTableWithNotice(table.tableId, 'Table terminated by the owner.').then(() => callback?.());
+    });
+
+    socket.on('reset-table', (callback?: () => void): void => {
+      const table = currentTable();
+      if (!table) return;
+      if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can reset a table.');
+      const previousSeatIds = table.seats.filter((s) => s.userId !== null).map((s) => s.seatId);
+      void (async () => {
+        const refunds = table.resetTable();
+        for (const r of refunds) {
+          await deps.store.adjustUserChips(r.userId, r.stack);
+          await deps.store.recordLedgerEntries([
+            { userId: r.userId, isHouse: false, amount: r.stack, reason: 'cash_out', tableId: table.tableId },
+            { userId: null, isHouse: true, amount: -r.stack, reason: 'cash_out', tableId: table.tableId },
+          ]);
+        }
+        // Every previously-seated player's socket is still in its old
+        // (now-empty) seat room unless it explicitly left — move it to
+        // the spectator room so it keeps receiving updates, then push
+        // the fresh state directly to everyone who was affected.
+        for (const seatId of previousSeatIds) evictSeatToSpectator(io, table.tableId, seatId);
+        const freshState = table.projectionFor(null);
+        io.to(spectatorRoom(table.tableId)).emit('state', { state: freshState, events: [] });
+        callback?.();
+      })();
     });
 
     socket.on('sit-out', () => {
@@ -244,7 +409,24 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       if (seatId === null) return;
       table.sitIn(seatId);
       broadcastTable(table);
-      if (table.canStartHand()) table.startNextHand();
+      // No auto-deal here either — see 'start-hand' below.
+    });
+
+    socket.on('start-hand', (): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to start a hand.');
+      const seatId = table.seatOfUser(data.userId);
+      if (seatId === null) return emitError('NOT_SEATED', 'You must be seated to start a hand.');
+      if (!table.canStartHand()) {
+        return emitError('CANNOT_START_HAND', 'Need at least two seated players, including one real human, and no hand already in progress.');
+      }
+      // prepareNextOrbit is a harmless no-op before a table's very first
+      // hand (fresh seats have nothing to refill/apply) and is required
+      // before every hand after the first (time-bank refill, queued
+      // sit-outs, auto-sit-out of busted seats) — always safe to call
+      // right before dealing, first hand or not.
+      table.prepareNextOrbit();
+      table.startNextHand(); // broadcasts internally; no separate broadcastTable call needed here.
     });
 
     socket.on('join-waitlist', (): void => {
@@ -262,31 +444,36 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
       broadcastTable(table);
     });
 
-    socket.on('rebuy', (raw: unknown): void => {
+    // Owner-only (see DECISIONS.md) — a seated player can no longer rebuy
+    // themselves; the owner rebuys a specific seat's occupant instead.
+    // Still debits that PLAYER's own chip balance (identical ledger
+    // mechanics to before), just triggered by the owner, not the player.
+    socket.on('admin-rebuy', (raw: unknown): void => {
       const table = currentTable();
-      if (!table || !data.userId) return;
-      const parsed = RebuySchema.safeParse(raw);
-      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed rebuy payload.');
-      const seatId = table.seatOfUser(data.userId);
-      if (seatId === null) return;
+      if (!table) return;
+      if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can rebuy a player.');
+      const parsed = AdminRebuySchema.safeParse(raw);
+      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed admin-rebuy payload.');
+      const { seatId, amount } = parsed.data;
       const engineSeat = table.state.seats[seatId];
-      if (!engineSeat) return;
+      const liveSeat = table.seats[seatId];
+      if (!engineSeat || !liveSeat?.userId) return emitError('SEAT_EMPTY', 'That seat has no player to rebuy.');
       const cap = table.settings.maxBuyIn - engineSeat.stack;
-      const amount = Math.min(parsed.data.amount, Math.max(cap, 0));
-      if (amount <= 0) return;
-      const userId = data.userId;
+      const cappedAmount = Math.min(amount, Math.max(cap, 0));
+      if (cappedAmount <= 0) return emitError('CANNOT_REBUY', 'That seat is already at the maximum buy-in.');
+      const targetUserId = liveSeat.userId;
       void (async () => {
-        const user = await deps.store.findUserById(userId);
-        if (!user || user.chips < amount) return emitError('INSUFFICIENT_CHIPS', 'Not enough chips.');
+        const user = await deps.store.findUserById(targetUserId);
+        if (!user || user.chips < cappedAmount) return emitError('INSUFFICIENT_CHIPS', 'That player does not have enough chips for this rebuy.');
         try {
-          table.rebuy(seatId, amount);
+          table.rebuy(seatId, cappedAmount);
         } catch (err) {
           return emitError('CANNOT_REBUY', err instanceof Error ? err.message : 'Cannot rebuy right now.');
         }
-        await deps.store.adjustUserChips(user.id, -amount);
+        await deps.store.adjustUserChips(user.id, -cappedAmount);
         await deps.store.recordLedgerEntries([
-          { userId: user.id, isHouse: false, amount: -amount, reason: 'buy_in', tableId: table.tableId },
-          { userId: null, isHouse: true, amount, reason: 'buy_in', tableId: table.tableId },
+          { userId: user.id, isHouse: false, amount: -cappedAmount, reason: 'buy_in', tableId: table.tableId },
+          { userId: null, isHouse: true, amount: cappedAmount, reason: 'buy_in', tableId: table.tableId },
         ]);
         broadcastTable(table);
       })();

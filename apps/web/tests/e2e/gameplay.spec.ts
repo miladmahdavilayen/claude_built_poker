@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, playHandToCompletion, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat } from './helpers.js';
 
 test('two guests sit down, play a full hand with no hole-card leakage, and can verify its fairness', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -7,18 +7,19 @@ test('two guests sit down, play a full hand with no hole-card leakage, and can v
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
-  await guestSignup(pageA, 'Alice');
+  // Alice is the table owner — self-serve seating no longer exists for a
+  // regular player (see DECISIONS.md); Bob joins via an owner-generated invite link.
+  await adminLogin(pageA);
   await createTable(pageA, { name: 'E2E Gameplay Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
-  const tableUrl = pageA.url();
 
   await guestSignup(pageB, 'Bob');
-  await pageB.goto(tableUrl);
 
   await takeSeat(pageA, 0, 100);
-  await takeSeat(pageB, 1, 100);
+  await inviteToSeat(pageA, pageB, 1, 100);
 
-  // A hand deals automatically once 2 seats are filled — wait for the fairness
-  // commitment to appear, which only exists once a hand is in progress.
+  // Nothing deals automatically — 2 seats filled is enough to start, but
+  // Alice has to explicitly click "Play Hand" first.
+  await startHand(pageA);
   await expect(pageA.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
   await expect(pageB.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
 

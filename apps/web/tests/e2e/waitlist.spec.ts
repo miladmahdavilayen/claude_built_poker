@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, takeSeat } from './helpers.js';
 
 test('a player not seated can join and leave the waitlist, and everyone sees the queue', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -7,7 +7,8 @@ test('a player not seated can join and leave the waitlist, and everyone sees the
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
-  await guestSignup(pageA, 'Grace');
+  // Grace is the table owner (self-seating is owner-only now — see DECISIONS.md).
+  await adminLogin(pageA);
   // Only one seat gets taken below, so no hand ever deals — keeps this test
   // focused purely on the waitlist wiring, not hand lifecycle.
   await createTable(pageA, { name: 'E2E Waitlist Table', smallBlind: 1, bigBlind: 2, maxSeats: 4, isPrivate: false });

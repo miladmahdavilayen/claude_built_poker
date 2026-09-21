@@ -77,6 +77,31 @@ describe('LiveTable: server-authoritative hand lifecycle', () => {
     expect(totalStacks).toBe(200);
   });
 
+  it('canStartHand() stays true after a hand ends by fold, not just after a hand that reaches showdown', () => {
+    // Regression: a seat that folds keeps status 'folded' (not reset back
+    // to 'active') until the ENGINE's own next deal resets it — see
+    // resetSeatForNewHand in packages/engine/src/hand.ts. Counting only
+    // currently-'active' seats for canStartHand() would therefore go
+    // permanently false after any hand that ended by a fold (the common
+    // case, not a rare one) — exactly the scenario this test drives.
+    table.takeSeat(0, 'user-a', meta('Alice'), 100);
+    table.takeSeat(1, 'user-b', meta('Bob'), 100);
+    table.startNextHand();
+    expect(table.state.phase).toBe('in-hand');
+
+    const actingSeat = table.state.betting.actingSeat!;
+    const result = table.applyPlayerAction(actingSeat, { seatId: actingSeat, type: 'fold' });
+    expect(result.ok).toBe(true);
+    expect(table.state.phase).toBe('hand-complete');
+
+    // The folded seat's status is still 'folded' right now — that's the
+    // exact state the bug lived in.
+    const foldedSeat = table.state.seats.find((s) => s.status === 'folded');
+    expect(foldedSeat).toBeDefined();
+
+    expect(table.canStartHand()).toBe(true);
+  });
+
   it('rejects an out-of-turn action with a typed error, never throwing', () => {
     table.takeSeat(0, 'user-a', meta('Alice'), 100);
     table.takeSeat(1, 'user-b', meta('Bob'), 100);
@@ -174,6 +199,35 @@ describe('LiveTable: server-authoritative hand lifecycle', () => {
     );
     expect(privateTable.inviteCode).toBe('secret-code');
     expect(table.inviteCode).toBeNull();
+  });
+
+  it('resetTable() empties every seat and refunds each human, but leaves the table itself alive and re-usable', () => {
+    table.takeSeat(0, 'user-a', meta('Alice'), 100);
+    table.takeSeat(1, 'user-b', meta('Bob'), 100);
+    table.addBot(2, 'nit', 100);
+    table.startNextHand();
+    expect(table.state.phase).toBe('in-hand');
+
+    const refunds = table.resetTable();
+    expect(refunds.sort((a, b) => a.userId.localeCompare(b.userId))).toEqual([
+      { userId: 'user-a', stack: expect.any(Number) as number },
+      { userId: 'user-b', stack: expect.any(Number) as number },
+    ]);
+    // Bots aren't in the refund list — they have no real chip ledger. See DECISIONS.md.
+    expect(refunds.find((r) => r.userId === 'user-b')).toBeDefined();
+    expect(refunds).toHaveLength(2);
+
+    // Every seat is empty, the hand is gone, and the table is back to its very first-boot shape.
+    expect(table.state.phase).toBe('waiting');
+    expect(table.state.seats.every((s) => s.status === 'empty')).toBe(true);
+    expect(table.seats.every((s) => s.userId === null)).toBe(true);
+
+    // The SAME table can be seated and dealt again afterward — reset, not destroyed.
+    table.takeSeat(0, 'user-c', meta('Carol'), 100);
+    table.takeSeat(1, 'user-d', meta('Dave'), 100);
+    expect(table.canStartHand()).toBe(true);
+    table.startNextHand();
+    expect(table.state.phase).toBe('in-hand');
   });
 });
 

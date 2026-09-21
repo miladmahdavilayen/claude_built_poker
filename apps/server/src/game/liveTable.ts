@@ -110,6 +110,8 @@ export class LiveTable {
   actionDeadline: number | null = null;
   private clockTimer: ReturnType<typeof setTimeout> | null = null;
   private waitlist: WaitlistEntry[] = [];
+  /** token -> pending owner-generated seat assignment. See createSeatAssignment/redeemSeatAssignment. */
+  private readonly seatAssignments = new Map<string, { seatId: number; buyIn: number }>();
   private botMoveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly botRng: RandomSource = cryptoSource();
   private readonly botPolicies = new Map<string, BotPolicy>(SELECTABLE_BOT_POLICIES.map((p) => [p.name, p]));
@@ -125,18 +127,20 @@ export class LiveTable {
     this.tableId = tableId;
     this.name = name;
     this.settings = settings;
-    const config: TableConfig = {
-      smallBlind: settings.smallBlind,
-      bigBlind: settings.bigBlind,
-      ante: settings.ante,
-      maxSeats: settings.maxSeats,
-      straddleEnabled: settings.straddleEnabled,
-    };
-    this.state = createTableState(
-      config,
-      [], // seats start empty; takeSeat() populates them
-    );
+    this.state = this.freshState();
     this.seats = Array.from({ length: settings.maxSeats }, (_, seatId) => this.emptyLiveSeat(seatId));
+  }
+
+  /** A clean-slate engine state for this table's settings, with every seat empty — shared by the constructor and resetTable(). */
+  private freshState(): TableState {
+    const config: TableConfig = {
+      smallBlind: this.settings.smallBlind,
+      bigBlind: this.settings.bigBlind,
+      ante: this.settings.ante,
+      maxSeats: this.settings.maxSeats,
+      straddleEnabled: this.settings.straddleEnabled,
+    };
+    return createTableState(config, []);
   }
 
   private emptyLiveSeat(seatId: number): LiveSeat {
@@ -181,6 +185,39 @@ export class LiveTable {
       isConnected: true,
     };
     this.removeFromWaitlist(userId);
+  }
+
+  /**
+   * Owner-only chip economy (see DECISIONS.md): the owner picks an empty
+   * seat and a buy-in, generating a one-time token instead of seating
+   * anyone directly — the human it's sent to redeems it themselves via
+   * redeemSeatAssignment, which is what actually calls takeSeat. Kept as
+   * simple in-memory bookkeeping on the table itself, consistent with
+   * everything else about a live table (no DB row — these don't need to
+   * survive a restart any more than an in-progress hand does).
+   */
+  createSeatAssignment(seatId: number, buyIn: number): { ok: true; token: string } | { ok: false; code: string; message: string } {
+    const engineSeat = this.state.seats[seatId];
+    if (!engineSeat || engineSeat.status !== 'empty') return { ok: false, code: 'SEAT_TAKEN', message: 'That seat is not empty.' };
+    if (buyIn < this.settings.minBuyIn || buyIn > this.settings.maxBuyIn) {
+      return { ok: false, code: 'BUY_IN_OUT_OF_RANGE', message: `Buy-in must be between ${String(this.settings.minBuyIn)} and ${String(this.settings.maxBuyIn)}.` };
+    }
+    const token = randomUUID();
+    this.seatAssignments.set(token, { seatId, buyIn });
+    return { ok: true, token };
+  }
+
+  /** Validates and consumes a seat-assignment token — the caller (socketServer.ts) still does the actual takeSeat + chip-ledger work, exactly like a normal take-seat, just sourcing seatId/buyIn from here instead of the client's own say-so. */
+  redeemSeatAssignment(token: string): { ok: true; seatId: number; buyIn: number } | { ok: false; code: string; message: string } {
+    const assignment = this.seatAssignments.get(token);
+    if (!assignment) return { ok: false, code: 'INVALID_ASSIGNMENT', message: 'This invite link is invalid or has already been used.' };
+    const engineSeat = this.state.seats[assignment.seatId];
+    if (!engineSeat || engineSeat.status !== 'empty') {
+      this.seatAssignments.delete(token);
+      return { ok: false, code: 'SEAT_TAKEN', message: 'That seat was taken before this link was used.' };
+    }
+    this.seatAssignments.delete(token);
+    return { ok: true, seatId: assignment.seatId, buyIn: assignment.buyIn };
   }
 
   /**
@@ -256,6 +293,31 @@ export class LiveTable {
     return result;
   }
 
+  /**
+   * Owner-only "start completely fresh at this same table" action: empties
+   * every seat — bots are simply discarded, real humans' stacks are
+   * returned via the array this returns (same shape as leaveSeat's
+   * result, one entry per seated human, for the caller to credit back to
+   * their chip balance) — clears any in-progress hand and its timers,
+   * and rebuilds the engine state from scratch. Same tableId/settings/
+   * inviteCode throughout, so the table itself (and its URL) stays valid
+   * — this does NOT remove the table the way close()/dispose() does.
+   */
+  resetTable(): { userId: string; stack: number }[] {
+    this.clearClock();
+    this.clearBotMove();
+    this.seatAssignments.clear(); // any not-yet-redeemed invite links are void once the table's reset
+    const refunds: { userId: string; stack: number }[] = [];
+    for (let i = 0; i < this.seats.length; i++) {
+      const liveSeat = this.seats[i]!;
+      const engineSeat = this.state.seats[i];
+      if (liveSeat.userId && engineSeat) refunds.push({ userId: liveSeat.userId, stack: engineSeat.stack });
+    }
+    this.state = this.freshState();
+    this.seats = Array.from({ length: this.settings.maxSeats }, (_, seatId) => this.emptyLiveSeat(seatId));
+    return refunds;
+  }
+
   setConnected(userId: string, connected: boolean): void {
     const seat = this.seats.find((s) => s.userId === userId);
     if (seat) seat.isConnected = connected;
@@ -296,7 +358,15 @@ export class LiveTable {
   }
 
   private dealtInCount(): number {
-    return this.state.seats.filter((s) => s.status === 'active' && s.stack > 0).length;
+    // A seat that folded or went all-in LAST hand isn't reset back to
+    // 'active' until the next hand actually deals (see
+    // resetSeatForNewHand in packages/engine/src/hand.ts) — so between
+    // hands, counting only currently-'active' seats would undercount who
+    // is really available for the next hand, and could leave
+    // canStartHand() permanently false after any hand that ended by a
+    // fold (the common case, not an edge case). "Will be active on the
+    // next deal" is: not empty, not sitting out, and has chips.
+    return this.state.seats.filter((s) => s.status !== 'empty' && s.status !== 'sitting-out' && s.stack > 0).length;
   }
 
   /** Seats actually being dealt into a hand right now, as a sorted ring — same model the engine itself uses internally for button/blind rotation (`dealtInRing` in packages/engine/src/button.ts, not exported, so re-derived here identically). */

@@ -1,11 +1,15 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext.js';
 import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
 export function LoginPage(): React.JSX.Element {
   const { signupGuest, login, register, loginWithGoogle } = useAuth();
-  const navigate = useNavigate();
+  // No navigation happens here on success — once `user` becomes truthy,
+  // App.tsx's own /login route (LoginRoute) re-evaluates and redirects
+  // itself, honoring wherever this visitor was originally headed (e.g.
+  // an owner-generated invite link). Navigating from here too used to
+  // race that route-level redirect — see LoginRoute's doc comment in
+  // App.tsx for why that's a real bug, not just redundant code.
   const [mode, setMode] = useState<'guest' | 'login' | 'register'>('guest');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -21,7 +25,6 @@ export function LoginPage(): React.JSX.Element {
       if (mode === 'guest') await signupGuest(displayName || 'Guest');
       else if (mode === 'login') await login(email, password);
       else await register(email, password, displayName);
-      void navigate('/lobby');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -34,11 +37,10 @@ export function LoginPage(): React.JSX.Element {
       setError(null);
       setBusy(true);
       loginWithGoogle(idToken)
-        .then(() => navigate('/lobby'))
         .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Google sign-in failed.'))
         .finally(() => setBusy(false));
     },
-    [loginWithGoogle, navigate],
+    [loginWithGoogle],
   );
 
   return (

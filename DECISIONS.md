@@ -684,3 +684,480 @@ fold or shove and rob the test of a deterministic turn order) — fixed by
 switching that test to two real human pages with a scripted, always-call
 second player, removing the randomness rather than trying to make a bot
 persona behave predictably enough to trust.
+
+## Manual hand start: a "Play Hand" button, not an automatic deal
+
+Previously, a hand dealt itself automatically the instant enough players
+were dealt-in (2+, one real human) — on taking a seat, on adding a bot,
+on sitting back in, and again 3 seconds after every hand completed
+(`TableRegistry.scheduleNextHandIfReady`). This made it impossible to,
+say, add a second and third bot before the first hand ever started.
+Changed to fully manual: a seated player must explicitly emit
+`start-hand` (the "Play Hand" button) for every hand, including the
+table's very first one and every one after. All the old auto-start call
+sites in `socketServer.ts` (`take-seat`, `add-bot`, `sit-in`) were
+removed, along with `scheduleNextHandIfReady` entirely (deleted, not
+just unused) and its call site in the top-level broadcast handler.
+
+The new `start-hand` handler validates the requester is seated
+(`NOT_SEATED` otherwise) and that `table.canStartHand()` holds
+(`CANNOT_START_HAND` otherwise — needs 2+ dealt-in seats including a
+human, and no hand already running), then calls
+`table.prepareNextOrbit()` (time-bank refill, queued sit-outs,
+auto-sit-out of busted seats — a harmless no-op before the very first
+hand, since fresh seats have nothing to refill/apply) followed by
+`table.startNextHand()`, which broadcasts internally — no separate
+`broadcastTable` call needed, unlike the seat/bot handlers, which
+broadcast their OWN state change (a seat filling) before the (now
+absent) auto-deal used to broadcast a second time for the deal itself.
+
+`ProjectedTableState` gained `canStartHand: boolean`, computed in
+`projectStateForSeat` with logic that deliberately mirrors
+`LiveTable.canStartHand()` exactly (same underlying seat data, just read
+from the engine's own `TableState` + the projection's seat metadata
+instead of `LiveTable`'s private bookkeeping) — the client drives the
+"Play Hand" button's enabled/disabled state and hint text from this,
+rather than re-deriving the seat-counting rule itself.
+
+**A real bug found and fixed while building this**: `dealtInCount()`
+(what `canStartHand()` is built on) originally counted only seats with
+`status === 'active'` right now. But a seat that folded — or went
+all-in — keeps that status until the *next* hand's own dealing resets
+it (`resetSeatForNewHand` in `packages/engine/src/hand.ts`, called only
+from inside `prepareAndDealHand`, which only runs as part of
+`startNextHand()` itself). Between hands, a folded seat is genuinely
+still `'folded'` in the projected state. Counting only `'active'` seats
+therefore undercounted who was really available for the next hand, and
+would have made `canStartHand()` — and so the "Play Hand" button —
+**permanently false after any hand that ended by a fold**, which is the
+common case, not a rare one. This bug was latent in the *old* auto-deal
+path too (`scheduleNextHandIfReady` checked `canStartHand()` with the
+same flawed logic before calling `prepareNextOrbit()`), just silently
+so, since no existing test ever played a second hand through the real
+socket/auto-deal flow to catch it. Fixed by widening the predicate to
+"will be active on the next deal": not `'empty'`, not `'sitting-out'`,
+and has chips — i.e. `'active'`, `'folded'`, or `'all-in'` with
+`stack > 0`. Fixed identically in both `LiveTable.dealtInCount()` and
+the mirrored projection.ts logic. Covered by a dedicated
+`liveTable.test.ts` regression test (fold a hand, assert
+`canStartHand()` is still true while a seat is still literally
+`'folded'`) and exercised end-to-end by `startHandButton.spec.ts`.
+
+Client-side, `state.phase !== 'waiting'` (`handEverDealt` in
+`Table.tsx`) gates the dealer-button disc, position labels, and each
+seat's hole-card placeholders — none of them should show for a table
+that has never dealt a hand. `Seat.tsx` gained a required `showCards`
+prop for this (previously, an occupied seat's face-down card-backs were
+unconditional decoration, not actually tied to whether a hand had ever
+been dealt — a bot added before the first hand would misleadingly show
+2 card-backs immediately). Between hands after the first, `phase` stays
+`'hand-complete'` (it never reverts to `'waiting'`), so the previous
+hand's revealed/folded cards correctly keep showing until the next deal
+replaces them — matching how a real table looks (the felt isn't swept
+clean until the next shuffle).
+
+`startHandButton.spec.ts` is the dedicated regression test: confirms no
+`.seat-cards`/dealer-button/fairness-commitment appear pre-deal, that
+the button is disabled with only 1 seated player and enabled with 2,
+that nothing deals on its own even after a real wait, that clicking it
+deals the hand, and that after the hand completes the button reappears
+and a **second** explicit click is required for hand #2 (proving the
+gate isn't just a first-hand special case). Every other E2E spec that
+used to rely on the old auto-deal (`bots`, `gameplay`,
+`fullHandAllStreets`, `positionLabels` ×2, `shortViewport`,
+`chipVisuals`, `betSizerPresets`) got a `startHand(page)` helper call
+added at the point where a hand used to begin on its own.
+
+## Shuffle + deal animation, with synthesized sound
+
+Lightweight and asset-free by design: no images, no audio files.
+`DealAnimation.tsx` (new) renders a purely decorative overlay driven
+entirely by events the server already broadcasts for other reasons
+(`hand-started`, `cards-dealt` — no new server events needed), so a
+`useTableSocket.ts` addition, `latestEvents`, is the only new plumbing:
+a fresh array reference per incoming `'state'` batch (unlike
+`recentEvents`, a rolling accumulation not suited to "did a new batch
+just arrive" checks), meant as a `useEffect` dependency that fires
+exactly once per batch.
+
+Visuals are pure CSS (`shuffle-riffle`/`deal-fly` keyframes): a small
+stack of card-back divs wiggling in place for the shuffle, and one
+absolutely-positioned card-back div per card flying from the table's
+center to each seat's real position for the deal, using CSS custom
+properties (`--from-left`/`--to-left`/etc., driven by the same
+`seatPositions()` coordinates `Table.tsx` already computes) so the
+browser interpolates the motion — no JS animation loop. Timing:
+shuffle plays for 700ms, then two rounds of cards deal (one card to
+every seat, twice — mimicking a real dealer), staggered ~90ms apart per
+seat with a ~140ms gap between rounds.
+
+One real correctness trap here: timeouts that reset the shuffle/deal
+animation state were **initially** written as a `useEffect` cleanup
+closure keyed on the `events` prop — which is wrong, because `events`
+changes on *every* incoming batch, not just relevant ones. An unrelated
+event arriving mid-animation (e.g. a bot's `action-taken` a few hundred
+ms into a 700ms shuffle) would re-run the effect, and React would call
+the *previous* run's cleanup first — cancelling the shuffle's own timer
+before it ever fired, leaving `shuffling` stuck permanently `true`.
+Fixed by ref-tracking the timeout handles instead (`shuffleTimeoutRef`,
+`dealTimeoutRef`) and only ever clearing/replacing them when a *new*
+same-kind event genuinely arrives, with a separate mount-only effect
+handling cleanup on unmount.
+
+Sound (`sound.ts`) is synthesized with the Web Audio API — a short
+bandpass-filtered noise burst per "card," several overlapping bursts at
+staggered start times for the shuffle. Two constraints shaped this:
+
+- **Browsers block audio until a real user gesture happens on the
+  page**, and the gesture that triggers a sound (someone else's "Play
+  Hand" click, arriving over the socket) isn't necessarily a gesture on
+  *this* viewer's own page. Fixed with a one-time, page-wide
+  `pointerdown`/`keydown` listener in `App.tsx` that unlocks (resumes)
+  a lazily-created `AudioContext` — by the time any hand can possibly
+  start, every connected viewer has already clicked or typed something
+  (signing in, sitting down, etc.), so the context is reliably unlocked
+  well before it's needed.
+- **`Math.random()` is banned repo-wide** (`eslint.config.mjs` calls it
+  out explicitly as one of only two rules "the spec explicitly
+  requires"), and noise-buffer generation needs thousands of fast random
+  values per sound — too many for a real per-call entropy source without
+  audible stutter, and `@pokerclause/rng`'s `cryptoSource()` can't be
+  used client-side at all regardless (it's built on Node's `node:crypto`,
+  unavailable in a browser bundle). Resolved by seeding a tiny local
+  xorshift32 PRNG from one real `crypto.getRandomValues()` draw (the
+  Web Crypto API, browser-side), then expanding it with cheap arithmetic
+  — `Math.random()` is never called anywhere in the file, and
+  correctness/determinism don't matter here anyway since this is
+  decorative audio with no gameplay or fairness implications.
+
+## Action timer flicker: a JS tick fighting its own CSS transition
+
+The earlier action-bar fix (isolating the countdown into its own
+component) was real but incomplete — the ring's sweep was still driven
+by JS setting `strokeDashoffset` on every 200ms tick, animated via a CSS
+`transition: stroke-dashoffset 0.2s`. A 200ms tick racing a 200ms
+transition means each new tick's target routinely lands before the
+previous transition finishes, so the animated property keeps getting
+retargeted mid-flight instead of ever settling into one smooth sweep —
+a genuine, continuous visual "flicker" that doesn't show up in a static
+screenshot or a DOM-mutation check (nothing about the element's
+structure ever changes, just this one property fighting itself every
+tick — confirmed with both before concluding this was the cause).
+Fixed by handing the sweep entirely to one continuous CSS `@keyframes`
+animation, started once per turn via `key={deadline}` on the `<circle>`
+(a fresh element, so the animation restarts cleanly) and left to run on
+the browser's own compositor clock — JS now only ever touches the text
+number and the (already-transitioning, so unaffected by this) urgency
+color.
+
+## Leave-table: a real bug, not a perception issue
+
+"Leave table not working" turned out to be a genuine, reproducible bug,
+not a UX complaint: the `leave-table` handler cleared the seat
+server-side but never moved that socket out of the now-stale per-seat
+room or into the spectator room. `broadcastTable` only ever targets
+rooms for currently-seated userIds plus the spectator room, so the
+leaving player's own socket — still sitting in a room nobody targets
+anymore — silently stopped receiving any further `'state'` updates at
+all. The click "worked" (the seat really did clear), but the leaving
+player's own screen just never found out, which is indistinguishable
+from broken. Fixed with `socket.leave(seatRoom(...))` +
+`socket.join(spectatorRoom(...))` on success.
+
+A second, subtler bug: the client used to fire `sock.leaveTable()` and
+immediately unmount (tearing down the socket via `useSocket`'s cleanup),
+racing the still-in-flight `'leave-table'` packet against the socket's
+own close — which could, under bad enough timing, mean the packet never
+arrives and the seat (and its chips) stay stuck. Fixed by having
+`leave-table` take an ack callback; the client's `leaveTable()` now
+returns a `Promise` that only resolves once the server confirms, and
+`Table.tsx` navigates to `/lobby` only after that promise settles.
+
+Building this also produced a reusable `evictSeatToSpectator` helper (a
+socket evicted from a seat by something OTHER than its own leave-table
+click — an admin reset, see below — has the exact same stale-room
+problem) and a hoisted `broadcastTable`/new `performTakeSeat` shared by
+every code path that seats someone, instead of each handler
+re-implementing the same chip-ledger + room-join + broadcast sequence.
+
+## Table lifecycle: auto-terminate, owner terminate, owner reset
+
+Three related, new pieces of table-lifecycle control:
+
+- **Auto-terminate**: if `leave-table` empties the last human seat (bots
+  don't count — see below), the table closes itself immediately rather
+  than sitting around with nobody to watch it. Implemented in the same
+  `leave-table` handler, reusing a new `closeTableWithNotice(tableId,
+  reason)` helper.
+- **Owner "Terminate table"**: the same `closeTableWithNotice` helper,
+  triggered by an admin-gated `terminate-table` socket event, with a
+  yes/no confirmation modal client-side.
+- **Owner "Reset table"**: a NEW `LiveTable.resetTable()` — empties every
+  seat (bots discarded, human stacks refunded via the same array shape
+  `leaveSeat` already returns), clears any in-progress hand and its
+  timers, and rebuilds the engine state from scratch via a `freshState()`
+  helper extracted from the constructor — but does NOT remove the table
+  itself (same tableId/settings/URL stay valid). An admin-gated
+  `reset-table` socket event refunds every returned human, then pushes
+  the fresh state directly to every previously-seated socket (each one
+  gets `evictSeatToSpectator`'d first, since they didn't voluntarily
+  leave and would otherwise go stale in their old seat room).
+
+`closeTableWithNotice` broadcasts a `'table-closed'` event to every
+occupied seat room and the spectator room BEFORE actually removing the
+table from the registry, refunding every seated human's current stack
+first. The client listens for it (`tableClosedReason` in
+`useTableSocket.ts`) and navigates to `/lobby` — covers both "the owner
+just terminated this" and "I was spectating a table that ran out of
+humans," with the exact same code path.
+
+## Street-dealing, chip-placement, and win/loss animations
+
+Extended the existing shuffle/deal system (`DealAnimation.tsx`,
+`sound.ts`) rather than building parallel infrastructure, since the same
+shape of problem applies: purely decorative, driven by events already
+broadcast for other reasons, ref-tracked timeouts per event kind so an
+unrelated later event can't cut an in-progress animation short (see the
+original shuffle/deal writeup above for why that matters).
+
+- **Flop/turn/river**: `'street-dealt'` carries the street name and the
+  full board so far; the number of genuinely NEW cards for that street
+  is a fixed lookup (`{flop: 3, turn: 1, river: 1}`), and each new card
+  flies from the same deck spot used for the initial deal to an
+  approximate board-slot position (felt-relative percentages, same
+  convention as every other coordinate here — not a pixel-measured DOM
+  read, which would be real complexity for a decorative flourish).
+- **Chip placement**: any `'action-taken'` event whose type is
+  `bet`/`raise`/`call` spawns a small chip flying from the acting seat to
+  its own bet-chip spot (`seatLayout.ts`'s existing `betLeft`/`betTop`),
+  with a synthesized "clink" sound. Purely a decorative overlay — the
+  real `ChipStack` already updates instantly underneath, same as the
+  card-deal animation never blocks the real state from rendering.
+- **Win/loss announcement** (`WinCelebration.tsx`, new component):
+  deliberately asymmetric, per the actual request — someone ELSE winning
+  gets a small badge over their seat and a quiet two-note chime; the
+  VIEWER's own win gets a bigger animated banner ("You Win!" + amount)
+  and a triumphant little fanfare; the viewer LOSING a hand they were
+  genuinely dealt into (tracked via whether their own seat appeared in
+  that hand's `'cards-dealt'` event) gets a brief, quiet "Not this hand"
+  cue on their own seat — never a badge for someone else's win blaring
+  as loud as the viewer's own, and never a fanfare for anyone but the
+  viewer. `pot-awarded` can fire more than once per hand (side pots) and
+  the same seat can win more than one pot — totals are combined per seat
+  before deciding banner vs. badge, so a winner gets exactly one
+  announcement, not one per pot.
+
+  **Testing note**: an early version of `winCelebration.spec.ts` assumed
+  exactly one of two pages would ever show the win banner. That's wrong
+  — a genuine SPLIT POT (both players holding the same best five-card
+  hand, e.g. both playing the board) is a real, not-rare outcome with
+  random cards checked to a natural showdown, and BOTH pages correctly
+  show their own "You Win!" banner in that case. Fixed by asserting "at
+  least one page won" and only checking the loser-specific cue when
+  there's a lone loser. A separate, genuine flakiness source in the same
+  test: the win banner is transient (~2.4s), and a one-shot
+  `.isVisible()` snapshot right after "Verify hand fairness" appears is
+  a real race under load — fixed with a short (1s), retrying
+  `expect().toBeVisible()` check per page, run in parallel via
+  `Promise.all` (sequential checks would burn one page's full retry
+  window before ever looking at the other, racing the same fading clock
+  its badge is on).
+
+## Chip display: a cosmetic "$" prefix, not a new economy
+
+`formatChips()` (`chips.ts`) wraps every displayed chip amount — seat
+stacks, the pot, bet chips, the "Call N" button, buy-in ranges, the
+lobby's table list — with a `$` prefix over the exact same underlying
+numbers everywhere else already uses. No exchange rate, no change to any
+real value; purely a label. Editable number inputs (buy-in fields, the
+bet-sizer) stay raw numbers, since a `<input type="number">` can't
+sensibly hold `"$50"`.
+
+## Owner-only chip economy
+
+The biggest change this round: buy-ins, rebuys, and adding a bot are no
+longer self-service — only the table owner (the `admin` role) can
+allocate chips to anyone, human or bot. This is a real access-control
+change, not just a UI restriction — every path is enforced server-side.
+
+**Owner access.** The seeded admin account (`admin@pokerclause.local` /
+`admin12345` by default, overridable via `ADMIN_EMAIL`/`ADMIN_PASSWORD`)
+already existed as a concept (`role: 'admin'` on `UserRecord`, a
+`requireAdmin` HTTP middleware, `/admin/*` routes) but was only ever
+created by `db/seed.ts` — a manual script requiring a real Postgres
+`DATABASE_URL`, never run for the in-memory store this app actually
+defaults to. That meant there was no way at all to reach owner-only
+controls without first standing up Postgres by hand. Fixed with
+`ensureAdminAccount` in `apps/server/src/index.ts`, run unconditionally
+on every boot regardless of store backend. It went through two real bugs
+before landing:
+
+1. First version called `store.createAccount` directly, skipping the
+   starting-chip grant every other account gets (`register()`'s own job,
+   not something `createAccount` does on its own) — a freshly-booted
+   owner had **0 chips** and couldn't even seat themselves
+   (`INSUFFICIENT_CHIPS`) without first using the admin HTTP route to
+   grant their own account chips. Fixed by reusing the real `register()`
+   path instead of a hand-rolled duplicate of it, so the owner gets the
+   exact same grant everyone else does.
+2. The test suite's own `makeAdminUser` helper had the identical bug
+   (no chips granted) — which manifested as tests **hanging for the
+   full 30s timeout**, not failing fast: the admin's own `take-seat`
+   correctly got rejected with `INSUFFICIENT_CHIPS` (an `'error'`
+   event), but the test's `waitFor(socket, 'state')` only ever listens
+   for success and had no code path for "the server said no." A
+   reminder that a test helper silently missing a real precondition
+   doesn't just produce a wrong result — it can make the failure mode
+   itself misleading.
+
+**The join-link flow.** A human never gets a raw "pick your own buy-in"
+prompt anymore. Instead: `LiveTable` gets a small in-memory
+`Map<token, {seatId, buyIn}>` (`createSeatAssignment`/
+`redeemSeatAssignment` — no DB row, consistent with everything else
+about a live table not surviving a restart), the owner picks an empty
+seat and an amount in a new "Assign human" modal, and the resulting
+link (`/table/:id?assign=:token`) seats whoever opens it with EXACTLY
+that seat and amount — the redeemer's own input is never consulted, only
+the token's. Single-use: `redeemSeatAssignment` deletes the token on
+first use (success or failure), and the URL is stripped of the
+`?assign=` param client-side immediately after firing the redemption
+(regardless of outcome — a dead token has no reason to linger in the
+address bar for a page refresh to retry). `resetTable()` also clears any
+un-redeemed pending assignments, since they're void once the table's
+been wiped.
+
+**What's gated, and how:**
+
+- `take-seat` — admin-only now (the owner can still seat THEMSELVES
+  directly; there's no reason to make them invite-link their own
+  account). Everyone else must come through `redeem-seat-assignment`.
+- `add-bot` — admin-only.
+- `rebuy` — replaced entirely by `admin-rebuy`, which targets a
+  specific `{seatId, amount}` rather than "my own seat" — a seated
+  player can no longer request their own top-up; the owner rebuys them.
+  Still debits that PLAYER's own chip balance (identical ledger
+  mechanics to before, including the max-buy-in cap) — only WHO can
+  trigger it changed, not whose money it is.
+- `remove-bot` — deliberately left OPEN to any player, not admin-gated.
+  Removing a bot touches no real chip ledger (bots were already
+  play-chips-only — see the earlier computer-players section) and isn't
+  part of "who gets chips," so restricting it wasn't in scope of this
+  change and would only have added friction for no reason.
+
+Client-side: `Seat.tsx` gained `onAssignHumanClick`/`onRebuyClick`
+props (both admin-only, mirroring the existing `onAddBotClick`
+pattern), `Table.tsx` gates `onEmptySeatClick`/`onAddBotClick` to
+`user.role === 'admin'`, and the old self-serve "Rebuy" header button is
+gone, replaced by a per-seat owner-only "Rebuy" control on each occupied
+human seat.
+
+**Test fallout**: nearly every existing E2E test seated its own "guest"
+player directly (the old self-serve flow) — nine spec files needed
+updating to either log in as the owner (`adminLogin`, for tests where
+who's seated is incidental to what's actually being tested) or route a
+genuine non-admin player through the real invite-link flow
+(`inviteToSeat`, for tests specifically about non-owner behavior, like
+the terminate/reset admin-gating tests). New dedicated coverage:
+`ownerEconomy.spec.ts` (a regular player sees zero self-serve
+affordances anywhere; the owner's assign/rebuy flow works end to end)
+and new `liveTable`/`socketServer` unit tests for `resetTable()`,
+`assign-seat`/`redeem-seat-assignment` (including single-use
+enforcement), and `admin-rebuy` (including the max-buy-in cap and that
+errors route back to the CALLER, not the seat's occupant — a real
+mistake made once while writing these tests, worth remembering: an
+admin-triggered action's failure belongs to the admin who triggered it,
+not the seat it targeted).
+
+## A shared HTTP rate limit became test flakiness as the suite grew
+
+Unrelated to any single feature, but surfaced while adding this round's
+E2E tests: the whole Playwright suite shares ONE server process for its
+entire run (`playwright.config.ts`'s `webServer`), and
+`@fastify/rate-limit`'s production-appropriate 100-requests-per-minute
+cap is a PER-PROCESS limit — meaning it was never about any one test,
+but about the suite's total cumulative request volume across however
+many tests happen to run in that minute. As the suite grew past ~20
+tests (each doing several guest-signups, table creations, and seatings —
+several HTTP calls apiece), full-suite runs started intermittently
+tripping it, while the same tests passed reliably in isolation. Fixed by
+making the limit configurable (`RATE_LIMIT_MAX` env var, defaulting to
+the original 100) and setting it far higher in the E2E webServer config
+— production's abuse-appropriate limit has no reason to also gate test
+infrastructure.
+
+## The action timer flicker: the real cause was a much more frequent remount than the first fix addressed
+
+The earlier fix (a single CSS `@keyframes` sweep, restarted via
+`key={deadline}` on the `<circle>`) was real but treated the wrong
+frequency of the problem. `state.actionDeadline` goes `null` not just
+between hands, but every single time the acting seat is a COMPUTER
+PLAYER — there's deliberately no human action-clock shown for a bot's
+own think-time (see `armClockOrBot` in `liveTable.ts`). `ActionTimer`
+used to `return null` whenever its internal `remainingMs` was `null`,
+which meant the entire `.action-timer` div/svg/circle subtree was torn
+out of the DOM and reinserted fresh on every bot-to-human or
+human-to-bot handoff — in a hand with any bot seated, that's most turns,
+not a once-per-hand event. This is exactly why it kept reproducing after
+the first fix landed, and why a static screenshot or a DOM-mutation
+COUNT over a human-only hand (what the first investigation tested)
+never caught it — the bug only fires with a bot in the hand.
+
+Fixed properly this time: the element now stays permanently mounted for
+the whole hand (only a CSS `opacity` class toggles, with a short
+transition for a smooth cross-fade instead of an abrupt pop), and the
+ring's sweep is driven by the Web Animations API directly on a
+persistent ref (`arcRef.current.animate(...)`, cancelled and restarted
+fresh each turn) rather than a CSS `@keyframes` triggered by a
+`key`-forced remount. No JS interval touches the ring's geometry at all
+now — only the text number and the (CSS-transitioned) urgency color.
+Verified directly this time, not just inferred: a `MutationObserver`
+watching for `.action-timer` add/remove events during a real hand with
+an actively-acting bot, over several forced bot/human handoffs, shows
+zero — see `actionTimer.spec.ts`, the regression test for this
+specifically (the earlier `shortViewport.spec.ts`-adjacent checks never
+exercised a bot mid-hand, which is exactly why this survived the first
+pass).
+
+## Invite links: two bugs, not one, before they actually worked for someone not yet signed in
+
+Every E2E test for the owner-only invite-link flow always had the
+target already authenticated (`guestSignup` before opening the link),
+so this specific path — the actually-common real-world case of someone
+getting a link cold, with no account yet — went untested and shipped
+broken.
+
+**Bug 1 — the destination was lost at the auth boundary.** Opening
+`/table/:id?assign=:token` while signed out hit `App.tsx`'s route guard
+(`user ? <TablePage/> : <Navigate to="/login" replace/>`), which
+carries no memory of where the visitor was headed. After signing up as
+a guest, they landed on the generic `/lobby` — the invite token just
+sat, unused, in a URL nobody was on anymore. Fixed by having the guard
+(`RedirectToLogin`) pass the full original path+query as router `state`
+on its way to `/login`.
+
+**Bug 2 — a genuine navigation race, found only by adding real
+`console.log`s at each decision point and reading the actual order of
+events, not by re-reading the code.** The obvious fix — `LoginPage`
+reads that `state` and calls `navigate(from)` once sign-in succeeds —
+looked right and still landed on `/lobby`. The `/login` route's OWN
+element was `user ? <Navigate to="/lobby" replace/> : <LoginPage/>` —
+a hardcoded redirect meant for "an already-authenticated visitor
+manually opens /login". The instant `signupGuest()`'s `setUser(...)`
+makes `user` truthy, React re-evaluates that route while the browser
+URL is *still* `/login` (the intended `navigate(from)` call hasn't
+landed yet) — so it renders `<Navigate to="/lobby" replace/>`,
+unconditionally, in a straight race against `LoginPage`'s own
+`navigate(from)`. Whichever `history.replaceState` call landed second
+won, and the hardcoded one had no reason to reliably lose.
+
+Fixed by removing the race instead of trying to win it: `LoginPage`
+itself no longer calls `navigate()` on success at all. The `/login`
+route element (`LoginRoute`, a new small component) is now the SOLE
+place that decides where an authenticated visitor goes, reading the
+same `state.from` itself — once `user` becomes truthy there's only one
+navigation decision being made, not two competing ones, so there's
+nothing left to race. `ownerEconomy.spec.ts` gained a dedicated
+regression test: a context that never calls `guestSignup` at all opens
+an invite link cold, signs up from the resulting `/login` redirect, and
+must land directly on the invited table (not `/lobby`) with the seat
+already filled at the link's own buy-in.

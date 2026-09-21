@@ -4,6 +4,15 @@ export interface ChipDenomination {
   edge: string;
 }
 
+/**
+ * Every displayed chip amount goes through this — a cosmetic "$" prefix
+ * over the same underlying numbers the engine/server already use (no
+ * exchange rate, no change to any real value anywhere). See DECISIONS.md.
+ */
+export function formatChips(amount: number): string {
+  return `$${amount.toLocaleString()}`;
+}
+
 // Standard casino chip color coding (the common US convention), ordered
 // highest value first so a greedy breakdown naturally reaches for the
 // biggest chips first — same as a real dealer would.

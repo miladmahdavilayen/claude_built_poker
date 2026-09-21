@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
+import { register } from './auth/authService.js';
 import { closeDb, getDb } from './db/client.js';
 import { DrizzleStore } from './db/drizzleStore.js';
 import { MemoryStore } from './db/memoryStore.js';
@@ -54,6 +55,39 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
   log.info('Seeded 2 default public tables.');
 }
 
+/**
+ * `db/seed.ts` also creates an admin account, but it requires a real
+ * Postgres `DATABASE_URL` and is a manual, one-off script — it never
+ * runs for the (default, no-`DATABASE_URL`) in-memory store, which meant
+ * there was no way at all for the person self-hosting this app to reach
+ * owner-only controls (terminate/reset a table, assign chips) without
+ * first standing up Postgres by hand. This runs unconditionally, on
+ * every boot, against whichever store is active — a no-op past the
+ * first boot for a persistent store, and necessarily re-created every
+ * time for the in-memory store (nothing survives a restart there
+ * anyway). Credentials are configurable via env vars so a real
+ * deployment isn't stuck with a published default password.
+ */
+async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise<void> {
+  const email = process.env.ADMIN_EMAIL ?? 'admin@pokerclause.local';
+  const password = process.env.ADMIN_PASSWORD ?? 'admin12345';
+  const existing = await store.findUserByEmail(email);
+  if (existing) {
+    if (existing.role !== 'admin') await store.setUserRole(existing.id, 'admin');
+    return;
+  }
+  // Reuses the real registration path (not a hand-rolled duplicate of
+  // it) specifically so the owner account gets the same starting chip
+  // grant every other account gets — an earlier version of this created
+  // the account directly via store.createAccount, which skipped that
+  // grant entirely and left a fresh owner unable to even seat themselves
+  // (INSUFFICIENT_CHIPS) until they used the admin HTTP route to grant
+  // their own account chips first. See DECISIONS.md.
+  const result = await register(store, email, password, 'Owner');
+  await store.setUserRole(result.user.id, 'admin');
+  log.info(`Created owner/admin account: ${email} / ${password} (set ADMIN_EMAIL/ADMIN_PASSWORD to override).`);
+}
+
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 4000);
   const host = process.env.HOST ?? '0.0.0.0';
@@ -69,7 +103,12 @@ async function main(): Promise<void> {
   await app.register(helmet, { contentSecurityPolicy: isProd });
   await app.register(cors, { origin: corsOrigin, credentials: true });
   await app.register(cookie);
-  await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+  // Configurable so the E2E suite (many short-lived tests sharing ONE
+  // server process across the whole run — see playwright.config.ts) can
+  // raise it well above what a real client would ever need, instead of
+  // production's HTTP-abuse-appropriate limit becoming test flakiness as
+  // the suite grows. See DECISIONS.md.
+  await app.register(rateLimit, { max: Number(process.env.RATE_LIMIT_MAX ?? 100), timeWindow: '1 minute' });
 
   // CSRF defense-in-depth on state-changing auth routes: SameSite=Lax on
   // the refresh cookie is the primary mitigation (per spec); this Origin
@@ -94,6 +133,8 @@ async function main(): Promise<void> {
     store = new MemoryStore();
     app.log.warn('DATABASE_URL not set — using in-memory storage. Data will NOT persist across restarts. Set DATABASE_URL for production use.');
   }
+
+  await ensureAdminAccount(store, app.log);
 
   registerHealthRoute(app);
   registerAuthRoutes(app, store);

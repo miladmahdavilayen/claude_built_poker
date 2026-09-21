@@ -76,6 +76,14 @@ export interface ProjectedTableState {
    */
   anteTotal: number;
   phase: 'waiting' | 'in-hand' | 'hand-complete';
+  /**
+   * True once enough players are dealt-in (2+, including at least one real
+   * human) that a hand COULD start — but nothing deals automatically. A
+   * seated player must explicitly trigger the `start-hand` socket event
+   * (the "Play Hand" button) for every hand, including the first. See
+   * DECISIONS.md.
+   */
+  canStartHand: boolean;
   /** Only ever populated when it's genuinely this viewer's own seat's turn. */
   legalActions: LegalActions | null;
   viewerSeatId: number | null;

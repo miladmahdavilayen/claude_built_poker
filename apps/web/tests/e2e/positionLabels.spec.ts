@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, takeSeat } from './helpers.js';
+import { adminLogin, createTable, startHand, takeSeat } from './helpers.js';
 
 async function positionLabelFor(page: import('@playwright/test').Page, seatId: number): Promise<string | null> {
   const locator = page.locator(`[data-testid="seat-${seatId}"] .position-label`);
@@ -12,7 +12,8 @@ async function positionLabelFor(page: import('@playwright/test').Page, seatId: n
 }
 
 test('position labels (UTG, HJ, CO, etc.) and the dealer button match seat count and rotate with it', async ({ page }) => {
-  await guestSignup(page, 'Solo');
+  // Self-seating and adding a bot are both owner-only now (see DECISIONS.md).
+  await adminLogin(page);
   await createTable(page, { name: 'Position Labels Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 150);
 
@@ -23,6 +24,7 @@ test('position labels (UTG, HJ, CO, etc.) and the dealer button match seat count
     await page.waitForTimeout(150);
   }
 
+  await startHand(page);
   await expect(page.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
 
   // 6-handed: exactly one seat is BTN (shown via the "D" disc, no redundant
@@ -43,13 +45,14 @@ test('position labels (UTG, HJ, CO, etc.) and the dealer button match seat count
 });
 
 test('heads-up: the button seat is also effectively the small blind, and only BB gets a text label', async ({ page }) => {
-  await guestSignup(page, 'Solo');
+  await adminLogin(page);
   await createTable(page, { name: 'Heads-Up Labels Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 150);
   await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
   await page.getByLabel(/Buy-in/).fill('150');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
 
+  await startHand(page);
   await expect(page.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
 
   await expect(page.locator('.dealer-button')).toHaveCount(1);

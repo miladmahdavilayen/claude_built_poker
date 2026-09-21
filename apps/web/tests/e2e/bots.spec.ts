@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, playHandToCompletion, takeSeat } from './helpers.js';
+import { adminLogin, createTable, playHandToCompletion, startHand, takeSeat } from './helpers.js';
 
 test('a solo player can add a computer opponent, play a full hand against it, and remove it afterward', async ({ page }) => {
-  await guestSignup(page, 'Solo');
+  // Adding a bot and self-seating are both owner-only now (see DECISIONS.md).
+  await adminLogin(page);
   await createTable(page, { name: 'E2E Solo vs Bots Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
 
   await takeSeat(page, 0, 100);
@@ -13,10 +14,11 @@ test('a solo player can add a computer opponent, play a full hand against it, an
   await page.getByLabel(/Buy-in/).fill('100');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
 
-  // The bot seat is visibly marked as a bot, and a hand deals automatically
-  // (one human + one bot = two dealt-in seats), entirely without a second
-  // human player or browser context.
+  // The bot seat is visibly marked as a bot. Nothing deals automatically —
+  // one human + one bot = two dealt-in seats is enough to start, but a
+  // hand only begins once "Play Hand" is explicitly clicked.
   await expect(page.locator('[data-testid="seat-1"]').getByText('🤖 bot')).toBeVisible();
+  await startHand(page);
   await expect(page.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
 
   // Play it out: this only ever clicks for the human (seat 0) — the bot's

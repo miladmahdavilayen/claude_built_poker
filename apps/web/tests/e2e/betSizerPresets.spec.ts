@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, startHand, takeSeat } from './helpers.js';
 
 // Regression test: the "1/2 pot" and "Pot" bet-sizer preset buttons used
 // to compute against `state.pots`, which the engine only ever populates
@@ -15,16 +15,16 @@ test('the "Pot" preset bet-sizer button reflects the real live pot, not always t
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
-  await guestSignup(pageA, 'Alice');
+  // Alice is the table owner (self-seating and inviting are both owner-only now — see DECISIONS.md).
+  await adminLogin(pageA);
   await createTable(pageA, { name: 'Bet Sizer Presets Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
-  const tableUrl = pageA.url();
 
   await guestSignup(pageB, 'Bob');
-  await pageB.goto(tableUrl);
 
   await takeSeat(pageA, 0, 200);
-  await takeSeat(pageB, 1, 200);
+  await inviteToSeat(pageA, pageB, 1, 200);
 
+  await startHand(pageA);
   await expect(pageA.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
 
   // Heads-up preflop: whichever page is button/SB acts first, facing a

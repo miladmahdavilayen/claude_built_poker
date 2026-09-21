@@ -46,10 +46,14 @@ Open http://localhost:5173. The server listens on http://localhost:4000.
 
 Two public tables ("Micro Stakes 1/2", "High Stakes 5/10") are created
 automatically on every server boot — see `seedDefaultTables` in
-`apps/server/src/index.ts`. `docker compose exec server pnpm db:seed` additionally
-seeds three real Postgres accounts for testing: `admin@pokerclause.local`,
-`alice@pokerclause.local`, `bob@pokerclause.local` (all password `password123`,
-except admin: `admin12345`).
+`apps/server/src/index.ts`. An owner/admin account
+(`admin@pokerclause.local` / `admin12345` by default — override with
+`ADMIN_EMAIL`/`ADMIN_PASSWORD`) is *also* created automatically on every
+boot, regardless of storage backend — see "Owner-controlled chip
+economy" below for why you need it. `docker compose exec server pnpm
+db:seed` additionally seeds two real Postgres test player accounts:
+`alice@pokerclause.local`, `bob@pokerclause.local` (password
+`password123`).
 
 > Docker Compose has not been run in the development sandbox this project was
 > built in (no Docker daemon available there) — the compose file, Dockerfiles,
@@ -77,8 +81,13 @@ JWT_SECRET=dev-secret-change-me PORT=4000 pnpm --filter @pokerclause/server dev
 VITE_API_URL=http://localhost:4000 pnpm --filter @pokerclause/web dev
 ```
 
-Open http://localhost:5173, click "Play as guest", and you're seated at a
-live poker table.
+Open http://localhost:5173, and log in as the owner (**Log in** tab,
+`admin@pokerclause.local` / `admin12345`) — self-serve seating no longer
+exists (see "Owner-controlled chip economy" below), so the owner account
+is how you actually get a hand going: sit yourself down at a table, add
+a computer opponent to play against, or generate an invite link for
+someone else to join with. A "Play as guest" account can only join a
+table via a link the owner sends them.
 
 ## Running the test suites
 
@@ -108,12 +117,22 @@ enforcement, the waitlist, table position labels, a session surviving a
 hard page reload, no-Google-configured graceful degradation, the action
 bar staying pinned in view at an extreme short browser-window height, the
 "Pot"/"1/2 pot" bet-sizer presets reflecting the real live pot, chip
-visuals for SB/BB/street bets landing in front of the right seat, a solo
-player adding a computer opponent and playing a full hand against it with
-no second human involved, and — using Chromium's fake-media-device flags,
-no real camera/mic needed — two seated players actually establishing a
-peer-to-peer WebRTC voice/video connection and each seeing the other's
-video rendered directly on their seat. See `apps/web/tests/e2e/`.
+visuals for SB/BB/street bets landing in front of the right seat, the
+flop/turn/river dealing animation and a bet's chip-flight animation each
+genuinely appearing, the hand-winner banner/badge/loss-cue rendering
+correctly for winner vs. everyone else (including the genuine split-pot
+case), that no hand ever deals itself without an explicit "Play Hand"
+click (not even the second hand in a row), leaving a table actually
+navigating away and freeing the seat, a table auto-closing once its last
+human leaves, the owner's terminate/reset controls, the whole
+owner-only chip economy (a regular player has zero self-serve options;
+the owner's assign-a-seat link and per-seat rebuy both work end to end),
+a solo player adding a computer opponent and playing a full hand against
+it with no second human involved, and — using Chromium's
+fake-media-device flags, no real camera/mic needed — two seated players
+actually establishing a peer-to-peer WebRTC voice/video connection and
+each seeing the other's video rendered directly on their seat. See
+`apps/web/tests/e2e/`.
 
 Seats show their table position (UTG, HJ, CO, SB, BB — the button seat
 gets the dealer disc instead of a redundant "BTN" text badge), computed
@@ -130,15 +149,70 @@ not just plain numbers — bet chips sit on the felt in front of the
 associated seat, swept away and redrawn fresh each street, same as real
 chips would be. See `apps/web/src/chips.ts` and DECISIONS.md.
 
+Nothing deals itself: once enough players are seated (2+, at least one a
+real human — computer players alone never trigger a deal), a seated
+player clicks **"Play Hand"** to start it, every time, including the
+next hand after one finishes. Starting a hand plays a brief shuffle
+animation with a synthesized riffle sound, then deals with a card-by-card
+flying animation and sound to each seat, and the same treatment carries
+through the rest of the hand — the flop/turn/river each fly in as
+they're dealt, a bet/call/raise sends a chip flying to the pot with a
+"clink," and the hand's winner gets announced: a big animated "You Win!"
+banner and a little fanfare for the winner themselves, a small quiet
+badge for anyone else who won, and a brief subtle cue for a genuine
+loss. All of it lightweight and asset-free (pure CSS + the Web Audio
+API, no images or audio files). See
+`apps/web/src/components/DealAnimation.tsx`,
+`apps/web/src/components/WinCelebration.tsx`, `sound.ts`, and
+DECISIONS.md.
+
+## Owner-controlled chip economy
+
+Buy-ins, rebuys, and adding a computer player are **owner-only** — a
+regular player can't seat themselves, top themselves up, or add a bot.
+Only the account logged in as the owner (`role: 'admin'` — see the
+quickstart above) can do any of that, for anyone, human or bot. This
+isn't just a UI restriction; every one of these is enforced
+server-side.
+
+- **Seating a human**: the owner picks an empty seat and a buy-in amount
+  in the **"+ Assign human"** flow, which generates a one-time invite
+  link (`/table/:id?assign=:token`). Whoever opens that link is seated
+  directly, with exactly that buy-in — no prompt, and their own input is
+  never consulted. The link is single-use.
+- **Adding a bot**: unchanged in how it looks (**"+ Add bot"**, pick a
+  persona and a buy-in), just now owner-only.
+- **Rebuying a player**: the owner clicks **"Rebuy"** on a specific
+  seated human's own seat (not a header button anymore) and sets an
+  amount — still debits that player's own chip balance, same as a
+  normal buy-in, just triggered by the owner rather than requested by
+  the player.
+- **Terminate / Reset table**: also owner-only, in the table header.
+  "Terminate" ends the table for everyone right now (refunding every
+  seated human). "Reset" empties every seat and refunds every seated
+  human too, but keeps the table itself — same name, settings, and URL
+  — so it's ready to seat fresh right after.
+
+The owner account is bootstrapped automatically on every server boot
+(`admin@pokerclause.local` / `admin12345` by default — see the
+quickstart above), regardless of storage backend, so this works out of
+the box without touching Postgres.
+
+Clicking **"Leave table"** genuinely leaves — the seat clears, its chips
+are refunded to your balance, and you're sent back to the lobby. If that
+leaves nobody human still seated, the table closes itself immediately
+(any spectator watching gets sent to the lobby too) — a table with only
+bots left in it, or nobody at all, has no reason to keep running.
+
 ## Computer players
 
 Any empty seat can be filled with a computer opponent instead of waiting
 for another human — useful for practice, or just playing solo for fun.
-Click **"+ Add bot"** on an empty seat, pick a persona and a buy-in, and
-it plays on its own, real-time, with a randomized 1–6 second "thinking"
-delay before each action, so it doesn't feel instant or robotic. A table
-needs at least one real human seated
-before it deals a hand at all — a table left with only bots never deals
+The owner clicks **"+ Add bot"** on an empty seat, picks a persona and a
+buy-in, and it plays on its own, real-time, with a randomized 1–6
+second "thinking" delay before each action, so it doesn't feel instant
+or robotic. A table needs at least one real human seated before "Play
+Hand" is even usable — a table left with only bots can never deal
 itself into an empty room, so it isn't quietly burning server resources
 for no one.
 

@@ -31,12 +31,31 @@ export const TakeSeatSchema = z
   .strict();
 export type TakeSeatIntent = z.infer<typeof TakeSeatSchema>;
 
-export const RebuySchema = z
+/** Owner-only: rebuys a specific seat's occupant — see DECISIONS.md ("owner-only chip economy"). Self-serve rebuy no longer exists. */
+export const AdminRebuySchema = z
   .object({
+    seatId: z.number().int().min(0).max(8),
     amount: z.number().int().positive(),
   })
   .strict();
-export type RebuyIntent = z.infer<typeof RebuySchema>;
+export type AdminRebuyIntent = z.infer<typeof AdminRebuySchema>;
+
+/** Owner-only: generates a one-time, seat-and-amount-specific invite link for a human. See DECISIONS.md. */
+export const AssignSeatSchema = z
+  .object({
+    seatId: z.number().int().min(0).max(8),
+    buyIn: z.number().int().positive(),
+  })
+  .strict();
+export type AssignSeatIntent = z.infer<typeof AssignSeatSchema>;
+
+/** Redeems an owner-generated seat-assignment link — the buy-in comes from the token itself, never from the redeemer. */
+export const RedeemAssignmentSchema = z
+  .object({
+    token: z.string().min(1),
+  })
+  .strict();
+export type RedeemAssignmentIntent = z.infer<typeof RedeemAssignmentSchema>;
 
 export const AddBotSchema = z
   .object({

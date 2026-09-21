@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, startHand, takeSeat } from './helpers.js';
 
 // Regression test, two related bugs:
 //
@@ -33,16 +33,16 @@ test('the action bar is pinned in view — no scrolling needed — even at an ex
   const pageShort = await ctxShort.newPage();
   const pageOther = await ctxOther.newPage();
 
-  await guestSignup(pageShort, 'Solo');
+  // pageShort is the table owner (self-seating and inviting are both owner-only now — see DECISIONS.md).
+  await adminLogin(pageShort);
   await createTable(pageShort, { name: 'Short Viewport Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
-  const tableUrl = pageShort.url();
 
   await guestSignup(pageOther, 'Buddy');
-  await pageOther.goto(tableUrl);
 
   await takeSeat(pageShort, 0, 200);
-  await takeSeat(pageOther, 1, 200);
+  await inviteToSeat(pageShort, pageOther, 1, 200);
 
+  await startHand(pageShort);
   await expect(pageShort.locator('[data-testid="fairness-commitment"]')).toBeVisible({ timeout: 10_000 });
 
   // If the other seat is button/SB, it acts first — just call, never raise,

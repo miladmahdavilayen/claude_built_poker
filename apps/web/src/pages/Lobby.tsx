@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
 import type { TableSummaryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
+import { formatChips } from '../chips.js';
 import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
 export function LobbyPage(): React.JSX.Element {
@@ -34,7 +35,7 @@ export function LobbyPage(): React.JSX.Element {
         {user && (
           <div className="lobby-user">
             <span>
-              {user.displayName} &middot; {user.chips.toLocaleString()} chips
+              {user.displayName} &middot; {formatChips(user.chips)}
             </span>
             {user.isGuest && <button onClick={() => setShowUpgrade(true)}>Create account</button>}
             <button onClick={() => void logout()}>Log out</button>
@@ -68,10 +69,10 @@ export function LobbyPage(): React.JSX.Element {
             <tr key={t.tableId}>
               <td>{t.name}</td>
               <td>
-                {t.settings.smallBlind}/{t.settings.bigBlind}
+                {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
               </td>
               <td>
-                {t.settings.minBuyIn}&ndash;{t.settings.maxBuyIn}
+                {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
               </td>
               <td>
                 {t.seatsFilled}/{t.maxSeats}

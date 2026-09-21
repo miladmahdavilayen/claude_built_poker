@@ -1,0 +1,34 @@
+{
+  "name": "@pokerclause/sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "pokerclause-sim": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "sim": "tsx src/cli.ts",
+    "sim:repro": "tsx src/reproCli.ts",
+    "sim:golden": "tsx src/goldenCli.ts"
+  },
+  "dependencies": {
+    "@pokerclause/engine": "workspace:*",
+    "@pokerclause/rng": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.8",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "pokerclause",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "coverage": "pnpm -r coverage",
+    "sim": "pnpm --filter @pokerclause/sim sim",
+    "sim:repro": "pnpm --filter @pokerclause/sim sim:repro",
+    "sim:golden": "pnpm --filter @pokerclause/sim sim:golden"
+  },
+  "devDependencies": {
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}

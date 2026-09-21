@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+isolate-*.log
+sim-failures/
+test-results/
+playwright-report/
+blob-report/
+
+# Secrets — never committed; see .env.example for the documented shape.
+.env
+.env.*
+!.env.example
+
+# Claude Code's own session state, not project source.
+.claude/

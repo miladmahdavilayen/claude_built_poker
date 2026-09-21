@@ -9,7 +9,14 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - '5432:5432'
+      # Loopback-only: Postgres has no reason to be reachable from outside
+      # this machine, and Redis (below) has no auth configured at all by
+      # default — publishing either on 0.0.0.0 exposes them to the whole
+      # internet on any real deployment. `db:migrate`/`db:seed` (run via
+      # `docker compose exec`) reach this over the internal Docker network
+      # regardless, and `localhost:5432` from the host machine itself still
+      # works fine — this only blocks OTHER machines from reaching it.
+      - '127.0.0.1:5432:5432'
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-pokerclause}']
       interval: 5s
@@ -20,7 +27,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - '6379:6379'
+      - '127.0.0.1:6379:6379' # see postgres's port comment above — same reasoning
 
   server:
     build:
@@ -41,7 +48,12 @@ services:
       SEED_DEFAULT_TABLES: ${SEED_DEFAULT_TABLES:-true}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     ports:
-      - '4000:4000'
+      # Loopback-only, same reasoning as postgres/redis above — a real
+      # deployment fronts this with a reverse proxy (for TLS, among other
+      # things — see README's deployment section) rather than exposing the
+      # app container directly. `localhost:4000` from this machine still
+      # works exactly as the quickstart below describes.
+      - '127.0.0.1:4000:4000'
 
   web:
     build:
@@ -54,7 +66,7 @@ services:
     depends_on:
       - server
     ports:
-      - '5173:80'
+      - '127.0.0.1:5173:80' # see server's port comment above — same reasoning
 
 volumes:
   pgdata:

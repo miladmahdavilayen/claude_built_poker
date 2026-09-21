@@ -256,6 +256,41 @@ Two real constraints worth knowing before you rely on it:
   `useVoiceChat.ts` would close that gap if it matters for your
   deployment.
 
+## Putting a real domain + HTTPS in front of a deployment
+
+`docker-compose.yml`'s `server`/`web`/`postgres`/`redis` ports are all
+bound to `127.0.0.1` on the host — reachable from the machine itself
+(so `localhost:5173`/`localhost:4000` in the local quickstart above
+still work exactly as written), but not from anywhere else. That's
+deliberate: on any real deployment, something needs to sit in front of
+this and terminate TLS anyway (voice/video and Google Sign-In both
+require it — see above), so there's no reason for the raw containers
+(Postgres and Redis in particular — Redis has no auth configured at
+all by default) to be reachable from the internet directly.
+
+The simplest option is [Caddy](https://caddyserver.com/), installed
+directly on the host (not another container) — it gets you a real,
+auto-renewing Let's Encrypt certificate with almost no config:
+
+```
+# /etc/caddy/Caddyfile
+your-domain.com {
+    reverse_proxy 127.0.0.1:5173
+}
+api.your-domain.com {
+    reverse_proxy 127.0.0.1:4000
+}
+```
+
+Then set `CORS_ORIGIN=https://your-domain.com` and
+`VITE_API_URL=https://api.your-domain.com` in `.env` and rebuild
+(`docker compose up -d --build`) — `VITE_API_URL` is baked into the
+client's JS bundle at build time, so a plain restart isn't enough,
+the web image has to actually rebuild. Don't have a domain yet?
+[sslip.io](https://sslip.io) gives you one instantly, free, with zero
+DNS setup, by encoding the IP in the hostname itself (e.g.
+`1-2-3-4.sslip.io` resolves straight to `1.2.3.4`).
+
 ## Sign in with Google
 
 Guests and email/password accounts work with zero configuration — Google

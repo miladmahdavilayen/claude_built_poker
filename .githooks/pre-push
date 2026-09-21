@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Runs the full unit/integration suite (engine, rng, shared, sim, server)
+# before code leaves the machine — the same first gate CI runs, just
+# local, so a push that would fail CI fails here first instead. The E2E
+# browser suite is deliberately NOT run here (slow, and needs Playwright's
+# browsers installed) — that stays a CI-only, PR-time check. See
+# DECISIONS.md and .github/workflows/ci.yml.
+set -euo pipefail
+
+echo "pre-push: running full test suite (this can take up to ~40s)"
+pnpm -r test
+
+echo "pre-push: ok"

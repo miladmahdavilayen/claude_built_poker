@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Fast local gate: type errors and lint violations are cheap to catch here,
+# before they're even committed. Slower checks (the full test suite) live
+# in pre-push instead, so a commit stays quick. See DECISIONS.md.
+set -euo pipefail
+
+echo "pre-commit: typecheck"
+pnpm -r typecheck
+
+echo "pre-commit: lint"
+pnpm -r lint
+
+echo "pre-commit: ok"

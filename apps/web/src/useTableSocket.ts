@@ -30,7 +30,7 @@ export interface TableSocketApi {
   /** Set once the server has closed this table (an owner's "Terminate table," or everyone human having left) — the reason string to show, or null if the table is still live. */
   tableClosedReason: string | null;
   joinTable: (tableId: string, inviteCode?: string) => void;
-  takeSeat: (tableId: string, seatId: number, buyIn: number) => void;
+  takeSeat: (tableId: string, seatId: number, buyIn: number, displayName?: string) => void;
   /** Resolves only once the server has actually cleared the seat — safe to navigate away (and tear down this socket) only after it resolves, not before. See DECISIONS.md. */
   leaveTable: () => Promise<void>;
   sitOut: () => void;
@@ -111,7 +111,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       lastError,
       tableClosedReason,
       joinTable: (tableId, inviteCode) => socket?.emit('join-table', inviteCode ? { tableId, inviteCode } : { tableId }),
-      takeSeat: (tableId, seatId, buyIn) => socket?.emit('take-seat', { tableId, seatId, buyIn }),
+      takeSeat: (tableId, seatId, buyIn, displayName) =>
+        socket?.emit('take-seat', displayName ? { tableId, seatId, buyIn, displayName } : { tableId, seatId, buyIn }),
       leaveTable: () => new Promise<void>((resolve) => (socket ? socket.emit('leave-table', () => resolve()) : resolve())),
       sitOut: () => socket?.emit('sit-out'),
       sitIn: () => socket?.emit('sit-in'),

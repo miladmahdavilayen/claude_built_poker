@@ -17,12 +17,25 @@
 
 * {
   box-sizing: border-box;
+  /* Tap highlight looks broken over custom buttons/seats — replaced with real :active states throughout instead. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  /* A fixed-width element anywhere (a table, a long unbreakable string) would otherwise force
+     sideways scrolling on a narrow phone — nothing on this app is meant to scroll horizontally. */
+  overflow-x: hidden;
+  width: 100%;
 }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  /* iOS bumps form-adjacent text up in size on rotate unless told not to. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 ::-webkit-scrollbar {
@@ -67,18 +80,65 @@ select:focus-visible {
 }
 
 input,
-select {
+select,
+textarea {
   background: var(--bg);
   border: 1px solid var(--panel-border);
   color: var(--text);
   border-radius: var(--radius);
   padding: 6px 8px;
   font-family: inherit;
+  /* Below 16px, iOS Safari zooms the whole page in on focus (there's no CSS
+     way to opt out of that directly) — this is the actual fix. */
+  font-size: 16px;
   transition: border-color 0.12s ease;
+  max-width: 100%;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--accent);
+}
+
+/* A slim default track/thumb is hard to drag precisely with a finger —
+   sized for a comfortable touch target on every platform, not just the
+   ones (like iOS) that already default to something reasonable. */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;
+  background: transparent;
+  padding: 0;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--panel-border);
+  border-radius: 2px;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  margin-top: -10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #10151c;
+  cursor: pointer;
+}
+input[type='range']::-moz-range-track {
+  height: 4px;
+  background: var(--panel-border);
+  border-radius: 2px;
+}
+input[type='range']::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #10151c;
+  cursor: pointer;
 }
 
 .checkbox-label {
@@ -92,9 +152,16 @@ select:focus {
 
 .page-centered {
   height: 100vh;
+  /* iOS Safari's address/toolbar chrome makes 100vh taller than the actually-visible
+     area; dvh tracks the real visible viewport. Plain `height: 100vh` above is a
+     fallback for the handful of browsers that don't know `dvh` yet. */
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
 
 .auth-card {
@@ -103,6 +170,9 @@ select:focus {
   border-radius: 12px;
   padding: 32px;
   width: 360px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
 }
 .auth-card h1 {
   text-align: center;
@@ -171,6 +241,17 @@ select:focus {
 }
 .lobby-toolbar {
   margin: 16px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* A narrow phone can still end up needing more width than it has (long
+   table names, five columns) — this lets that scroll sideways within its
+   own box instead of forcing the whole page to. */
+.table-list-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .table-list {
   width: 100%;
@@ -181,6 +262,7 @@ select:focus {
   text-align: left;
   padding: 10px;
   border-bottom: 1px solid var(--panel-border);
+  white-space: nowrap;
 }
 
 .modal-backdrop {
@@ -193,6 +275,9 @@ select:focus {
   justify-content: center;
   z-index: 50;
   animation: fade-in 0.12s ease;
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
 }
 .modal {
   background: var(--panel);
@@ -200,6 +285,9 @@ select:focus {
   border-radius: 12px;
   padding: 24px;
   width: 320px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -239,6 +327,7 @@ select:focus {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* see .page-centered's comment on dvh vs. vh on iOS Safari */
   /* Safety net: the action bar is the single most important thing on this
      page (see DECISIONS.md — a short real-world browser viewport, once
      the voice/waitlist panels are also showing, can genuinely push it
@@ -246,12 +335,19 @@ select:focus {
      trying to perfectly predict every viewport height, the page itself
      scrolls so the action bar is always reachable no matter what. */
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
 }
 .table-header {
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 6px;
   justify-content: space-between;
   align-items: center;
   padding: 10px 20px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  padding-left: calc(20px + env(safe-area-inset-left));
+  padding-right: calc(20px + env(safe-area-inset-right));
   background: var(--panel);
   border-bottom: 1px solid var(--panel-border);
 }
@@ -272,6 +368,7 @@ select:focus {
 }
 .table-header-right {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -750,15 +847,21 @@ select:focus {
 }
 .seat {
   position: relative;
-  width: 128px;
+  /* --seat-width etc. come from Table.tsx's seatSizeVars(), scaled by how many
+     seats this table has (fewer seats = more room = a bigger seat) — see
+     seatLayout.ts. --mobile-shrink is the separate, device-size axis: 1 on a
+     full-size screen, pulled down by the media queries below on a phone. Both
+     multiply onto the same baseline together rather than fighting each other. */
+  width: var(--seat-width, 128px);
+  transform: scale(var(--mobile-shrink, 1));
   background: rgba(10, 14, 20, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  padding: 6px;
+  padding: var(--seat-pad, 6px);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--seat-gap, 4px);
   transition: opacity 0.25s ease, outline-color 0.2s ease;
 }
 .seat-acting {
@@ -781,7 +884,11 @@ select:focus {
   outline: 1px solid var(--good);
 }
 .seat-empty {
-  width: 100px;
+  /* An empty seat has no cards/avatar/stack to show, so it's kept a bit
+     smaller than an occupied one at the same seat count — same ratio
+     (100/128) the original fixed sizes used. */
+  width: calc(var(--seat-width, 128px) * 0.78);
+  transform: scale(var(--mobile-shrink, 1));
   min-height: 60px;
   border: 1px dashed var(--panel-border);
   border-radius: 10px;
@@ -841,28 +948,28 @@ select:focus {
   gap: 3px;
 }
 .seat-cards .card {
-  width: 26px;
-  height: 38px;
-  font-size: 11px;
+  width: var(--card-w, 26px);
+  height: var(--card-h, 38px);
+  font-size: var(--card-font, 11px);
 }
 .seat-info {
   text-align: center;
 }
 .seat-name {
-  font-size: 12px;
+  font-size: var(--seat-name-font, 12px);
   display: flex;
   align-items: center;
   gap: 4px;
   justify-content: center;
 }
 .seat-avatar {
-  width: 16px;
-  height: 16px;
+  width: var(--avatar-size, 16px);
+  height: var(--avatar-size, 16px);
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: var(--avatar-font, 10px);
   font-weight: 700;
   color: rgba(255, 255, 255, 0.9);
   flex-shrink: 0;
@@ -902,10 +1009,10 @@ select:focus {
   right: -8px;
   background: var(--accent);
   color: #10151c;
-  width: 20px;
-  height: 20px;
+  width: var(--dealer-size, 20px);
+  height: var(--dealer-size, 20px);
   border-radius: 50%;
-  font-size: 11px;
+  font-size: calc(var(--dealer-size, 20px) * 0.55);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -920,7 +1027,7 @@ select:focus {
   color: var(--muted);
   padding: 1px 6px;
   border-radius: 8px;
-  font-size: 9px;
+  font-size: var(--pos-label-font, 9px);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -930,13 +1037,16 @@ select:focus {
   background: rgba(0, 0, 0, 0.7);
   padding: 2px 8px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: var(--bubble-font, 11px);
 }
 
 .action-bar {
   background: var(--panel);
   border-top: 1px solid var(--panel-border);
   padding: 10px 20px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  padding-left: calc(20px + env(safe-area-inset-left));
+  padding-right: calc(20px + env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1005,6 +1115,7 @@ select:focus {
   display: flex;
   gap: 6px;
   padding: 6px 12px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
 }
 .chat-form input {
   flex: 1;
@@ -1149,13 +1260,9 @@ select:focus {
     margin: 8px;
     min-height: 280px;
     border-width: 10px;
-  }
-  .seat {
-    width: 92px;
-  }
-  .seat-cards .card {
-    width: 20px;
-    height: 30px;
+    /* Device-size axis of seat sizing — multiplies onto the per-seat-count
+       --seat-width set by Table.tsx (seatSizeVars), see .seat's own comment. */
+    --mobile-shrink: 0.78;
   }
   .action-buttons {
     flex-wrap: wrap;
@@ -1163,9 +1270,30 @@ select:focus {
   }
   .action-buttons button {
     flex: 1;
+    /* A real thumb-sized touch target — the default button padding alone
+       comes in under Apple/Google's ~44px touch-target guidance. */
+    min-height: 46px;
+    font-size: 15px;
+  }
+  /* Every clickable control gets a bit more breathing room for a finger
+     rather than a mouse pointer. */
+  button {
+    min-height: 40px;
+  }
+  .seat-empty-action,
+  .seat-empty-action-bot,
+  .seat-empty-action-assign {
+    padding: 5px 2px;
+  }
+  .seat-empty {
+    gap: 8px;
   }
   .lobby-page {
     padding: 12px;
+  }
+  .lobby-header {
+    flex-wrap: wrap;
+    gap: 10px;
   }
   .table-list th:nth-child(3),
   .table-list td:nth-child(3) {
@@ -1197,6 +1325,40 @@ select:focus {
   .voice-tile-avatar {
     width: 60px;
     height: 45px;
+  }
+}
+
+/* A phone rotated to landscape to play (common for poker — a wider table
+   view is worth more than the taller one) has very little vertical room
+   left over once the browser's own chrome is subtracted — squeeze every
+   secondary panel harder than the max-height:700px tier already does. */
+@media (max-height: 430px) and (orientation: landscape) {
+  .table-header {
+    padding-top: calc(4px + env(safe-area-inset-top));
+    padding-bottom: 4px;
+  }
+  .voice-panel,
+  .waitlist-panel {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .felt {
+    min-height: 130px;
+    margin: 4px 12px;
+    --mobile-shrink: 0.68;
+  }
+  .chat-panel,
+  .action-log {
+    height: 56px;
+  }
+  .bottom-tabs {
+    padding-top: 2px;
+  }
+  .voice-tile,
+  .voice-tile video,
+  .voice-tile-avatar {
+    width: 48px;
+    height: 36px;
   }
 }
 

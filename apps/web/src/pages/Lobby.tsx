@@ -54,43 +54,45 @@ export function LobbyPage(): React.JSX.Element {
         </button>
       </div>
 
-      <table className="table-list">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Stakes</th>
-            <th>Buy-in</th>
-            <th>Seats</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {tables.map((t) => (
-            <tr key={t.tableId}>
-              <td>{t.name}</td>
-              <td>
-                {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
-              </td>
-              <td>
-                {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
-              </td>
-              <td>
-                {t.seatsFilled}/{t.maxSeats}
-              </td>
-              <td>
-                <button type="button" onClick={() => void navigate(`/table/${t.tableId}`)}>
-                  Join
-                </button>
-              </td>
-            </tr>
-          ))}
-          {tables.length === 0 && (
+      <div className="table-list-wrap">
+        <table className="table-list">
+          <thead>
             <tr>
-              <td colSpan={5}>No tables yet. Create one to get started.</td>
+              <th>Name</th>
+              <th>Stakes</th>
+              <th>Buy-in</th>
+              <th>Seats</th>
+              <th></th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tables.map((t) => (
+              <tr key={t.tableId}>
+                <td>{t.name}</td>
+                <td>
+                  {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
+                </td>
+                <td>
+                  {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
+                </td>
+                <td>
+                  {t.seatsFilled}/{t.maxSeats}
+                </td>
+                <td>
+                  <button type="button" onClick={() => void navigate(`/table/${t.tableId}`)}>
+                    Join
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {tables.length === 0 && (
+              <tr>
+                <td colSpan={5}>No tables yet. Create one to get started.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {showCreate && accessToken && <CreateTableModal onClose={() => setShowCreate(false)} accessToken={accessToken} />}
 

@@ -27,6 +27,8 @@ export const TakeSeatSchema = z
     tableId: z.string().min(1),
     seatId: z.number().int().min(0).max(8),
     buyIn: z.number().int().positive(),
+    /** Optional: lets the owner pick a display name for themselves right before sitting down, instead of being stuck with the fixed name their account was created with. */
+    displayName: z.string().min(1).max(24).optional(),
   })
   .strict();
 export type TakeSeatIntent = z.infer<typeof TakeSeatSchema>;

@@ -13,6 +13,8 @@ interface AuthState {
   upgrade: (email: string, password: string) => Promise<void>;
   upgradeWithGoogle: (idToken: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Optimistically reflects a display-name change already sent to (and applied by) the server — e.g. the owner renaming themselves right before sitting down via 'take-seat'. No round trip of its own; the server is the actual source of truth. */
+  setDisplayName: (displayName: string) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -104,9 +106,13 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setAccessToken(null);
   }, []);
 
+  const setDisplayName = useCallback((displayName: string) => {
+    setUser((current) => (current ? { ...current, displayName } : current));
+  }, []);
+
   const value = useMemo<AuthState>(
-    () => ({ user, accessToken, loading, signupGuest, register, login, loginWithGoogle, upgrade, upgradeWithGoogle, logout }),
-    [user, accessToken, loading, signupGuest, register, login, loginWithGoogle, upgrade, upgradeWithGoogle, logout],
+    () => ({ user, accessToken, loading, signupGuest, register, login, loginWithGoogle, upgrade, upgradeWithGoogle, logout, setDisplayName }),
+    [user, accessToken, loading, signupGuest, register, login, loginWithGoogle, upgrade, upgradeWithGoogle, logout, setDisplayName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

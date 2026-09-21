@@ -253,12 +253,18 @@ export function attachSocketServer(httpServer: HttpServer, deps: { store: Store;
         return emitError('BUY_IN_OUT_OF_RANGE', `Buy-in must be between ${String(table.settings.minBuyIn)} and ${String(table.settings.maxBuyIn)}.`);
       }
       const userId = data.userId;
-      void performTakeSeat(table, socket, userId, seatId, buyIn).then((result) => {
-        if (!result.ok) emitError(result.code, result.message);
-        // Deliberately does NOT auto-deal, even once enough players are
-        // seated — a seated player must explicitly trigger 'start-hand'
-        // (the "Play Hand" button). See DECISIONS.md.
-      });
+      const { displayName } = parsed.data;
+      void (displayName ? deps.store.updateDisplayName(userId, displayName) : Promise.resolve())
+        .then(() => {
+          if (displayName) data.displayName = displayName;
+          return performTakeSeat(table, socket, userId, seatId, buyIn);
+        })
+        .then((result) => {
+          if (!result.ok) emitError(result.code, result.message);
+          // Deliberately does NOT auto-deal, even once enough players are
+          // seated — a seated player must explicitly trigger 'start-hand'
+          // (the "Play Hand" button). See DECISIONS.md.
+        });
     });
 
     socket.on('redeem-seat-assignment', (raw: unknown): void => {

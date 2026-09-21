@@ -17,7 +17,7 @@ import { BOT_PERSONAS } from '../botPersonas.js';
 import { formatChips } from '../chips.js';
 import { computePositionLabels } from '../positionLabels.js';
 import { livePotTotal } from '../potTotal.js';
-import { seatPositions } from '../seatLayout.js';
+import { seatPositions, seatSizeVars } from '../seatLayout.js';
 import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
@@ -26,13 +26,14 @@ export function TablePage(): React.JSX.Element {
   const { tableId } = useParams<{ tableId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const inviteCode = searchParams.get('code') ?? undefined;
-  const { user, accessToken } = useAuth();
+  const { user, accessToken, setDisplayName } = useAuth();
   const { socket, connected } = useSocket(accessToken);
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
   const [buyIn, setBuyIn] = useState(0);
+  const [seatDisplayName, setSeatDisplayName] = useState('');
   const [rebuyModal, setRebuyModal] = useState<number | null>(null);
   const [rebuyAmount, setRebuyAmount] = useState(0);
   const [bottomTab, setBottomTab] = useState<'chat' | 'log'>('chat');
@@ -127,12 +128,16 @@ export function TablePage(): React.JSX.Element {
 
   const openSeatModal = (seatId: number): void => {
     setBuyIn(state.settings.minBuyIn);
+    setSeatDisplayName(user.displayName);
     setSeatModal(seatId);
   };
 
   const confirmTakeSeat = (): void => {
     if (seatModal === null || !tableId) return;
-    sock.takeSeat(tableId, seatModal, buyIn);
+    const trimmedName = seatDisplayName.trim();
+    const renamed = trimmedName.length > 0 && trimmedName !== user.displayName;
+    sock.takeSeat(tableId, seatModal, buyIn, renamed ? trimmedName : undefined);
+    if (renamed) setDisplayName(trimmedName);
     setSeatModal(null);
   };
 
@@ -225,7 +230,7 @@ export function TablePage(): React.JSX.Element {
         onLeave={() => sock.leaveWaitlist()}
       />
 
-      <div className="felt">
+      <div className="felt" style={seatSizeVars(state.settings.maxSeats)}>
         <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} />
         {state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
@@ -333,6 +338,10 @@ export function TablePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => setSeatModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Take seat {seatModal}</h3>
+            <label>
+              Display name
+              <input type="text" maxLength={24} value={seatDisplayName} onChange={(e) => setSeatDisplayName(e.target.value)} />
+            </label>
             <label>
               Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
               <input

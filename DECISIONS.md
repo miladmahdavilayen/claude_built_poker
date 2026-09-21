@@ -1161,3 +1161,68 @@ regression test: a context that never calls `guestSignup` at all opens
 an invite link cold, signs up from the resulting `/login` redirect, and
 must land directly on the invited table (not `/lobby`) with the seat
 already filled at the link's own buy-in.
+
+## Mobile/responsive: two independent scaling axes for seat size, kept from fighting each other
+
+"Efficiently adjust seats" (fewer players at a table → more room, so a
+heads-up table gets noticeably bigger seats/cards/video tiles than a
+9-max one crams in) and "responsive on a phone" are two genuinely
+separate variables, not one — a 2-max table on a phone still needs to
+be smaller than a 2-max table on a desktop, but a 2-max table on any
+given device should still be bigger than a 9-max table on that same
+device. Conflating them into one set of hardcoded per-breakpoint pixel
+values (the old approach: a single `@media (max-width: 640px) { .seat
+{ width: 92px } }` override, blind to player count) can't express that.
+
+Split into two independent multipliers that both apply to the same
+baseline, instead:
+- **Player-count axis** (`--seat-width` and friends — card size, avatar
+  size, dealer-button size, etc.): computed ONCE in JS
+  (`seatLayout.ts`'s `seatSizeVars()`) from `state.settings.maxSeats`
+  and set as inline CSS custom properties on `.felt`. 6-max (the
+  lobby's own default) is scale 1.0 — every existing hardcoded size
+  this CSS shipped with — so a 6-max table renders pixel-identical to
+  before; 2-max scales up to ~1.45x, 9-max down to ~0.72x.
+- **Device-size axis** (`--mobile-shrink`): a plain multiplier, 1 by
+  default, pulled down by `@media` queries (0.78 at ≤640px width,
+  0.68 in the ≤430px-tall landscape-phone tier) — CSS media queries
+  already react to viewport/orientation changes for free, which a
+  JS-computed value read once wouldn't.
+
+`.seat`'s actual `width` comes from the player-count axis; the
+device-size axis is applied as a `transform: scale(...)` on top of it,
+which scales the whole rendered subtree (cards, avatar, text, the
+seat's video tile — sized as a % of `.seat`, so it scales for free too)
+uniformly with zero extra plumbing, and composes with the acting-seat
+pulse animation (only touches `box-shadow`) and the folded/viewer
+outline states without conflict (neither sets `transform`).
+
+## Mobile Safari has its own set of gotchas beyond "make it fit narrower"
+
+Three real, easy-to-miss-until-tested-on-an-actual-iPhone issues, all
+fixed together since they're all in the same "does this actually work
+on an iPhone in Safari" bucket:
+
+- **`100vh` is taller than the visible area.** iOS Safari's address bar
+  and bottom toolbar aren't subtracted from `100vh` — `.table-page` and
+  `.page-centered` both had `height: 100vh` as a real bug on iOS (the
+  action bar or the bottom of a login form could sit under browser
+  chrome). Fixed with `height: 100dvh` (the *dynamic* viewport height
+  unit, which does track the visible area) declared right after the
+  `100vh` fallback, so older browsers that don't know `dvh` still get
+  something reasonable.
+- **Any input/select under 16px font-size triggers an automatic
+  page-wide zoom on focus**, with no CSS opt-out — this is iOS Safari
+  behavior, not a bug in this app, but the inputs here had no explicit
+  `font-size` at all (inheriting the browser's default form-control
+  size, ~13px), so every text field silently had this problem. Fixed
+  by setting `font-size: 16px` on all `input`/`select`/`textarea`
+  globally.
+- **The iPhone notch and home-indicator gesture area** can visually sit
+  on top of edge-pinned UI (the sticky `.action-bar` at the very bottom
+  is exactly this) unless explicitly padded around. Fixed with
+  `env(safe-area-inset-*)` padding added to `.table-header`,
+  `.action-bar`, `.chat-form`, `.page-centered`, and `.modal-backdrop`,
+  and `viewport-fit=cover` added to the viewport meta tag (without
+  which `env(safe-area-inset-*)` resolves to `0` everywhere and does
+  nothing).

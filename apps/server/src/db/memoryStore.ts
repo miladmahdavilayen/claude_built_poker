@@ -138,6 +138,14 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  async updateDisplayName(userId: string, displayName: string): Promise<UserRecord> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('USER_NOT_FOUND');
+    const updated: UserRecord = { ...user, displayName };
+    this.users.set(userId, updated);
+    return Promise.resolve(updated);
+  }
+
   async listUsers(): Promise<UserRecord[]> {
     return Promise.resolve([...this.users.values()]);
   }

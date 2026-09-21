@@ -123,6 +123,7 @@ export interface Store {
   upgradeGuestToAccount(userId: string, email: string, passwordHash: string): Promise<UserRecord>;
   adjustUserChips(userId: string, delta: number): Promise<UserRecord>;
   setUserRole(userId: string, role: 'player' | 'admin'): Promise<void>;
+  updateDisplayName(userId: string, displayName: string): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
 
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;

@@ -137,6 +137,12 @@ export class DrizzleStore implements Store {
     await this.db.update(schema.users).set({ role }).where(eq(schema.users.id, userId));
   }
 
+  async updateDisplayName(userId: string, displayName: string): Promise<UserRecord> {
+    const [row] = await this.db.update(schema.users).set({ displayName }).where(eq(schema.users.id, userId)).returning();
+    if (!row) throw new Error('USER_NOT_FOUND');
+    return toUserRecord(row);
+  }
+
   async listUsers(): Promise<UserRecord[]> {
     const rows = await this.db.select().from(schema.users);
     return rows.map(toUserRecord);

@@ -1285,3 +1285,29 @@ question a green checkmark alone doesn't answer):
    server's own logs and exiting non-zero if it never comes up —
    a broken release should turn the Actions run red, not look
    identical to a working one.
+
+Immediately validated by the very next real push, which is exactly
+what this hardening was meant to prove out: `e2e` failed on an
+unrelated flake (below), and `deploy` correctly showed **skipped**,
+not success — proof the `needs` gate genuinely blocks a bad release
+rather than just looking like it should.
+
+## `fullHandAllStreets.spec.ts`'s flop-count assertion was wrong for the same reason its chop assertion was
+
+Caught by that same real CI run above. `boardCountsSeen.has(3)` (the
+flop) failed — not the turn, which an earlier version of this test's
+own comment specifically called out as the one allowed to be raced
+past. The actual cause: the "maniac" bot persona can shove all-in as
+its very first, PREFLOP action, and the test's own logic only ever
+calls a bet it's facing (never re-raises), so the whole hand can go
+all-in before the flop is even dealt — the engine then deals every
+remaining street near-instantly server-side, and 100ms polling can
+race straight past ALL of them, not just one. Same root cause,
+same fix philosophy as the chop-assertion bug just above it in this
+file (and the split-pot one in `winCelebration.spec.ts`): a real,
+random-card-dependent outcome the test had quietly assumed couldn't
+happen. Fixed by not asserting against `boardCountsSeen` (a sample of
+what polling happened to catch mid-hand) at all — the reliable check
+is the board's actual state once showdown is confirmed reached
+(`.board-cards .card:not(.card-placeholder)` should be 5 at that
+point), not a racy sample of the streets in between.

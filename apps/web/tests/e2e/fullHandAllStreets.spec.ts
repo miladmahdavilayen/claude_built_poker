@@ -66,14 +66,19 @@ test('a full hand plays correctly through every street with real raises/bets, an
   }
 
   await expect(page.getByText('Verify hand fairness')).toBeVisible();
-  console.log('board card counts observed during the hand:', [...boardCountsSeen].sort((a, b) => a - b));
-  // The flop and the river were both genuinely reached (the turn, 4
-  // cards, is asserted more loosely below — an all-in mid-hand deals the
-  // remaining streets near-instantly server-side, which this test's
-  // polling can legitimately race past without it indicating any real
-  // bug; the flop and final river count are the load-bearing checks).
-  expect(boardCountsSeen.has(3)).toBe(true);
-  expect(boardCountsSeen.has(5)).toBe(true);
+  console.log('board card counts observed during the hand (informational only, see below):', [...boardCountsSeen].sort((a, b) => a - b));
+  // NOT asserted against boardCountsSeen (what 100ms polling happened to
+  // catch mid-hand) — "maniac" can genuinely shove all-in as its very
+  // first, PREFLOP action, and the human's only move facing a bet is to
+  // call (never re-raise, by this test's own design above), so the whole
+  // hand can go all-in before the flop is even dealt. The engine then
+  // deals every remaining street near-instantly server-side, which
+  // polling can race straight past without observing ANY intermediate
+  // count (not just the turn, as an earlier version of this comment
+  // assumed — this genuinely happened, see DECISIONS.md). The reliable
+  // check is the board's actual state now that showdown's been reached
+  // (waited for above), not a racy sample of what changed along the way.
+  await expect(page.locator('.board-cards .card:not(.card-placeholder)')).toHaveCount(5);
 
   // Both hole cards get revealed at a genuine showdown.
   await expect(page.locator('[data-testid="seat-1"] .card:not(.card-back)')).toHaveCount(2);

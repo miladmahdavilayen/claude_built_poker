@@ -47,6 +47,12 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       SEED_DEFAULT_TABLES: ${SEED_DEFAULT_TABLES:-true}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      # Left blank, ensureAdminAccount (index.ts) falls back to the published
+      # default (admin@pokerclause.local / admin12345) — fine for local dev,
+      # a real security gap on any deployment reachable by anyone else. See
+      # .env.example.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:
       # Loopback-only, same reasoning as postgres/redis above — a real
       # deployment fronts this with a reverse proxy (for TLS, among other

@@ -1374,3 +1374,33 @@ spectator emit is now `io.to(seatOrSpectatorRoom).except(adminRoom(tableId)).emi
 all, and gets exactly one 'state' event per update, always the
 enriched one, full stop. No event ordering to reason about, nothing
 for a `.once()` listener to race.
+
+## `docker-compose.yml` never actually let anyone change the admin credentials
+
+`ensureAdminAccount` (index.ts) has read `ADMIN_EMAIL`/`ADMIN_PASSWORD`
+since the owner-only chip economy was built, falling back to the
+published `admin@pokerclause.local` / `admin12345` default — but
+`docker-compose.yml`'s `server` service never listed either in its own
+`environment:` block, alongside `JWT_SECRET`/`CORS_ORIGIN`/etc. Setting
+them in `.env` silently did nothing for anyone running via Docker
+Compose (the documented, recommended path) — the container's
+`process.env.ADMIN_EMAIL` stayed unset regardless, so it always fell
+through to the default. Only found by actually trying to change a real
+deployment's admin credentials and checking the container's own boot
+log for the "Created owner/admin account" line, which never appeared.
+Fixed by adding both to the server service's `environment:` block,
+same `${VAR:-}` pattern already used for `GOOGLE_CLIENT_ID`.
+
+Real consequence beyond "can't customize a cosmetic default": a
+deployment on a public IP or domain has the exact default owner
+credentials sitting in this repo's own README, so anyone can find them
+and log in with FULL admin privileges (terminate/reset any table, seat
+anyone, assign chip amounts) until they're actually changed. Rotating
+`ADMIN_EMAIL`/`ADMIN_PASSWORD` doesn't revoke the OLD account, either —
+`ensureAdminAccount` only ever creates-or-promotes, never demotes — so
+a real credential rotation on an already-deployed instance needs one
+extra manual step: demoting the old admin account's role in the
+database directly, since nothing in the app itself exposes a "remove
+someone's admin role" affordance yet (`setUserRole` exists on the
+`Store` interface and is used internally, but isn't wired to any HTTP
+or socket route at all).

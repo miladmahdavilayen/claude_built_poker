@@ -10,6 +10,7 @@ import { ChatPanel } from '../components/ChatPanel.js';
 import { ChipStack } from '../components/ChipStack.js';
 import { DealAnimation } from '../components/DealAnimation.js';
 import { Seat } from '../components/Seat.js';
+import { SpeakerBar, type SpeakerBarTile } from '../components/SpeakerBar.js';
 import { VoicePanel } from '../components/VoicePanel.js';
 import { WaitlistPanel } from '../components/WaitlistPanel.js';
 import { WinCelebration } from '../components/WinCelebration.js';
@@ -18,10 +19,39 @@ import { formatChips } from '../chips.js';
 import { computePositionLabels } from '../positionLabels.js';
 import { livePotTotal } from '../potTotal.js';
 import { seatPositions, seatSizeVars } from '../seatLayout.js';
+import { useActiveSpeakers } from '../useActiveSpeakers.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
+import { useIsCompactScreen } from '../useIsCompactScreen.js';
 import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
+
+/**
+ * Chooses who fills the (at most 2) collapsed speaker-bar tiles: the
+ * currently-active speakers first (already most-recent-first), then
+ * backfilled in ascending seat order so the bar never sits empty right
+ * when the 5th camera turns on, before anyone's spoken yet.
+ */
+function pickSpeakerTiles(
+  seats: { seatId: number; displayName: string; stream: MediaStream; isLocal: boolean }[],
+  activeSpeakerIds: string[],
+): SpeakerBarTile[] {
+  const bySeatId = new Map(seats.map((s) => [String(s.seatId), s]));
+  const chosen: string[] = [];
+  for (const id of activeSpeakerIds) {
+    if (chosen.length >= 2) break;
+    if (bySeatId.has(id) && !chosen.includes(id)) chosen.push(id);
+  }
+  for (const s of seats) {
+    if (chosen.length >= 2) break;
+    const id = String(s.seatId);
+    if (!chosen.includes(id)) chosen.push(id);
+  }
+  return chosen.map((id) => {
+    const s = bySeatId.get(id)!;
+    return { id, stream: s.stream, isLocal: s.isLocal, label: s.displayName };
+  });
+}
 
 export function TablePage(): React.JSX.Element {
   const { tableId } = useParams<{ tableId: string }>();
@@ -32,6 +62,7 @@ export function TablePage(): React.JSX.Element {
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
   const immersive = useImmersiveMode();
+  const isCompactScreen = useIsCompactScreen();
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
   // '' is a real intermediate state (the field cleared, not yet retyped) —
@@ -119,6 +150,35 @@ export function TablePage(): React.JSX.Element {
     [sock.state?.settings.maxSeats, sock.state?.viewerSeatId],
   );
 
+  // Same hook-ordering constraint as `positions` above — sock.state can be
+  // null pre-connect, so this duplicates voiceStreamForSeat's (further
+  // below, where `state` is guaranteed non-null) stream-resolution logic
+  // in a form that tolerates that.
+  const humanCameraSeats: { seatId: number; displayName: string; stream: MediaStream; isLocal: boolean }[] = [];
+  for (const seat of sock.state?.seats ?? []) {
+    if (seat.status === 'empty' || seat.isBot) continue;
+    let stream: MediaStream | null = null;
+    let isLocal = false;
+    if (voice.inCall && seat.seatId === sock.state?.viewerSeatId && voice.localStream) {
+      stream = voice.localStream;
+      isLocal = true;
+    } else if (seat.playerId) {
+      stream = voice.peers.find((p) => p.userId === seat.playerId)?.stream ?? null;
+    }
+    if (stream && stream.getVideoTracks().length > 0) {
+      humanCameraSeats.push({ seatId: seat.seatId, displayName: seat.displayName ?? 'Player', stream, isLocal });
+    }
+  }
+
+  // More than 4 human players on camera, collapsed only on a phone-sized
+  // screen — laptops/tablets keep full per-seat video regardless of count.
+  // See useIsCompactScreen.ts and useActiveSpeakers.ts.
+  const speakerBarActive = isCompactScreen && humanCameraSeats.length > 4;
+  const activeSpeakerIds = useActiveSpeakers(
+    humanCameraSeats.map((s) => ({ id: String(s.seatId), stream: s.stream })),
+    speakerBarActive,
+  );
+
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
   }
@@ -157,6 +217,7 @@ export function TablePage(): React.JSX.Element {
     }
     return null;
   };
+  const speakerTiles = speakerBarActive ? pickSpeakerTiles(humanCameraSeats, activeSpeakerIds) : [];
   // Voice participants with no seat at this table (spectators using voice chat) —
   // shown in the compact VoicePanel strip instead, since there's no seat to
   // render them on. Every human at the table is now a registered `voice.peers`
@@ -262,6 +323,7 @@ export function TablePage(): React.JSX.Element {
       </div>
 
       <VoicePanel voice={voice} myName={user.displayName} amSeated={!!mySeat} unseatedPeers={unseatedVoicePeers} />
+      {speakerBarActive && <SpeakerBar tiles={speakerTiles} />}
 
       <WaitlistPanel
         waitlist={state.waitlist}
@@ -337,6 +399,7 @@ export function TablePage(): React.JSX.Element {
                   positionLabel={handEverDealt ? positionLabels.get(seatId) : undefined}
                   showCards={handEverDealt}
                   voice={voiceStreamForSeat(seat)}
+                  showVideo={!speakerBarActive}
                   // Self-serve seating/bots/rebuys no longer exist — every one of these is owner-only. See DECISIONS.md.
                   onEmptySeatClick={user.role === 'admin' && !mySeat && seat.status === 'empty' ? () => openSeatModal(seatId) : undefined}
                   onAddBotClick={user.role === 'admin' && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined}

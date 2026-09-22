@@ -833,6 +833,7 @@ input[type='range']::-moz-range-thumb {
 /* Everything but the felt and the action bar — see useImmersiveMode.ts. */
 .table-page.immersive .table-header,
 .table-page.immersive .voice-panel,
+.table-page.immersive .speaker-bar,
 .table-page.immersive .waitlist-panel,
 .table-page.immersive .bottom-tabs,
 .table-page.immersive .chat-panel,
@@ -1246,6 +1247,15 @@ input[type='range']::-moz-range-thumb {
 }
 
 .voice-panel {
+  /* Above .felt in stacking order, not just in document flow — the
+     topmost/bottommost seat (anchored near the felt's own edge, see
+     seatLayout.ts) legitimately extends past the felt's box once its
+     video tile adds real height, and .felt (later in the DOM, itself
+     `position: relative`) would otherwise paint over — and intercept
+     clicks on — this panel's own controls whenever that overlap
+     happens. Found via a real phone-width e2e test, not by eye. */
+  position: relative;
+  z-index: 2;
   background: var(--panel);
   border-bottom: 1px solid var(--panel-border);
   padding: 10px 20px;
@@ -1306,6 +1316,44 @@ input[type='range']::-moz-range-thumb {
   white-space: nowrap;
 }
 
+/* Replaces every seat's own video once there are more than 4 human
+   cameras on and the viewer's screen is phone-sized (see
+   useIsCompactScreen.ts, useActiveSpeakers.ts, Table.tsx's
+   speakerBarActive) — just the (at most 2) people currently speaking,
+   instead of one small video box per seat. */
+.speaker-bar {
+  /* Same overlap reasoning as .voice-panel just above. */
+  position: relative;
+  z-index: 2;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  padding: 0 20px 10px;
+  background: var(--panel);
+}
+.speaker-bar-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.speaker-bar-tile video {
+  width: 140px;
+  height: 105px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #000;
+  transform: scaleX(-1);
+}
+.speaker-bar-label {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 640px) {
   .felt {
     margin: 8px;
@@ -1356,7 +1404,8 @@ input[type='range']::-moz-range-thumb {
   }
   .voice-tile,
   .voice-tile video,
-  .voice-tile-avatar {
+  .voice-tile-avatar,
+  .speaker-bar-tile video {
     width: 80px;
     height: 60px;
   }
@@ -1377,7 +1426,8 @@ input[type='range']::-moz-range-thumb {
   }
   .voice-tile,
   .voice-tile video,
-  .voice-tile-avatar {
+  .voice-tile-avatar,
+  .speaker-bar-tile video {
     width: 60px;
     height: 45px;
   }
@@ -1411,7 +1461,8 @@ input[type='range']::-moz-range-thumb {
   }
   .voice-tile,
   .voice-tile video,
-  .voice-tile-avatar {
+  .voice-tile-avatar,
+  .speaker-bar-tile video {
     width: 48px;
     height: 36px;
   }

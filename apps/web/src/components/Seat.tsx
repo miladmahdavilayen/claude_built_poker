@@ -35,6 +35,7 @@ export function Seat({
   positionLabel,
   showCards,
   voice,
+  showVideo = true,
   onEmptySeatClick,
   onAddBotClick,
   onRemoveBotClick,
@@ -49,6 +50,8 @@ export function Seat({
   /** False before this table's very first hand has ever been dealt — an occupied seat shouldn't show placeholder card-backs for a hand that hasn't started. */
   showCards: boolean;
   voice?: SeatVoiceStream | null | undefined;
+  /** False when the table-wide camera speaker-bar has collapsed every seat's video (see Table.tsx's `speakerBarActive`) — audio keeps playing via StreamMedia's own fallback, only the video box is suppressed. */
+  showVideo?: boolean;
   /** Owner-only — self-serve seating no longer exists (see DECISIONS.md); this lets the owner seat THEMSELVES directly. */
   onEmptySeatClick?: (() => void) | undefined;
   /** Owner-only. */
@@ -92,6 +95,7 @@ export function Seat({
 
   const actionLabel = describeAction(seat.lastAction);
   const hasVideo = !!voice?.stream.getVideoTracks().length;
+  const showSeatVideo = hasVideo && showVideo;
   const inVoiceCall = !!voice;
 
   return (
@@ -99,12 +103,12 @@ export function Seat({
       {isButton && <div className="dealer-button">D</div>}
       {/* The button already gets the "D" disc — a "BTN" text badge on top of it too would be redundant clutter. */}
       {positionLabel && !isButton && <div className="position-label">{positionLabel}</div>}
-      {voice && hasVideo && (
+      {voice && showSeatVideo && (
         <div className="seat-video">
           <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
         </div>
       )}
-      {voice && !hasVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />}
+      {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
       {showCards && (
         <div className="seat-cards">
           <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} />
@@ -128,7 +132,7 @@ export function Seat({
             </span>
           )}
           {seat.isBot && <span className="seat-tag seat-tag-bot" title="Computer player">🤖 bot</span>}
-          {inVoiceCall && !hasVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
+          {inVoiceCall && !showSeatVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
           {seat.status === 'sitting-out' && <span className="seat-tag">sitting out</span>}
           {seat.status === 'all-in' && <span className="seat-tag seat-tag-allin">all-in</span>}
         </div>

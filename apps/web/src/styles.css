@@ -960,12 +960,21 @@ input[type='range']::-moz-range-thumb {
   color: var(--accent);
 }
 .seat-video {
-  /* Sized independently of --seat-width (which, at a 9-max table, shrinks
-     small enough to make a face genuinely hard to see) — clamped to a
-     sensible range instead: never smaller than 85px regardless of seat
-     count, never bigger than 150px regardless of how much room a heads-up
-     table's own huge seat card would otherwise give it. */
-  width: clamp(85px, var(--seat-width, 128px), 150px);
+  position: relative;
+  /* Three independent caps, smallest wins: --seat-width (player-count axis,
+     from seatSizeVars — at a 9-max table this alone shrinks small enough to
+     make a face genuinely hard to read), 22vw, and 30vh. The vw/vh terms
+     are what make this react to the viewer's OWN, exact current screen
+     size continuously — not just at the three fixed breakpoints below —
+     so on a narrow phone or a short landscape window the video shrinks
+     immediately by however much that screen actually needs, instead of
+     staying pinned to a size that was only ever sized for player count and
+     then just painted smaller via --mobile-shrink (which doesn't reduce
+     the space it actually occupies — see DECISIONS.md and the stacking-
+     context fix a few rules up, both from a real seat-video/voice-panel
+     overlap this exact gap caused). 72px is the legibility floor; 150px
+     the pre-existing ceiling for a heads-up table's own huge seat card. */
+  width: clamp(72px, min(var(--seat-width, 128px), 22vw, 30vh), 150px);
   /* Taller than wide (was 4/3 landscape) — a typical webcam/selfie feed
      is landscape source cropped via object-fit:cover, and a taller
      container keeps more of the face + shoulders in frame instead of
@@ -986,6 +995,23 @@ input[type='range']::-moz-range-thumb {
 .seat-voice-badge {
   font-size: 10px;
   line-height: 1;
+}
+/* Cards rendered directly over a seat's own video (see Seat.tsx) instead of
+   in their own row below it, so a video-enabled seat doesn't pay for both a
+   full video box AND a full card row's height. The gradient is only there
+   to keep the cards legible regardless of what's moving behind them —
+   camera feeds are unpredictable backgrounds (bright rooms, motion, busy
+   framing), unlike the felt's own steady dark background .seat-cards
+   normally sits on. */
+.seat-video-cards {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 5px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.55) 55%, rgba(0, 0, 0, 0) 100%);
 }
 .seat-cards {
   display: flex;
@@ -1431,6 +1457,18 @@ input[type='range']::-moz-range-thumb {
     width: 60px;
     height: 45px;
   }
+  /* Smaller and pulled into the true corner — on a short felt, the
+     base 20px/20px offset plus the button's own size ate enough of the
+     bottom-left corner to genuinely overlap a seat anchored down there
+     (found via a real 780x360 e2e test, not by eye — see seatLayout.ts's
+     percentage-based anchors, which don't themselves know how little
+     height is left at this tier). */
+  .immersive-toggle {
+    left: 8px;
+    bottom: 8px;
+    padding: 3px 7px;
+    font-size: 10px;
+  }
 }
 
 /* A phone rotated to landscape to play (common for poker — a wider table
@@ -1465,6 +1503,14 @@ input[type='range']::-moz-range-thumb {
   .speaker-bar-tile video {
     width: 48px;
     height: 36px;
+  }
+  /* Same reasoning as the max-height:700px tier above, pulled in further —
+     this is the tier that actually reproduced the overlap. */
+  .immersive-toggle {
+    left: 4px;
+    bottom: 4px;
+    padding: 2px 6px;
+    font-size: 9px;
   }
 }
 

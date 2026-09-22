@@ -97,6 +97,12 @@ export function Seat({
   const hasVideo = !!voice?.stream.getVideoTracks().length;
   const showSeatVideo = hasVideo && showVideo;
   const inVoiceCall = !!voice;
+  const holeCards = showCards ? (
+    <>
+      <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} />
+      <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
+    </>
+  ) : null;
 
   return (
     <div className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''}`}>
@@ -106,15 +112,21 @@ export function Seat({
       {voice && showSeatVideo && (
         <div className="seat-video">
           <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
+          {/* Cards render ON the video (a bottom fade keeps them legible over
+              whatever's behind them) instead of taking their own row below
+              it — a seat with its camera on no longer needs both a full-size
+              video box AND a full-size card row stacked vertically, which is
+              what was making video-enabled seats tall enough to crowd the
+              board/other seats on smaller screens. See .seat-video-cards. */}
+          {holeCards && (
+            <div className="seat-video-cards">
+              <div className="seat-cards">{holeCards}</div>
+            </div>
+          )}
         </div>
       )}
       {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
-      {showCards && (
-        <div className="seat-cards">
-          <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} />
-          <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
-        </div>
-      )}
+      {!showSeatVideo && holeCards && <div className="seat-cards">{holeCards}</div>}
       <div className="seat-info">
         <div className="seat-name">
           <span

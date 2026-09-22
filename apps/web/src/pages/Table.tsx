@@ -34,7 +34,10 @@ export function TablePage(): React.JSX.Element {
   const immersive = useImmersiveMode();
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
-  const [buyIn, setBuyIn] = useState(0);
+  // '' is a real intermediate state (the field cleared, not yet retyped) —
+  // coercing an empty string straight to 0 made the DOM input's value jump
+  // to "0" mid-edit, so retyping "500" over a cleared "500" produced "0500".
+  const [buyIn, setBuyIn] = useState<number | ''>(0);
   const [seatDisplayName, setSeatDisplayName] = useState('');
   const [rebuyModal, setRebuyModal] = useState<number | null>(null);
   const [rebuyAmount, setRebuyAmount] = useState(0);
@@ -51,11 +54,11 @@ export function TablePage(): React.JSX.Element {
     const used = usedPersonaOrder.map((id) => BOT_PERSONAS.find((p) => p.id === id)).filter((p): p is (typeof BOT_PERSONAS)[number] => !!p);
     return [...unused, ...used];
   }, [usedPersonaOrder]);
-  const [botBuyIn, setBotBuyIn] = useState(0);
+  const [botBuyIn, setBotBuyIn] = useState<number | ''>(0);
   const [terminateConfirmOpen, setTerminateConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [assignModal, setAssignModal] = useState<number | null>(null);
-  const [assignBuyIn, setAssignBuyIn] = useState(0);
+  const [assignBuyIn, setAssignBuyIn] = useState<number | ''>(0);
   const [assignNickname, setAssignNickname] = useState('');
   const [assignedLink, setAssignedLink] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
@@ -172,7 +175,7 @@ export function TablePage(): React.JSX.Element {
     if (seatModal === null || !tableId) return;
     const trimmedName = seatDisplayName.trim();
     const renamed = trimmedName.length > 0 && trimmedName !== user.displayName;
-    sock.takeSeat(tableId, seatModal, buyIn, renamed ? trimmedName : undefined);
+    sock.takeSeat(tableId, seatModal, Number(buyIn) || 0, renamed ? trimmedName : undefined);
     if (renamed) setDisplayName(trimmedName);
     setSeatModal(null);
   };
@@ -185,7 +188,7 @@ export function TablePage(): React.JSX.Element {
 
   const confirmAddBot = (): void => {
     if (addBotModal === null) return;
-    sock.addBot(addBotModal, botPersona, botBuyIn);
+    sock.addBot(addBotModal, botPersona, Number(botBuyIn) || 0);
     setUsedPersonaOrder((prev) => [...prev.filter((id) => id !== botPersona), botPersona]);
     setAddBotModal(null);
   };
@@ -201,7 +204,7 @@ export function TablePage(): React.JSX.Element {
   const confirmAssignSeat = (): void => {
     if (assignModal === null) return;
     setAssignError(null);
-    void sock.assignSeat(assignModal, assignBuyIn, assignNickname.trim() || undefined).then((result) => {
+    void sock.assignSeat(assignModal, Number(assignBuyIn) || 0, assignNickname.trim() || undefined).then((result) => {
       if (!result.ok) {
         setAssignError(result.message);
         return;
@@ -401,7 +404,7 @@ export function TablePage(): React.JSX.Element {
                 min={state.settings.minBuyIn}
                 max={state.settings.maxBuyIn}
                 value={buyIn}
-                onChange={(e) => setBuyIn(Number(e.target.value))}
+                onChange={(e) => setBuyIn(e.target.value === '' ? '' : Number(e.target.value))}
               />
             </label>
             <p>Your chips: {formatChips(user.chips)}</p>
@@ -439,7 +442,7 @@ export function TablePage(): React.JSX.Element {
                 min={state.settings.minBuyIn}
                 max={state.settings.maxBuyIn}
                 value={botBuyIn}
-                onChange={(e) => setBotBuyIn(Number(e.target.value))}
+                onChange={(e) => setBotBuyIn(e.target.value === '' ? '' : Number(e.target.value))}
               />
             </label>
             <div className="modal-actions">
@@ -510,7 +513,7 @@ export function TablePage(): React.JSX.Element {
                     min={state.settings.minBuyIn}
                     max={state.settings.maxBuyIn}
                     value={assignBuyIn}
-                    onChange={(e) => setAssignBuyIn(Number(e.target.value))}
+                    onChange={(e) => setAssignBuyIn(e.target.value === '' ? '' : Number(e.target.value))}
                   />
                 </label>
                 {assignError && <div className="error-banner">{assignError}</div>}

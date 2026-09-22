@@ -1,9 +1,21 @@
 import { useCallback, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext.js';
 import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
+// An owner-generated seat invite (`/table/:id?assign=:token`) sends an
+// unauthenticated visitor here via RedirectToLogin in App.tsx, which stashes
+// the original destination in location.state.from. Invited human players
+// should only ever see "Play as guest" — not log in/register/Google — so
+// they can't wander off into an unrelated account instead of taking the seat
+// they were invited to.
+const INVITE_FROM_PATTERN = /^\/table\/[^/]+\?.*\bassign=/;
+
 export function LoginPage(): React.JSX.Element {
   const { signupGuest, login, register, loginWithGoogle } = useAuth();
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from;
+  const isInvitedPlayer = typeof from === 'string' && INVITE_FROM_PATTERN.test(from);
   // No navigation happens here on success — once `user` becomes truthy,
   // App.tsx's own /login route (LoginRoute) re-evaluates and redirects
   // itself, honoring wherever this visitor was originally headed (e.g.
@@ -48,21 +60,31 @@ export function LoginPage(): React.JSX.Element {
       <div className="auth-card">
         <h1>pokerclause</h1>
 
-        <div className="google-signin-row">
-          <GoogleSignInButton onCredential={handleGoogleCredential} />
-        </div>
+        {!isInvitedPlayer && (
+          <div className="google-signin-row">
+            <GoogleSignInButton onCredential={handleGoogleCredential} />
+          </div>
+        )}
 
-        <div className="auth-tabs">
-          <button type="button" className={mode === 'guest' ? 'active' : ''} onClick={() => setMode('guest')}>
-            Play as guest
-          </button>
-          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>
-            Log in
-          </button>
-          <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>
-            Register
-          </button>
-        </div>
+        {isInvitedPlayer ? (
+          <div className="auth-tabs">
+            <button type="button" className="active">
+              Play as guest
+            </button>
+          </div>
+        ) : (
+          <div className="auth-tabs">
+            <button type="button" className={mode === 'guest' ? 'active' : ''} onClick={() => setMode('guest')}>
+              Play as guest
+            </button>
+            <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>
+              Log in
+            </button>
+            <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>
+              Register
+            </button>
+          </div>
+        )}
         <form onSubmit={(e) => void submit(e)}>
           {mode !== 'login' && (
             <label>
@@ -70,7 +92,7 @@ export function LoginPage(): React.JSX.Element {
               <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
             </label>
           )}
-          {mode !== 'guest' && (
+          {!isInvitedPlayer && mode !== 'guest' && (
             <>
               <label>
                 Email

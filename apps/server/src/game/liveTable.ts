@@ -36,14 +36,20 @@ import { commitmentFor, deriveDeckForHand, generateServerSeed } from '../rng/com
  */
 export const SELECTABLE_BOT_POLICIES: readonly BotPolicy[] = ALL_BOT_POLICIES.filter((p) => p.name !== 'adversarial');
 
+// Deliberately single-word — this is what actually renders on a seat
+// (tight on space, especially at a 9-max table or on a phone), not the
+// fuller descriptive label a player picks from in the "Add bot" modal
+// (see BOT_PERSONAS in apps/web/src/botPersonas.ts, which keeps its own
+// longer wording — there's more room in that dropdown, and clarity
+// matters more there than brevity).
 export const BOT_PERSONA_LABELS: Readonly<Record<string, string>> = {
   'random-legal': 'Wildcard',
-  'calling-station': 'Calling Station',
-  nit: 'The Nit',
+  'calling-station': 'Caller',
+  nit: 'Nit',
   maniac: 'Maniac',
-  'shove-monkey': 'Shove Monkey',
+  'shove-monkey': 'Shover',
   'check-fold': 'Pushover',
-  'short-stacker': 'Short Stacker',
+  'short-stacker': 'Stacker',
 };
 
 // A bot "thinks" for a random 1–6 seconds before acting, so it doesn't

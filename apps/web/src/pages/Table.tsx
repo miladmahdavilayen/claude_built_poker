@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 import { useAuth } from '../AuthContext.js';
@@ -41,6 +41,16 @@ export function TablePage(): React.JSX.Element {
   const [bottomTab, setBottomTab] = useState<'chat' | 'log'>('chat');
   const [addBotModal, setAddBotModal] = useState<number | null>(null);
   const [botPersona, setBotPersona] = useState(BOT_PERSONAS[0]!.id);
+  // Each persona actually added sinks to the bottom of the list — so
+  // picking a DIFFERENT bot for the next seat is the path of least
+  // resistance instead of re-selecting the same one repeatedly.
+  const [usedPersonaOrder, setUsedPersonaOrder] = useState<string[]>([]);
+  const orderedBotPersonas = useMemo(() => {
+    const usedSet = new Set(usedPersonaOrder);
+    const unused = BOT_PERSONAS.filter((p) => !usedSet.has(p.id));
+    const used = usedPersonaOrder.map((id) => BOT_PERSONAS.find((p) => p.id === id)).filter((p): p is (typeof BOT_PERSONAS)[number] => !!p);
+    return [...unused, ...used];
+  }, [usedPersonaOrder]);
   const [botBuyIn, setBotBuyIn] = useState(0);
   const [terminateConfirmOpen, setTerminateConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
@@ -86,6 +96,26 @@ export function TablePage(): React.JSX.Element {
     if (sock.tableClosedReason) void navigate('/lobby');
   }, [sock.tableClosedReason, navigate]);
 
+  // Memoized deliberately: DealAnimation.tsx's shuffle/deal effect depends
+  // on `[events, positions]`, and `latestEvents` never resets back to []
+  // once consumed — so a fresh `positions` array reference on every
+  // render (any state change at all, e.g. toggling immersive mode) used
+  // to retrigger that effect with the stale-but-still-truthy last events
+  // batch, replaying the shuffle/deal animation and sound out of nowhere.
+  // See DECISIONS.md.
+  //
+  // MUST live above every early return below (`sock.state` is still null
+  // before the table's first 'state' event arrives) — hooks can never be
+  // called conditionally, and a `useMemo` after an early return is exactly
+  // that: it ran on some renders and not others, which is a real crash
+  // ("Rendered more hooks than during the previous render"), not just a
+  // lint nitpick. Found by actually loading the page in a browser, not by
+  // tsc/eslint — neither one catches this.
+  const positions = useMemo(
+    () => (sock.state ? seatPositions(sock.state.settings.maxSeats, sock.state.viewerSeatId ?? 0) : []),
+    [sock.state?.settings.maxSeats, sock.state?.viewerSeatId],
+  );
+
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
   }
@@ -106,7 +136,6 @@ export function TablePage(): React.JSX.Element {
 
   const { state } = sock;
   const mySeat = state.viewerSeatId !== null ? state.seats.find((s) => s.seatId === state.viewerSeatId) : null;
-  const positions = seatPositions(state.settings.maxSeats, state.viewerSeatId ?? 0);
   const hasEmptySeat = state.seats.some((s) => s.status === 'empty');
   const positionLabels = computePositionLabels(state.seats, state.buttonSeat);
   const myWaitlistIndex = state.waitlist.findIndex((w) => w.userId === user.id);
@@ -126,8 +155,12 @@ export function TablePage(): React.JSX.Element {
     return null;
   };
   // Voice participants with no seat at this table (spectators using voice chat) —
-  // shown in the compact VoicePanel strip instead, since there's no seat to render them on.
-  const unseatedVoicePeers = voice.peers.filter((p) => !state.seats.some((s) => s.playerId === p.userId));
+  // shown in the compact VoicePanel strip instead, since there's no seat to
+  // render them on. Every human at the table is now a registered `voice.peers`
+  // entry the moment they arrive (see useVoiceChat.ts's own doc comment), so
+  // this ALSO requires a real stream — otherwise every silent spectator who's
+  // never touched voice at all would show up here as an empty avatar tile.
+  const unseatedVoicePeers = voice.peers.filter((p) => p.stream !== null && !state.seats.some((s) => s.playerId === p.userId));
 
   const openSeatModal = (seatId: number): void => {
     setBuyIn(state.settings.minBuyIn);
@@ -145,7 +178,7 @@ export function TablePage(): React.JSX.Element {
   };
 
   const openAddBotModal = (seatId: number): void => {
-    setBotPersona(BOT_PERSONAS[0]!.id);
+    setBotPersona(orderedBotPersonas[0]!.id);
     setBotBuyIn(state.settings.minBuyIn);
     setAddBotModal(seatId);
   };
@@ -153,6 +186,7 @@ export function TablePage(): React.JSX.Element {
   const confirmAddBot = (): void => {
     if (addBotModal === null) return;
     sock.addBot(addBotModal, botPersona, botBuyIn);
+    setUsedPersonaOrder((prev) => [...prev.filter((id) => id !== botPersona), botPersona]);
     setAddBotModal(null);
   };
 
@@ -391,7 +425,7 @@ export function TablePage(): React.JSX.Element {
             <label>
               Persona
               <select value={botPersona} onChange={(e) => setBotPersona(e.target.value)}>
-                {BOT_PERSONAS.map((p) => (
+                {orderedBotPersonas.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label} &mdash; {p.description}
                   </option>

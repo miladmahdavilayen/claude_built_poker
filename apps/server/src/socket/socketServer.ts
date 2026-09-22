@@ -209,12 +209,41 @@ export function attachSocketServer(
   // same table — it never touches media itself, so no audio/video data
   // passes through this process. See apps/web's useVoiceChat.ts for the
   // browser side of this handshake.
+  //
+  // Every authenticated human is registered here the moment they join a
+  // table (below, in 'join-table') — NOT only once they opt into sending
+  // their own mic/camera. Being a "voice participant" now means "can
+  // receive a peer connection," a strictly bigger set than "is currently
+  // sending anything" — so anyone at the table automatically gets a
+  // remote stream the instant another human starts sending, with no
+  // separate opt-in of their own required. See DECISIONS.md.
   interface VoiceParticipant {
     socketId: string;
     userId: string;
     displayName: string;
   }
   const voiceParticipants = new Map<string, Map<string, VoiceParticipant>>();
+
+  /** Idempotent — a reconnect or a duplicate join-table for the same live socket is a harmless no-op, not a re-announcement. */
+  function registerVoiceParticipant(tableId: string, socket: Socket, userId: string, displayName: string): void {
+    let participants = voiceParticipants.get(tableId);
+    if (!participants) {
+      participants = new Map();
+      voiceParticipants.set(tableId, participants);
+    }
+    if (participants.has(socket.id)) return;
+    const me: VoiceParticipant = { socketId: socket.id, userId, displayName };
+    const existing = [...participants.values()];
+    participants.set(socket.id, me);
+    // Only the newcomer initiates offers, to existing peers — this is the
+    // one asymmetry that avoids both sides racing to create an offer for
+    // the same pair ("glare"). Sent even to a peer with nothing to send
+    // yet: an empty-track connection is cheap, and it means whichever
+    // side sends media FIRST doesn't need to wait on the other side to
+    // also "join a call" — the connection already exists to carry it.
+    socket.emit('rtc-peers', existing);
+    for (const p of existing) io.to(p.socketId).emit('rtc-peer-joined', me);
+  }
 
   function removeVoiceParticipant(tableId: string, socketId: string): void {
     const participants = voiceParticipants.get(tableId);
@@ -281,6 +310,10 @@ export function attachSocketServer(
       // later seat changes — see adminRoom's own doc comment.
       if (data.role === 'admin') void socket.join(adminRoom(table.tableId));
       if (data.userId) table.setConnected(data.userId, true);
+      // See registerVoiceParticipant's own doc comment — every human is
+      // receive-ready from the moment they're at the table, not only once
+      // they opt into sending their own mic/camera.
+      if (data.userId) registerVoiceParticipant(table.tableId, socket, data.userId, data.displayName ?? 'Player');
 
       // An authenticated join flips this seat/viewer's connection status,
       // which everyone else at the table should see — broadcastTable
@@ -592,30 +625,13 @@ export function attachSocketServer(
       });
     });
 
-    socket.on('rtc-join', (): void => {
-      const table = currentTable();
-      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Sign in to use voice/video.');
-      let participants = voiceParticipants.get(table.tableId);
-      if (!participants) {
-        participants = new Map();
-        voiceParticipants.set(table.tableId, participants);
-      }
-      const me: VoiceParticipant = { socketId: socket.id, userId: data.userId, displayName: data.displayName ?? 'Player' };
-      const existing = [...participants.values()];
-      participants.set(socket.id, me);
-      // Only the newcomer initiates offers, to existing peers — this is
-      // the one asymmetry that avoids both sides racing to create an
-      // offer for the same pair ("glare").
-      socket.emit('rtc-peers', existing);
-      for (const p of existing) io.to(p.socketId).emit('rtc-peer-joined', me);
-    });
-
-    socket.on('rtc-leave', (): void => {
-      const table = currentTable();
-      if (!table) return;
-      removeVoiceParticipant(table.tableId, socket.id);
-    });
-
+    // No 'rtc-join'/'rtc-leave' events anymore — registerVoiceParticipant
+    // (called from 'join-table' above) covers what 'rtc-join' used to do,
+    // automatically; "leaving a call" is now purely local to the browser
+    // (stop sending tracks — see useVoiceChat.ts), not a server concept,
+    // since it must NOT stop this socket from still being able to
+    // RECEIVE others. Deregistration still happens, just from
+    // 'disconnect'/'leave-table' (below) instead. See DECISIONS.md.
     socket.on('rtc-signal', (raw: unknown): void => {
       const table = currentTable();
       if (!table) return;

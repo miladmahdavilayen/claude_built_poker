@@ -959,12 +959,22 @@ input[type='range']::-moz-range-thumb {
   color: var(--accent);
 }
 .seat-video {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  border-radius: 6px;
+  /* Sized independently of --seat-width (which, at a 9-max table, shrinks
+     small enough to make a face genuinely hard to see) — clamped to a
+     sensible range instead: never smaller than 85px regardless of seat
+     count, never bigger than 150px regardless of how much room a heads-up
+     table's own huge seat card would otherwise give it. */
+  width: clamp(85px, var(--seat-width, 128px), 150px);
+  /* Taller than wide (was 4/3 landscape) — a typical webcam/selfie feed
+     is landscape source cropped via object-fit:cover, and a taller
+     container keeps more of the face + shoulders in frame instead of
+     cropping the top of the head and chin off to fill a wide rectangle. */
+  aspect-ratio: 4 / 5;
+  border-radius: 10px;
   overflow: hidden;
   background: #000;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 2px solid var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 .seat-video-el {
   width: 100%;
@@ -1302,8 +1312,12 @@ input[type='range']::-moz-range-thumb {
     min-height: 280px;
     border-width: 10px;
     /* Device-size axis of seat sizing — multiplies onto the per-seat-count
-       --seat-width set by Table.tsx (seatSizeVars), see .seat's own comment. */
-    --mobile-shrink: 0.78;
+       --seat-width set by Table.tsx (seatSizeVars), see .seat's own comment.
+       Was 0.78 — hole cards in particular became genuinely hard to read on
+       a real phone once this compounded with a 9-max table's own already-
+       reduced --card-w (seatLayout.ts). Softened alongside a bump to the
+       base card size itself. */
+    --mobile-shrink: 0.85;
   }
   .action-buttons {
     flex-wrap: wrap;
@@ -1386,7 +1400,7 @@ input[type='range']::-moz-range-thumb {
   .felt {
     min-height: 130px;
     margin: 4px 12px;
-    --mobile-shrink: 0.68;
+    --mobile-shrink: 0.75; /* was 0.68 — same card-readability reasoning as the portrait tier above */
   }
   .chat-panel,
   .action-log {

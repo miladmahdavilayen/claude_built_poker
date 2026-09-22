@@ -1431,3 +1431,77 @@ argon2 hash, once, at startup) but not worth optimizing away — boot
 time isn't a hot path, and comparing against the OLD hash to skip it
 would need a `verifyPassword` call anyway, no cheaper than just
 re-hashing.
+
+## A `useMemo` fix that itself crashed the page — hooks can never live after an early return
+
+Toggling full-screen/immersive mode replayed the shuffle/deal
+animation and sound, well after a hand had already been dealt. Root
+cause: `positions` (an array `DealAnimation.tsx`'s effect depends on)
+was recomputed as a fresh array reference on EVERY render of
+`TablePage` — not just meaningful ones — because it was a plain
+function call, not memoized. `latestEvents` never resets back to `[]`
+once consumed (by design, for other reasons), so any re-render at all,
+immersive mode's own local state toggle included, retriggered that
+effect with the stale-but-still-truthy last events batch.
+
+The obvious fix — wrap it in `useMemo` — shipped a WORSE bug than the
+one it fixed: `useMemo` is a hook, and this particular `const positions
+= ...` line sat, unchanged, exactly where it always had — AFTER three
+early `return`s (`!user`, an invite-code error, `!sock.state`). A plain
+function call there was fine; a hook there is not — hooks must run
+unconditionally, in the same order, on every single render, and an
+early return some renders take and others don't is exactly the kind of
+conditional a hook can never survive. Every load of the table page
+before `sock.state` first populates crashed outright: "Rendered more
+hooks than during the previous render." Neither `tsc` nor `eslint`
+caught this (the hooks lint rule exists but wasn't triggered by this
+exact shape) — only actually loading the page in a real browser did,
+via a `pageerror` listener on a throwaway Playwright script, not the
+existing test suite (its own helpers don't hit this window). Fixed by
+moving the `useMemo` above all three early returns, reading
+`sock.state` directly (with `?.`) since the destructured `state` local
+isn't available yet at that point. General lesson: converting a plain
+computation into a memoized one is not a purely local, safe-by-
+construction change if there's ANY conditional return anywhere between
+it and the top of the component — the hook has to move, not just wrap.
+
+## Voice/video auto-receive: two more real bugs found by testing the redesign itself, not just the feature
+
+"Anyone else at the table should automatically receive a call once one
+human starts one, without opting in themselves" required moving
+`voiceParticipants` registration from an explicit `rtc-join` click to
+automatic registration on `join-table` (see `registerVoiceParticipant`
+in socketServer.ts) — full write-up of that redesign, and the
+`.except(adminRoom)`-shaped fix for a stale-event race it caused, is
+already covered above (the admin-nickname `adminRoom` entries — the
+exact same "one socket gets two events for one update" hazard showed
+up again here independently). Two ADDITIONAL bugs specific to voice:
+
+1. **A real regression this redesign introduced under real load, not
+   just the flaky test it broke**: `apps/server/tests/socketServer.test.ts`'s
+   voice tests started hanging because `'rtc-peers'` and `'state'` now
+   both fire synchronously within the same `join-table` call — a test
+   registering its `'state'` listener only AFTER awaiting `'rtc-peers'`
+   could have `'state'` already arrive and get silently dropped (no
+   listener attached yet) before the listener was ever registered.
+   Fixed by registering every listener needed for one exchange BEFORE
+   the triggering emit, not just before each one's own `await`.
+2. **Removing a track via renegotiation doesn't re-fire `ontrack`** on
+   the receiving side — the browser removes it from the SAME
+   `MediaStream` object in place (a `removetrack` event on the stream
+   itself), which React has no reason to notice without an explicit
+   listener forcing a re-render. Without this, `leaveCall()` (which no
+   longer closes the peer connection at all — the whole point of the
+   redesign is that receiving must keep working after someone stops
+   sending) would correctly remove the track on the wire, but the
+   OTHER side's video box would never visually disappear, since
+   `hasVideo` (Seat.tsx) kept reading a stale answer from a stream that
+   had quietly lost its track underneath it. Fixed by listening for
+   `removetrack` on the received stream and forcing a fresh `Map`
+   reference through `peers` state when it fires.
+
+Both were caught by re-running the FULL local suite after the redesign
+felt complete, not by writing it carefully the first time — worth
+noting since it's the second time this session a "clearly correct on
+inspection" WebRTC/React change needed the test suite to catch a real
+bug (see the two `adminRoom` entries above).

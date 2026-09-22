@@ -151,7 +151,7 @@ describe('socketServer: live signaling and access control', () => {
     aliceSocket.close();
   });
 
-  it('relays a WebRTC signal only between two sockets that both joined voice at the same table, and drops it otherwise', async () => {
+  it('registers every human as a receive-ready voice participant automatically on join-table, and relays signals only within the same table', async () => {
     const alice = await makeUser('Alice');
     const bob = await makeUser('Bob');
     const mallory = await makeUser('Mallory');
@@ -163,30 +163,46 @@ describe('socketServer: live signaling and access control', () => {
     const mallorySocket = connect(mallory.token);
     await Promise.all([waitFor(aliceSocket, 'connect'), waitFor(bobSocket, 'connect'), waitFor(mallorySocket, 'connect')]);
 
+    // No separate "join voice" step anymore — every human is registered
+    // the moment join-table itself runs (see registerVoiceParticipant in
+    // socketServer.ts), so anyone else at the table can already reach
+    // them with a real offer whether or not they've opened their own
+    // mic/camera. See DECISIONS.md and useVoiceChat.ts's own doc comment.
+    //
+    // Both 'rtc-peers' and 'state' fire synchronously within the same
+    // join-table call, essentially back to back — every listener has to
+    // be registered BEFORE the emit, not just before its own await, or a
+    // `.once()` set up only after awaiting the first can miss the second
+    // (it already fired with nothing listening) and hang forever.
+    const alicePeersPromise = waitFor<{ socketId: string }[]>(aliceSocket, 'rtc-peers');
+    const aliceStatePromise = waitFor(aliceSocket, 'state');
     aliceSocket.emit('join-table', { tableId: table.tableId });
-    bobSocket.emit('join-table', { tableId: table.tableId });
-    mallorySocket.emit('join-table', { tableId: other.tableId }); // a different table entirely
-    await Promise.all([waitFor(aliceSocket, 'state'), waitFor(bobSocket, 'state'), waitFor(mallorySocket, 'state')]);
+    const alicePeers = await alicePeersPromise;
+    expect(alicePeers).toEqual([]); // first one at the table, no one else there yet
+    await aliceStatePromise;
 
-    aliceSocket.emit('rtc-join');
-    const alicePeers = await waitFor<{ socketId: string }[]>(aliceSocket, 'rtc-peers');
-    expect(alicePeers).toEqual([]); // first to join voice, no one else there yet
-
+    const bobPeersPromise = waitFor<{ socketId: string }[]>(bobSocket, 'rtc-peers');
+    const bobStatePromise = waitFor(bobSocket, 'state');
     const bobJoinedPromise = waitFor<{ socketId: string }>(aliceSocket, 'rtc-peer-joined');
-    bobSocket.emit('rtc-join');
-    const bobPeers = await waitFor<{ socketId: string }[]>(bobSocket, 'rtc-peers');
+    bobSocket.emit('join-table', { tableId: table.tableId });
+    const bobPeers = await bobPeersPromise;
     expect(bobPeers).toHaveLength(1); // sees Alice as already-present
     const bobAnnouncedToAlice = await bobJoinedPromise;
     expect(bobAnnouncedToAlice.socketId).toBe(bobSocket.id);
+    await bobStatePromise;
 
-    // Bob signals an offer to Alice — both are voice participants of the same table.
+    const malloryStatePromise = waitFor(mallorySocket, 'state');
+    mallorySocket.emit('join-table', { tableId: other.tableId }); // a different table entirely
+    await malloryStatePromise;
+
+    // Bob signals an offer to Alice — both are registered voice participants of the same table.
     const signalReceived = waitFor<{ from: string; data: unknown }>(aliceSocket, 'rtc-signal');
     bobSocket.emit('rtc-signal', { to: aliceSocket.id, data: { type: 'offer', sdp: 'fake-sdp' } });
     const received = await signalReceived;
     expect(received.from).toBe(bobSocket.id);
     expect(received.data).toEqual({ type: 'offer', sdp: 'fake-sdp' });
 
-    // Mallory never called rtc-join (and is at a different table entirely) — a signal aimed at her must be silently dropped, not delivered.
+    // Mallory is at a different table entirely — a signal aimed at her must be silently dropped, not delivered.
     let mallorySawSignal = false;
     mallorySocket.on('rtc-signal', () => (mallorySawSignal = true));
     aliceSocket.emit('rtc-signal', { to: mallorySocket.id, data: { type: 'offer', sdp: 'x' } });
@@ -206,14 +222,19 @@ describe('socketServer: live signaling and access control', () => {
     const aliceSocket = connect(alice.token);
     const bobSocket = connect(bob.token);
     await Promise.all([waitFor(aliceSocket, 'connect'), waitFor(bobSocket, 'connect')]);
-    aliceSocket.emit('join-table', { tableId: table.tableId });
-    bobSocket.emit('join-table', { tableId: table.tableId });
-    await Promise.all([waitFor(aliceSocket, 'state'), waitFor(bobSocket, 'state')]);
 
-    aliceSocket.emit('rtc-join');
-    await waitFor(aliceSocket, 'rtc-peers');
-    bobSocket.emit('rtc-join');
-    await waitFor(bobSocket, 'rtc-peers');
+    // See the previous test's comment — both listeners must be registered before the emit, not just before their own await.
+    const alicePeersPromise = waitFor(aliceSocket, 'rtc-peers');
+    const aliceStatePromise = waitFor(aliceSocket, 'state');
+    aliceSocket.emit('join-table', { tableId: table.tableId });
+    await alicePeersPromise;
+    await aliceStatePromise;
+
+    const bobPeersPromise = waitFor(bobSocket, 'rtc-peers');
+    const bobStatePromise = waitFor(bobSocket, 'state');
+    bobSocket.emit('join-table', { tableId: table.tableId });
+    await bobPeersPromise;
+    await bobStatePromise;
 
     const bobSocketId = bobSocket.id;
     const peerLeftPromise = waitFor<{ socketId: string }>(aliceSocket, 'rtc-peer-left');

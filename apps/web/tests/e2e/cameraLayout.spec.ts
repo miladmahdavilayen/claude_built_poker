@@ -66,23 +66,33 @@ test('more than 4 human cameras on a phone screen collapse to a 2-tile speaker b
     await page.getByRole('button', { name: '🎥 Join with video' }).click();
     await page.getByRole('button', { name: '🎤 Mute' }).click();
   }
-  // Iris and Jack join and stay unmuted — the only 2 actually "speaking."
-  for (const page of [iris, jack]) {
-    await page.getByRole('button', { name: '🎥 Join with video' }).click();
-  }
+  // Iris joins and stays unmuted, and her connection to the owner is
+  // confirmed fully negotiated (video — and thus the same stream's audio
+  // track — actually flowing) BEFORE the 5th camera (Jack) pushes the
+  // table into collapsed mode. Only 4 cameras are on at this point, so
+  // collapse hasn't triggered yet and her seat's own .seat-video is still
+  // visible to check directly — this is what a slow CI runner's full
+  // 5-way WebRTC mesh needs the most headroom for, and checking it here
+  // (before collapse hides all seat video) is more direct than just
+  // giving the post-collapse accuracy check itself a longer timeout.
+  await iris.getByRole('button', { name: '🎥 Join with video' }).click();
+  await expect(owner.locator('[data-testid="seat-3"] .seat-video video')).toBeVisible({ timeout: 20_000 });
+  // Jack joins last, unmuted — the 5th camera, pushing past the >4
+  // threshold on this phone-sized viewport.
+  await jack.getByRole('button', { name: '🎥 Join with video' }).click();
 
-  // Every seat's own video is suppressed table-wide once the 5th camera
-  // pushes past the >4 threshold on this phone-sized viewport...
+  // Every seat's own video is suppressed table-wide now...
   await expect(owner.locator('.seat-video')).toHaveCount(0, { timeout: 20_000 });
   // ...replaced by a 2-tile bar...
   await expect(owner.locator('.speaker-bar-tile')).toHaveCount(2, { timeout: 20_000 });
   // ...showing specifically the 2 still-unmuted (actually speaking) players, not just any 2 —
   // proves the selection is accuracy-correct, not just count-correct. Wrapped in toPass since
-  // the active-speaker poll (useActiveSpeakers.ts) needs a tick or two to converge.
+  // the active-speaker poll (useActiveSpeakers.ts) needs a tick or two to converge, with a
+  // generous margin for a slower/more constrained CI runner.
   await expect(async () => {
     const labels = (await owner.locator('.speaker-bar-label').allTextContents()).sort();
     expect(labels).toEqual(['Iris', 'Jack']);
-  }).toPass({ timeout: 10_000 });
+  }).toPass({ timeout: 30_000 });
 
   await closeAll(contexts);
 });

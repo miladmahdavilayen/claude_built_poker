@@ -15,7 +15,15 @@ const HANGOVER_MS = 700;
 const VOLUME_THRESHOLD = 12;
 
 let sharedAudioContext: AudioContext | null = null;
-function getAudioContext(): AudioContext | null {
+/**
+ * Shared across every user of this module (also called directly, and
+ * synchronously, from useVoiceChat.ts's joinCall — see that call site's own
+ * comment for why: a browser's autoplay policy only reliably lets
+ * `resume()` actually take effect when it's called synchronously inside a
+ * real user gesture, and by the time this hook's own effect would call it,
+ * that gesture is long gone).
+ */
+export function getSharedAudioContext(): AudioContext | null {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return null;
   sharedAudioContext ??= new AudioContext();
   if (sharedAudioContext.state === 'suspended') void sharedAudioContext.resume();
@@ -76,7 +84,7 @@ export function useActiveSpeakers(entries: SpeakerStreamEntry[], enabled: boolea
       return;
     }
 
-    const ctx = getAudioContext();
+    const ctx = getSharedAudioContext();
     if (!ctx) return;
 
     const currentIds = new Set(entriesRef.current.map((e) => e.id));

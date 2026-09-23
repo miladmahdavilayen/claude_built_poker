@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
+import { getSharedAudioContext } from './useActiveSpeakers.js';
 
 /**
  * Peer-to-peer voice/video for players at the same table, signaled through
@@ -289,6 +290,16 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
         return;
       }
       setError(null);
+      // Synchronous, right here, deliberately — this runs inside the real
+      // click that triggered joinCall. useActiveSpeakers.ts needs this same
+      // AudioContext later (once >4 cameras are on) to detect who's
+      // talking, but by then there's no user gesture on the stack anymore,
+      // and browsers only reliably let a suspended AudioContext actually
+      // resume when `resume()` is called synchronously inside one. Calling
+      // it here, opportunistically, on every call join (whether or not
+      // this particular table ever hits that camera count) means it's
+      // already running by the time it's needed. See getSharedAudioContext.
+      getSharedAudioContext();
       void navigator.mediaDevices
         .getUserMedia({ audio: true, video: withVideo })
         .then((stream) => {

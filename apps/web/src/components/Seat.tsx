@@ -103,64 +103,77 @@ export function Seat({
       <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
     </>
   ) : null;
+  const nameRow = (
+    <div className="seat-name">
+      <span
+        className="seat-avatar"
+        style={{ background: `hsl(${String(avatarHue(seat.avatarSeed ?? seat.displayName ?? 'x'))}, 55%, 42%)` }}
+      >
+        {(seat.displayName ?? '?').slice(0, 1).toUpperCase()}
+      </span>
+      {!seat.isConnected && <span className="disconnected-dot" title="Disconnected" />}
+      {seat.displayName ?? 'Player'}
+      {/* Server-redacted to null for every viewer except the owner themselves — see projection.ts's viewerIsAdmin gate — so this simply never renders for anyone else, no client-side role check needed. */}
+      {seat.ownerNickname && (
+        <span className="seat-owner-nickname" title="Only visible to you">
+          ({seat.ownerNickname})
+        </span>
+      )}
+      {seat.isBot && <span className="seat-tag seat-tag-bot" title="Computer player">🤖 bot</span>}
+      {inVoiceCall && !showSeatVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
+      {seat.status === 'sitting-out' && <span className="seat-tag">sitting out</span>}
+      {seat.status === 'all-in' && <span className="seat-tag seat-tag-allin">all-in</span>}
+    </div>
+  );
+  const stackRow = (
+    <>
+      <div className="seat-stack">{formatChips(seat.stack)}</div>
+      {/* The current-street bet itself renders as chip visuals on the felt, in front of the seat (see Table.tsx's bet-chips-slot) — not duplicated as plain text here. */}
+      {seat.isBot && onRemoveBotClick && (
+        <button type="button" className="seat-remove-bot" onClick={onRemoveBotClick}>
+          Remove
+        </button>
+      )}
+      {!seat.isBot && onRebuyClick && (
+        <button type="button" className="seat-remove-bot" onClick={onRebuyClick}>
+          Rebuy
+        </button>
+      )}
+    </>
+  );
 
   return (
-    <div className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''}`}>
+    <div className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}`}>
       {isButton && <div className="dealer-button">D</div>}
       {/* The button already gets the "D" disc — a "BTN" text badge on top of it too would be redundant clutter. */}
       {positionLabel && !isButton && <div className="position-label">{positionLabel}</div>}
       {voice && showSeatVideo && (
         <div className="seat-video">
           <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
-          {/* Cards render ON the video (a bottom fade keeps them legible over
-              whatever's behind them) instead of taking their own row below
-              it — a seat with its camera on no longer needs both a full-size
-              video box AND a full-size card row stacked vertically, which is
-              what was making video-enabled seats tall enough to crowd the
-              board/other seats on smaller screens. See .seat-video-cards. */}
-          {holeCards && (
-            <div className="seat-video-cards">
-              <div className="seat-cards">{holeCards}</div>
-            </div>
-          )}
+          {/* The video now fills the ENTIRE seat card (not just a small box
+              inset within it) — the same frame that was already drawn
+              around the whole seat (the viewer's own green outline, or an
+              acting seat's pulsing one) IS the camera frame now, instead of
+              a separate, smaller, redundant orange border sitting inside
+              it with dead space around it. Name/cards/stack render as
+              overlays on top instead of taking their own space below. */}
+          <div className="seat-video-overlay-top">{nameRow}</div>
+          <div className="seat-video-overlay-bottom">
+            {holeCards && <div className="seat-cards">{holeCards}</div>}
+            {stackRow}
+          </div>
         </div>
       )}
       {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
-      {!showSeatVideo && holeCards && <div className="seat-cards">{holeCards}</div>}
-      <div className="seat-info">
-        <div className="seat-name">
-          <span
-            className="seat-avatar"
-            style={{ background: `hsl(${String(avatarHue(seat.avatarSeed ?? seat.displayName ?? 'x'))}, 55%, 42%)` }}
-          >
-            {(seat.displayName ?? '?').slice(0, 1).toUpperCase()}
-          </span>
-          {!seat.isConnected && <span className="disconnected-dot" title="Disconnected" />}
-          {seat.displayName ?? 'Player'}
-          {/* Server-redacted to null for every viewer except the owner themselves — see projection.ts's viewerIsAdmin gate — so this simply never renders for anyone else, no client-side role check needed. */}
-          {seat.ownerNickname && (
-            <span className="seat-owner-nickname" title="Only visible to you">
-              ({seat.ownerNickname})
-            </span>
-          )}
-          {seat.isBot && <span className="seat-tag seat-tag-bot" title="Computer player">🤖 bot</span>}
-          {inVoiceCall && !showSeatVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
-          {seat.status === 'sitting-out' && <span className="seat-tag">sitting out</span>}
-          {seat.status === 'all-in' && <span className="seat-tag seat-tag-allin">all-in</span>}
-        </div>
-        <div className="seat-stack">{formatChips(seat.stack)}</div>
-        {/* The current-street bet itself renders as chip visuals on the felt, in front of the seat (see Table.tsx's bet-chips-slot) — not duplicated as plain text here. */}
-        {seat.isBot && onRemoveBotClick && (
-          <button type="button" className="seat-remove-bot" onClick={onRemoveBotClick}>
-            Remove
-          </button>
-        )}
-        {!seat.isBot && onRebuyClick && (
-          <button type="button" className="seat-remove-bot" onClick={onRebuyClick}>
-            Rebuy
-          </button>
-        )}
-      </div>
+      {!showSeatVideo && (
+        <>
+          {holeCards && <div className="seat-cards">{holeCards}</div>}
+          <div className="seat-info">
+            {nameRow}
+            {stackRow}
+          </div>
+        </>
+      )}
       {actionLabel && <div className="seat-action-bubble">{actionLabel}</div>}
     </div>
   );

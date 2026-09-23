@@ -959,32 +959,36 @@ input[type='range']::-moz-range-thumb {
 .seat-empty-action-assign:hover {
   color: var(--accent);
 }
+/* A seat with its camera on: the video fills the ENTIRE seat card (see
+   .seat-video below) instead of a smaller box inset within it — so the
+   frame already drawn around the whole seat (the viewer's own green
+   outline, an acting seat's pulsing accent one, or the default subtle
+   border) IS the camera frame, with no separate, redundant, smaller
+   video-only border leaving dead space around it inside that frame. See
+   also DECISIONS.md and the stacking-context fix a few rules up, both
+   from a real seat-video/voice-panel overlap the old smaller box caused.
+   Taller than the default seat (was implicitly ~4/5.5 via stacked
+   video+cards+info) so there's still comfortable room for the name/cards/
+   stack overlays below without feeling cramped. */
+.seat.seat-has-video {
+  padding: 0;
+  aspect-ratio: 3 / 4;
+  /* Same screen-size-aware formula as before (see git history) — smallest
+     of --seat-width (player-count axis), 22vw, and 22vh (≈30vh once the
+     3/4 aspect-ratio above turns this width into a height) wins, so this
+     keeps shrinking continuously on a narrow or short real screen instead
+     of just riding --seat-width's own, much coarser, per-player-count
+     ceiling. */
+  width: clamp(72px, min(var(--seat-width, 128px), 22vw, 22vh), 150px);
+}
 .seat-video {
-  position: relative;
-  /* Three independent caps, smallest wins: --seat-width (player-count axis,
-     from seatSizeVars — at a 9-max table this alone shrinks small enough to
-     make a face genuinely hard to read), 22vw, and 30vh. The vw/vh terms
-     are what make this react to the viewer's OWN, exact current screen
-     size continuously — not just at the three fixed breakpoints below —
-     so on a narrow phone or a short landscape window the video shrinks
-     immediately by however much that screen actually needs, instead of
-     staying pinned to a size that was only ever sized for player count and
-     then just painted smaller via --mobile-shrink (which doesn't reduce
-     the space it actually occupies — see DECISIONS.md and the stacking-
-     context fix a few rules up, both from a real seat-video/voice-panel
-     overlap this exact gap caused). 72px is the legibility floor; 150px
-     the pre-existing ceiling for a heads-up table's own huge seat card. */
-  width: clamp(72px, min(var(--seat-width, 128px), 22vw, 30vh), 150px);
-  /* Taller than wide (was 4/3 landscape) — a typical webcam/selfie feed
-     is landscape source cropped via object-fit:cover, and a taller
-     container keeps more of the face + shoulders in frame instead of
-     cropping the top of the head and chin off to fill a wide rectangle. */
-  aspect-ratio: 4 / 5;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   border-radius: 10px;
   overflow: hidden;
   background: #000;
-  border: 2px solid var(--accent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 .seat-video-el {
   width: 100%;
@@ -996,22 +1000,34 @@ input[type='range']::-moz-range-thumb {
   font-size: 10px;
   line-height: 1;
 }
-/* Cards rendered directly over a seat's own video (see Seat.tsx) instead of
-   in their own row below it, so a video-enabled seat doesn't pay for both a
-   full video box AND a full card row's height. The gradient is only there
-   to keep the cards legible regardless of what's moving behind them —
-   camera feeds are unpredictable backgrounds (bright rooms, motion, busy
-   framing), unlike the felt's own steady dark background .seat-cards
-   normally sits on. */
-.seat-video-cards {
+/* Name/cards/stack render as overlays directly on the video (see Seat.tsx)
+   instead of in their own rows below it, so a video-enabled seat doesn't
+   pay for both a full video box AND a full info block's height. The
+   gradients are only there to keep this legible regardless of what's
+   moving behind it — camera feeds are unpredictable backgrounds (bright
+   rooms, motion, busy framing), unlike the felt's own steady dark
+   background this content normally sits on. */
+.seat-video-overlay-top {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  justify-content: center;
+  padding: 4px 4px 14px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.75) 0%, rgba(0, 0, 0, 0.4) 55%, rgba(0, 0, 0, 0) 100%);
+}
+.seat-video-overlay-bottom {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   display: flex;
-  justify-content: center;
-  padding: 8px 0 5px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.55) 55%, rgba(0, 0, 0, 0) 100%);
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 6px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.55) 45%, rgba(0, 0, 0, 0) 100%);
 }
 .seat-cards {
   display: flex;

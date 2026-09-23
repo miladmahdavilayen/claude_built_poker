@@ -103,6 +103,16 @@ export function Seat({
       <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
     </>
   ) : null;
+  // The video overlay never shows a face-down card-back placeholder for
+  // someone else's hidden hand — it'd just be 2 dead rectangles covering
+  // part of their face for no real information (everyone already knows a
+  // seated player has 2 cards). `holeCards.length > 0` is populated by the
+  // server ONLY for the viewer's own seat or a seat genuinely revealed at
+  // showdown/an all-in runout (see projection.ts's revealedSeatIds) — never
+  // just because a hand is in progress — so this only ever shows real
+  // cards, at the moment they actually become real. The non-video
+  // `.seat-cards` row below (a seat with no camera on) is untouched.
+  const showHoleCardsOnVideo = holeCards !== null && seat.holeCards.length > 0;
   const nameRow = (
     <div className="seat-name">
       <span
@@ -159,7 +169,7 @@ export function Seat({
               overlays on top instead of taking their own space below. */}
           <div className="seat-video-overlay-top">{nameRow}</div>
           <div className="seat-video-overlay-bottom">
-            {holeCards && <div className="seat-cards">{holeCards}</div>}
+            {showHoleCardsOnVideo && <div className="seat-cards">{holeCards}</div>}
             {stackRow}
           </div>
         </div>

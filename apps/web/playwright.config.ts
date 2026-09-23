@@ -45,6 +45,12 @@ export default defineConfig({
         // becomes test flakiness, not a real signal, once the suite has
         // enough tests to add up to that many requests. See DECISIONS.md.
         RATE_LIMIT_MAX: '100000',
+        // Production's real post-hand shuffle break is 5s — several tests
+        // start more than one hand, and genuinely waiting 5s per hand
+        // would meaningfully slow the suite for no real signal. Short but
+        // non-zero so the gate itself (button hidden, then reappearing)
+        // is still genuinely exercised, not bypassed.
+        HAND_BREAK_MS: '1200',
       },
       url: `http://localhost:${String(API_PORT)}/health`,
       reuseExistingServer: false,

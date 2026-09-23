@@ -9,6 +9,7 @@ import { BoardAndPot } from '../components/BoardAndPot.js';
 import { ChatPanel } from '../components/ChatPanel.js';
 import { ChipStack } from '../components/ChipStack.js';
 import { DealAnimation } from '../components/DealAnimation.js';
+import { HandBreakPanel } from '../components/HandBreakPanel.js';
 import { Seat } from '../components/Seat.js';
 import { SpeakerBar, type SpeakerBarTile } from '../components/SpeakerBar.js';
 import { VoicePanel } from '../components/VoicePanel.js';
@@ -365,20 +366,12 @@ export function TablePage(): React.JSX.Element {
         <DealAnimation events={sock.latestEvents} positions={positions} />
         <WinCelebration events={sock.latestEvents} positions={positions} viewerSeatId={state.viewerSeatId} />
         {state.phase !== 'in-hand' && (
-          <div className="start-hand-panel">
-            {mySeat ? (
-              <>
-                <button type="button" className="btn-start-hand" disabled={!state.canStartHand} onClick={() => sock.startHand()}>
-                  Play Hand
-                </button>
-                {!state.canStartHand && (
-                  <span className="start-hand-hint">Waiting for at least 2 seated players&hellip;</span>
-                )}
-              </>
-            ) : (
-              <span className="start-hand-hint">Waiting for a seated player to start a hand&hellip;</span>
-            )}
-          </div>
+          <HandBreakPanel
+            nextHandAt={state.nextHandAt}
+            canStartHand={state.canStartHand}
+            amSeated={!!mySeat}
+            onStartHand={() => sock.startHand()}
+          />
         )}
         {positions.map(({ seatId, left, top, betLeft, betTop }) => {
           const seat = state.seats.find((s) => s.seatId === seatId);

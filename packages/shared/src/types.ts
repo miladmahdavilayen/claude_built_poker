@@ -96,6 +96,8 @@ export interface ProjectedTableState {
   viewerSeatId: number | null;
   /** Epoch ms absolute deadline for the current acting seat's decision, or null. */
   actionDeadline: number | null;
+  /** Epoch ms — a new hand can't start before this (the post-hand shuffle break), or null once it's over/not applicable. */
+  nextHandAt: number | null;
   rakePot: number;
   /**
    * Everyone waiting for a seat, in queue order. Visible to all viewers

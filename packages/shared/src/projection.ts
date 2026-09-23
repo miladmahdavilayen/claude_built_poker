@@ -26,6 +26,10 @@ export interface ProjectionContext {
    */
   revealedSeatIds: ReadonlySet<number>;
   actionDeadline: number | null;
+  /** Epoch ms — a new hand can't start before this (the post-hand shuffle break). */
+  nextHandAt: number | null;
+  /** Server's own clock at projection time — compared against `nextHandAt` for `canStartHand`, not `Date.now()`, so this stays testable with a fake clock exactly like `actionDeadline` already is. */
+  now: number;
   rakePot: number;
   handId: string | null;
   handCommitment: string | null;
@@ -105,7 +109,8 @@ export function projectStateForSeat(
   // until the next hand's dealing resets it. See LiveTable.dealtInCount.
   const dealtInCount = state.seats.filter((s) => s.status !== 'empty' && s.status !== 'sitting-out' && s.stack > 0).length;
   const hasHuman = state.seats.some((s) => (ctx.seatMeta.get(s.seatId) ?? EMPTY_SEAT_META).playerId !== null);
-  const canStartHand = state.phase !== 'in-hand' && dealtInCount >= 2 && hasHuman;
+  const breakOver = ctx.nextHandAt === null || ctx.now >= ctx.nextHandAt;
+  const canStartHand = state.phase !== 'in-hand' && dealtInCount >= 2 && hasHuman && breakOver;
 
   return {
     tableId: ctx.tableId,
@@ -127,6 +132,7 @@ export function projectStateForSeat(
     legalActions,
     viewerSeatId,
     actionDeadline: ctx.actionDeadline,
+    nextHandAt: ctx.nextHandAt,
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
   };

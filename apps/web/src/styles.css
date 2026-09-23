@@ -556,6 +556,16 @@ input[type='range']::-moz-range-thumb {
   }
 }
 
+/* The between-hands shuffle break (see HandBreakPanel.tsx) — reuses
+   .shuffle-card as-is (its own animation already loops forever on its
+   own; .shuffle-deck above just controls how long it stays mounted for
+   the brief pre-deal flourish). This sits inline inside .start-hand-panel
+   instead of floating absolutely over the felt, so no positioning here. */
+.hand-break-shuffle {
+  display: flex;
+  margin-left: 16px;
+}
+
 .flying-card {
   position: absolute;
   left: var(--from-left);

@@ -45,10 +45,21 @@ test('no hand deals automatically — seating players only enables "Play Hand", 
   await playHandToCompletion([page]);
   await expect(page.getByText('Verify hand fairness')).toBeVisible();
 
-  // Hand over: the "Play Hand" panel comes back, and — same as before —
-  // nothing deals a second hand on its own, no matter how long we wait.
-  await expect(playHandBtn).toBeVisible();
+  // Hand over: a mandatory shuffle break kicks in first — "Play Hand" is
+  // replaced entirely (not just disabled) by a riffle animation and a
+  // countdown for a few real seconds (HAND_BREAK_MS in liveTable.ts,
+  // shortened for this whole suite via playwright.config.ts's server env).
+  await expect(playHandBtn).toHaveCount(0);
+  await expect(page.locator('.hand-break-shuffle')).toBeVisible();
+  await expect(page.getByText(/Shuffling.*next hand in \d+s/)).toBeVisible();
+  await expect(page.getByText('Verify hand fairness')).toBeVisible(); // still showing the FIRST hand's result, not a fresh one
+
+  // Once the break elapses, "Play Hand" comes back, enabled — and, same
+  // as before, nothing deals a second hand on its own no matter how long
+  // we wait.
+  await expect(playHandBtn).toBeVisible({ timeout: 5_000 });
   await expect(playHandBtn).toBeEnabled();
+  await expect(page.locator('.hand-break-shuffle')).toHaveCount(0);
   await page.waitForTimeout(500);
   await expect(page.getByText('Verify hand fairness')).toBeVisible(); // still showing the FIRST hand's result, not a fresh one
 

@@ -101,6 +101,11 @@ export interface LiveTableCallbacks {
 }
 
 const DEFAULT_TIME_BANK_REFILL_MS = 15000;
+// Real dealer time to riffle-shuffle and set up the next hand — a new hand
+// can't be started until this elapses after the previous one completes.
+// Overridable so e2e tests don't genuinely burn 5s per hand (see
+// RATE_LIMIT_MAX in index.ts for the same env-override-for-tests pattern).
+const HAND_BREAK_MS = Number(process.env.HAND_BREAK_MS ?? 5000);
 
 export class LiveTable {
   readonly tableId: string;
@@ -117,7 +122,10 @@ export class LiveTable {
   private handStartedAt: Date | null = null;
   private lastActionAt = 0;
   actionDeadline: number | null = null;
+  /** Epoch ms — a new hand can't start before this. Set on hand-complete, cleared once the next hand actually deals. See HAND_BREAK_MS. */
+  nextHandAt: number | null = null;
   private clockTimer: ReturnType<typeof setTimeout> | null = null;
+  private nextHandTimer: ReturnType<typeof setTimeout> | null = null;
   private waitlist: WaitlistEntry[] = [];
   /** token -> pending owner-generated seat assignment. See createSeatAssignment/redeemSeatAssignment. */
   private readonly seatAssignments = new Map<string, { seatId: number; buyIn: number; ownerNickname: string | null }>();
@@ -329,6 +337,8 @@ export class LiveTable {
   resetTable(): { userId: string; stack: number }[] {
     this.clearClock();
     this.clearBotMove();
+    this.clearNextHandTimer();
+    this.nextHandAt = null;
     this.seatAssignments.clear(); // any not-yet-redeemed invite links are void once the table's reset
     const refunds: { userId: string; stack: number }[] = [];
     for (let i = 0; i < this.seats.length; i++) {
@@ -405,7 +415,8 @@ export class LiveTable {
     // only bots would deal itself forever with nobody watching, burning
     // server resources for no one's benefit. See DECISIONS.md.
     const hasHuman = this.seats.some((s) => s.userId !== null);
-    return this.state.phase !== 'in-hand' && this.dealtInCount() >= 2 && hasHuman;
+    const breakOver = this.nextHandAt === null || this.callbacks.now() >= this.nextHandAt;
+    return this.state.phase !== 'in-hand' && this.dealtInCount() >= 2 && hasHuman && breakOver;
   }
 
   /**
@@ -469,6 +480,8 @@ export class LiveTable {
     this.revealedSeatIds = new Set();
     this.handStartedAt = new Date();
     this.lastActionAt = this.callbacks.now();
+    this.nextHandAt = null;
+    this.clearNextHandTimer();
 
     for (const seat of this.seats) {
       seat.lastAction = null;
@@ -544,6 +557,11 @@ export class LiveTable {
   private clearBotMove(): void {
     if (this.botMoveTimer) clearTimeout(this.botMoveTimer);
     this.botMoveTimer = null;
+  }
+
+  private clearNextHandTimer(): void {
+    if (this.nextHandTimer) clearTimeout(this.nextHandTimer);
+    this.nextHandTimer = null;
   }
 
   private scheduleBotMove(seatId: number, policyName: string): void {
@@ -641,6 +659,17 @@ export class LiveTable {
       this.clearClock();
       this.clearBotMove();
       this.actionDeadline = null;
+      this.nextHandAt = this.callbacks.now() + HAND_BREAK_MS;
+      // canStartHand() is derived fresh on every projection, but nothing
+      // else naturally prompts a NEW broadcast once the break elapses on
+      // its own — without this, every viewer's client keeps showing the
+      // last-known (false) canStartHand forever, until some unrelated
+      // event happens to trigger another broadcast. This is the same
+      // "make sure a client eventually finds out, even with nobody doing
+      // anything" role armClock()'s own clockTimer plays for the action
+      // clock, just a plain broadcast instead of a forced action.
+      this.clearNextHandTimer();
+      this.nextHandTimer = setTimeout(() => this.broadcastAll([]), HAND_BREAK_MS);
       void this.settleHand();
     } else {
       this.armClockOrBot();
@@ -718,7 +747,16 @@ export class LiveTable {
 
     this.currentHandRng = null;
     this.currentHandInitialState = null;
-    this.currentHandId = null;
+    // Deliberately NOT nulling currentHandId here (unlike the two fields
+    // above, which guard this whole method against a double-settlement
+    // re-entry — see the early return at the top). `projectionFor()`'s
+    // `handId` needs to keep identifying the just-finished hand for the
+    // ENTIRE post-hand break (the "Verify hand fairness" link is gated on
+    // `state.handId` being truthy) — it's overwritten with a fresh id the
+    // moment the next hand actually deals (startNextHand(), a few lines
+    // below this method). This was invisible before nextHandTimer existed
+    // (see applyPlayerAction) since nothing re-broadcast between a hand
+    // ending and the next one starting to expose the already-nulled id.
   }
 
   /** Between hands: refill time banks, apply queued sit-outs, auto-sit-out busted seats. Call before startNextHand(). */
@@ -778,6 +816,8 @@ export class LiveTable {
         seatMeta: this.seatMetaMap(),
         revealedSeatIds: this.revealedSeatIds,
         actionDeadline: this.actionDeadline,
+        nextHandAt: this.nextHandAt,
+        now: this.callbacks.now(),
         rakePot: 0,
       },
       viewerSeatId,
@@ -801,5 +841,6 @@ export class LiveTable {
   dispose(): void {
     this.clearClock();
     this.clearBotMove();
+    this.clearNextHandTimer();
   }
 }

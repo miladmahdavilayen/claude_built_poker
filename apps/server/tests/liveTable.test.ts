@@ -99,7 +99,18 @@ describe('LiveTable: server-authoritative hand lifecycle', () => {
     const foldedSeat = table.state.seats.find((s) => s.status === 'folded');
     expect(foldedSeat).toBeDefined();
 
-    expect(table.canStartHand()).toBe(true);
+    // Still on the post-hand shuffle break immediately after — this is
+    // the OTHER thing that must not go permanently false: the break gate
+    // and the fold-status quirk are two independent conditions that both
+    // needed fixing here.
+    expect(table.canStartHand()).toBe(false);
+    try {
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(6000);
+      expect(table.canStartHand()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects an out-of-turn action with a typed error, never throwing', () => {
@@ -426,7 +437,13 @@ describe('LiveTable: fair initial button placement (high-card draw)', () => {
     }
     expect(table.state.phase).toBe('hand-complete');
 
-    table.startNextHand();
+    try {
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(6000); // past the post-hand shuffle break
+      table.startNextHand();
+    } finally {
+      vi.useRealTimers();
+    }
     // Heads-up rotation just swaps the button every hand — a deterministic
     // consequence of normal engine rotation, not a fresh draw.
     expect(table.state.buttonSeat).toBe(firstButton === 0 ? 1 : 0);

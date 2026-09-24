@@ -90,6 +90,62 @@ test('the owner can terminate a table with confirmation, closing it for a seated
   await ctxAlice.close();
 });
 
+test('an invited guest leaving the table gets a confirm first, then a hard end to their session — never the lobby', async ({ browser }) => {
+  const ctxOwner = await browser.newContext();
+  const ctxAlice = await browser.newContext();
+  const ctxCarol = await browser.newContext();
+  const pageOwner = await ctxOwner.newPage();
+  const pageAlice = await ctxAlice.newPage();
+  // A second seated human, so the table doesn't auto-terminate when Alice
+  // leaves (see the dedicated auto-terminate test above for that case) —
+  // this test is specifically about Alice's own leave-table flow.
+  const pageCarol = await ctxCarol.newPage();
+
+  await adminLogin(pageOwner);
+  await createTable(pageOwner, { name: 'Guest Leave Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+
+  await guestSignup(pageAlice, 'Alice');
+  await inviteToSeat(pageOwner, pageAlice, 0, 100);
+  await guestSignup(pageCarol, 'Carol');
+  await inviteToSeat(pageOwner, pageCarol, 1, 100);
+
+  // No lobby link at all for an invited guest — self-serve seating
+  // doesn't exist, so there's genuinely nowhere for them to go back to.
+  await expect(pageAlice.getByRole('link', { name: /Lobby/ })).toHaveCount(0);
+  // The owner still has theirs, unaffected by any of this.
+  await expect(pageOwner.getByRole('link', { name: /Lobby/ })).toBeVisible();
+
+  await pageAlice.getByRole('button', { name: 'Leave table' }).click();
+  await expect(pageAlice.getByText('Leave this table?')).toBeVisible();
+
+  // Backing out leaves the guest exactly where they were — still seated.
+  await pageAlice.getByRole('button', { name: 'No, stay' }).click();
+  await expect(pageAlice.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'active');
+
+  await pageAlice.getByRole('button', { name: 'Leave table' }).click();
+  await pageAlice.getByRole('button', { name: 'Yes, leave' }).click();
+
+  // Never the lobby — a dead-end page instead, with nothing that could
+  // take them to the lobby, login, or account creation.
+  await expect(pageAlice).toHaveURL(/\/left/, { timeout: 10_000 });
+  await expect(pageAlice.getByText('left the table')).toBeVisible();
+  await expect(pageAlice.getByRole('link')).toHaveCount(0);
+
+  // The session is genuinely over — reloading (or any later navigation)
+  // can't recover it, since the refresh cookie was actually revoked.
+  await pageAlice.reload();
+  await expect(pageAlice).toHaveURL(/\/left/);
+
+  // The table's still alive (Carol's still seated) — just Alice's seat is
+  // free now, for the owner to bring in someone new.
+  await expect(pageCarol.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'empty', { timeout: 10_000 });
+  await expect(pageCarol.locator('[data-testid="seat-1"]')).toHaveAttribute('data-seat-status', 'active');
+
+  await ctxOwner.close();
+  await ctxAlice.close();
+  await ctxCarol.close();
+});
+
 test('the owner can reset a table, freeing every seat while keeping the table itself alive at the same link', async ({ browser }) => {
   const ctxOwner = await browser.newContext();
   const ctxAlice = await browser.newContext();

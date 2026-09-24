@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 import { useAuth } from '../AuthContext.js';
@@ -58,7 +58,7 @@ export function TablePage(): React.JSX.Element {
   const { tableId } = useParams<{ tableId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const inviteCode = searchParams.get('code') ?? undefined;
-  const { user, accessToken, setDisplayName } = useAuth();
+  const { user, accessToken, setDisplayName, logout } = useAuth();
   const { socket, connected } = useSocket(accessToken);
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
@@ -89,6 +89,10 @@ export function TablePage(): React.JSX.Element {
   const [botBuyIn, setBotBuyIn] = useState<number | ''>(0);
   const [terminateConfirmOpen, setTerminateConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  // Set only by a guest's own confirmed "Leave table" click — see the
+  // tableClosedReason effect below for why this exists.
+  const leavingIntentionallyRef = useRef(false);
   const [assignModal, setAssignModal] = useState<number | null>(null);
   const [assignBuyIn, setAssignBuyIn] = useState<number | ''>(0);
   const [assignNickname, setAssignNickname] = useState('');
@@ -125,10 +129,18 @@ export function TablePage(): React.JSX.Element {
   }, [assignToken, connected, sock.state?.viewerSeatId, redeemedTokens, setSearchParams]);
 
   // The table closed out from under us — an owner's "Terminate table," or
-  // (for a spectator who happened to be watching) the last human leaving.
-  // Nothing more to do here but head back to the lobby.
+  // (for a spectator who happened to be watching, or any other viewer,
+  // guest or not) the last human leaving. Unaffected by any of the
+  // guest-specific leave-table handling below: this fires for EVERYONE
+  // still watching a table that closes for a reason that had nothing to
+  // do with their own choice, so it always heads back to the lobby, same
+  // as it always has. `leavingIntentionallyRef` (set only by a guest's own
+  // "Yes, leave" click, just below) suppresses this specific effect for
+  // that one case, since a guest who was the table's last human leaving
+  // makes this fire too — racing the explicit /left navigation their own
+  // click already triggers.
   useEffect(() => {
-    if (sock.tableClosedReason) void navigate('/lobby');
+    if (sock.tableClosedReason && !leavingIntentionallyRef.current) void navigate('/lobby');
   }, [sock.tableClosedReason, navigate]);
 
   // Memoized deliberately: DealAnimation.tsx's shuffle/deal effect depends
@@ -289,7 +301,11 @@ export function TablePage(): React.JSX.Element {
   return (
     <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
       <div className="table-header">
-        <Link to="/lobby">&larr; Lobby</Link>
+        {/* Owner-only — an invited guest has no lobby to go back to at
+            all (self-serve seating doesn't exist; the only way back in
+            is a fresh invite link from the owner). See the leave-table
+            confirm modal below and DECISIONS.md. */}
+        {user.role === 'admin' && <Link to="/lobby">&larr; Lobby</Link>}
         <div className="table-header-name">
           {state.tableName}
           {state.settings.isPrivate && <span className="seat-tag">private</span>}
@@ -300,7 +316,15 @@ export function TablePage(): React.JSX.Element {
             <button
               type="button"
               onClick={() => {
-                void sock.leaveTable().then(() => navigate('/lobby'));
+                // The owner always has a lobby to go back to, so their
+                // own "Leave table" stays the simple, immediate action it
+                // always was. An invited guest gets a confirm first — see
+                // the modal below and DECISIONS.md.
+                if (user.role === 'admin') {
+                  void sock.leaveTable().then(() => navigate('/lobby'));
+                } else {
+                  setLeaveConfirmOpen(true);
+                }
               }}
             >
               Leave table
@@ -672,6 +696,48 @@ export function TablePage(): React.JSX.Element {
                 }}
               >
                 Yes, reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Guest-only (see the "Leave table" button above — the owner's own
+          click never opens this): an invited guest has no lobby/login/
+          account page to land on, so leaving fully ends their (ephemeral,
+          password-less) session instead. See Left.tsx, DECISIONS.md. */}
+      {leaveConfirmOpen && (
+        <div className="modal-backdrop" onClick={() => setLeaveConfirmOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Leave this table?</h3>
+            <p>
+              You won&rsquo;t be able to get back in unless the table owner sends you a new invite link &mdash; this ends your
+              session entirely. If you just want a break, close this and use &ldquo;Sit out next hand&rdquo; instead.
+            </p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setLeaveConfirmOpen(false)}>
+                No, stay
+              </button>
+              <button
+                type="button"
+                className="btn-owner-danger"
+                onClick={() => {
+                  setLeaveConfirmOpen(false);
+                  leavingIntentionallyRef.current = true;
+                  // Navigate to the ungated /left route BEFORE logging
+                  // out, not after — /table/:tableId's own route element
+                  // is `user ? <TablePage/> : <RedirectToLogin/>`, so
+                  // clearing `user` first (via logout) while still on
+                  // that route swaps straight to <RedirectToLogin/> (a
+                  // trip through /login this whole flow exists to avoid)
+                  // before this component's own navigate ever gets a
+                  // chance to run.
+                  void sock.leaveTable()
+                    .then(() => navigate('/left', { replace: true }))
+                    .then(() => logout());
+                }}
+              >
+                Yes, leave
               </button>
             </div>
           </div>

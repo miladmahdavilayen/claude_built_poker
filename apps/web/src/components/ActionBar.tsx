@@ -59,7 +59,7 @@ export function ActionBar({
     return (
       <div className="bet-overlay">
         {/* Fold/Check/Call live in a thin rail hugging the LEFT edge only —
-            the center ~75% of the screen (board cards, the viewer's own
+            the center majority of the screen (board cards, the viewer's own
             hole cards, camera windows) has no overlay element over it at
             all, faded or otherwise. See the matching right rail below and
             the .bet-overlay-rail CSS. */}
@@ -78,14 +78,14 @@ export function ActionBar({
             onChange={(e) => setAmount(Number(e.target.value))}
           />
           <div className="bet-overlay-presets">
-            <button type="button" onClick={setHalfPot} aria-label="Half pot">
-              ½
+            <button type="button" onClick={setHalfPot}>
+              ½ pot
             </button>
-            <button type="button" onClick={setPot} aria-label="Pot">
-              P
+            <button type="button" onClick={setPot}>
+              Pot
             </button>
-            <button type="button" onClick={setAllIn} aria-label="All-in">
-              AI
+            <button type="button" onClick={setAllIn}>
+              All-in
             </button>
           </div>
           {/* $1 precision regardless of the table's big blind — the

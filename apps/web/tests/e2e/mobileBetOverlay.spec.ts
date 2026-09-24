@@ -11,23 +11,24 @@ function rectsOverlap(
 // Regression test for the phone/iPhone bet-sizer redesign: below the
 // compact breakpoint, a raise-capable turn shows `.bet-overlay` — two thin
 // rails pinned to the LEFT (fold/check/call) and RIGHT (bet slider) screen
-// edges, each capped at ~12.5% of the viewport width and bottom-anchored to
-// their own content height (NOT stretched full-height) — in place of the
-// old inline `.action-bar`/`.bet-sizer` bar. See ActionBar.tsx,
-// VerticalBetSlider.tsx.
+// edges, bottom-anchored to their own content height (NOT stretched
+// full-height) — in place of the old inline `.action-bar`/`.bet-sizer` bar.
+// See ActionBar.tsx, VerticalBetSlider.tsx.
 //
-// This went through three iterations: first the entire screen faded, then
-// a single bottom-anchored panel still ran wide enough to cover the
+// This went through several iterations: first the entire screen faded,
+// then a single bottom-anchored panel still ran wide enough to cover the
 // board/hole-card area, then full-height rails visually collided with the
 // felt's own top-corner elements (the fairness-commitment banner and the
 // action timer, both positioned close to the top edge in full-screen/
-// immersive mode, where the felt sits only ~8px from the viewport edge).
-// This test asserts both real constraints directly: a wide, unobstructed
-// center gap between the rails, AND — with immersive mode on, the exact
-// condition that triggered the collision — no overlap with either of those
-// top-corner elements.
-test('a raise-capable turn on a phone-width viewport shows left/right bet-overlay rails, leaving the center ~75% of the screen and the felt'
-  + "'s top corners unobstructed, with $1-precision adjustment", async ({ browser }) => {
+// immersive mode, where the felt sits only ~8px from the viewport edge),
+// then rails narrow enough to make the pot-fraction preset buttons
+// functionally unclickable on a real phone. This test asserts all of
+// those real constraints directly: a wide, unobstructed center gap between
+// the rails, no overlap with the felt's top-corner elements (with immersive
+// mode on, the exact condition that triggered that collision), and that
+// the preset buttons are large enough to actually register a tap.
+test('a raise-capable turn on a phone-width viewport shows left/right bet-overlay rails, leaving the center majority of the screen and the felt'
+  + "'s top corners unobstructed, with tappable preset buttons and $1-precision adjustment", async ({ browser }) => {
   const mobileViewport = { width: 390, height: 844 };
   const ctxA = await browser.newContext({ viewport: mobileViewport });
   const ctxB = await browser.newContext({ viewport: mobileViewport });
@@ -64,14 +65,14 @@ test('a raise-capable turn on a phone-width viewport shows left/right bet-overla
   if (!leftRailBox || !rightRailBox) throw new Error('Bet overlay rail has no bounding box.');
   if (!fairnessBox || !timerBox) throw new Error('Fairness banner / action timer has no bounding box.');
 
-  // Each rail stays roughly within the ~12.5%-of-width budget (generous
-  // tolerance for the clamp()'s device-independent min/max floor/ceiling).
-  expect(leftRailBox.width).toBeLessThan(mobileViewport.width * 0.2);
-  expect(rightRailBox.width).toBeLessThan(mobileViewport.width * 0.2);
+  // Each rail is sized for real tap targets, not squeezed to a strict
+  // percentage — but still clearly narrower than the screen.
+  expect(leftRailBox.width).toBeLessThan(mobileViewport.width * 0.35);
+  expect(rightRailBox.width).toBeLessThan(mobileViewport.width * 0.35);
   // The gap between the rails' facing inner edges — the actual visible,
-  // unobstructed center — covers most of the screen width.
+  // unobstructed center — still covers the clear majority of the screen.
   const centerGap = rightRailBox.x - (leftRailBox.x + leftRailBox.width);
-  expect(centerGap).toBeGreaterThan(mobileViewport.width * 0.65);
+  expect(centerGap).toBeGreaterThan(mobileViewport.width * 0.5);
   // Bottom-anchored to their own (much shorter than full-screen) content
   // height — this is what keeps them clear of the felt's top corners.
   expect(leftRailBox.height).toBeLessThan(mobileViewport.height * 0.85);
@@ -84,6 +85,15 @@ test('a raise-capable turn on a phone-width viewport shows left/right bet-overla
   expect(rectsOverlap(leftRailBox, timerBox)).toBe(false);
   expect(rectsOverlap(rightRailBox, fairnessBox)).toBe(false);
   expect(rectsOverlap(rightRailBox, timerBox)).toBe(false);
+
+  // The preset buttons must be real, individually tappable targets — this
+  // is the direct regression check for "too tiny to click": each one at
+  // least a widely-used minimum touch-target size (44px, per WCAG 2.5.5 /
+  // Apple's HIG), not just "some nonzero size".
+  const potPresetBox = await raiseFirst.locator('.bet-overlay-presets').getByRole('button', { name: 'Pot', exact: true }).boundingBox();
+  if (!potPresetBox) throw new Error('Pot preset button has no bounding box.');
+  expect(potPresetBox.width).toBeGreaterThanOrEqual(44);
+  expect(potPresetBox.height).toBeGreaterThanOrEqual(30);
 
   const amountInput = raiseFirst.locator('.bet-overlay-input');
   const initialAmount = Number(await amountInput.inputValue());

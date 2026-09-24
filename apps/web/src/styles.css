@@ -1215,17 +1215,19 @@ input[type='range']::-moz-range-thumb {
 
    `.bet-overlay` itself is a full-screen POSITIONING wrapper with no
    background and no pointer-events of its own. It holds exactly two thin
-   rails pinned to the left/right edges (each capped at ~12.5% of the
-   viewport width) — ONLY those rails carry the dim backdrop, and each is
-   shrink-wrapped to its own content height and bottom-anchored, NOT
-   stretched to the full screen height. (An earlier version ran them full
-   height, which — in full-screen/immersive mode especially, where the felt
-   sits only ~8px from the viewport edges — visually collided with the
-   fairness-commitment banner and the action timer, both positioned near
-   the felt's own top corners; see git history if this needs revisiting.)
-   The center ~75% of the screen, and the whole top portion where those
-   elements live, has no overlay element over it at all: not faded, not
-   click-blocked, nothing. */
+   rails pinned to the left/right edges — ONLY those rails carry the dim
+   backdrop, and each is shrink-wrapped to its own content height and
+   bottom-anchored, NOT stretched to the full screen height. (An earlier
+   version ran them full height, which — in full-screen/immersive mode
+   especially, where the felt sits only ~8px from the viewport edges —
+   visually collided with the fairness-commitment banner and the action
+   timer, both positioned near the felt's own top corners; see git history
+   if this needs revisiting.) The center MAJORITY of the screen, and the
+   whole top portion where those elements live, has no overlay element over
+   it at all: not faded, not click-blocked, nothing. Rail width is sized for
+   real tap targets (see .bet-overlay-rail) rather than a strict percentage
+   — an earlier, narrower version made the preset buttons functionally
+   unclickable on a real phone; see git history. */
 .bet-overlay {
   position: fixed;
   inset: 0;
@@ -1238,8 +1240,13 @@ input[type='range']::-moz-range-thumb {
 .bet-overlay-rail {
   pointer-events: auto;
   flex: 0 0 auto;
-  width: clamp(56px, 12.5vw, 92px);
-  max-height: 70vh;
+  width: clamp(84px, 14.5vw, 112px);
+  /* A fixed top clearance (not a vh percentage) so a short device still
+     keeps the rail's top edge well below the felt's top corners (the
+     fairness banner, the action timer) — see .bet-overlay's comment — even
+     though the rail is otherwise just as tall as its own content demands.
+     overflow-y is the fallback if content ever still exceeds that. */
+  max-height: calc(100vh - 90px);
   background: rgba(6, 9, 14, 0.74);
   backdrop-filter: blur(1px);
   display: flex;
@@ -1255,14 +1262,14 @@ input[type='range']::-moz-range-thumb {
   border-radius: 0 14px 0 0;
 }
 .bet-overlay-rail--left button {
-  min-height: 44px;
-  font-size: 12px;
+  min-height: 51px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.15;
   white-space: normal;
   word-break: break-word;
   border-radius: 10px;
-  padding: 4px 3px;
+  padding: 5px 4px;
 }
 .bet-overlay-rail--right {
   padding-right: calc(6px + env(safe-area-inset-right));
@@ -1275,20 +1282,22 @@ input[type='range']::-moz-range-thumb {
   font-weight: 700;
   padding: 4px 2px;
 }
+/* Stacked vertically above the slider (not spread across three columns —
+   that's what made them near-unclickable at this rail width) so each one
+   gets the rail's full width as its tap target. */
 .bet-overlay-presets {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 6px;
 }
 .bet-overlay-presets button {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 6px 0;
-  font-size: 12px;
+  min-height: 36px;
+  padding: 6px 4px;
+  font-size: 13px;
   font-weight: 700;
   background: var(--panel-2);
   border: 1px solid var(--panel-border);
-  border-radius: 6px;
-  min-height: 30px;
+  border-radius: 8px;
 }
 .vbs-nudge {
   display: flex;
@@ -1307,9 +1316,9 @@ input[type='range']::-moz-range-thumb {
   border: 1px solid var(--panel-border);
 }
 .bet-overlay-confirm {
-  min-height: 48px;
+  min-height: 53px;
   width: 100%;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.15;
   white-space: normal;
@@ -1324,9 +1333,9 @@ input[type='range']::-moz-range-thumb {
 .vbs-track {
   position: relative;
   flex: 0 0 auto;
-  height: clamp(180px, 40vh, 380px);
+  height: clamp(200px, 44vh, 420px);
   width: 100%;
-  max-width: 56px;
+  max-width: 62px;
   align-self: center;
   border-radius: 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
@@ -1392,8 +1401,8 @@ input[type='range']::-moz-range-thumb {
   position: absolute;
   left: 50%;
   bottom: 0;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   transform: translate(-50%, 50%);
   background: var(--accent);

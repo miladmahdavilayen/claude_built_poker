@@ -170,7 +170,9 @@ export function VerticalBetSlider({
           );
         })}
       </div>
-      <div className="vbs-thumb" style={{ bottom: `${pct}%` }} aria-hidden="true" />
+      <div className="vbs-thumb" style={{ bottom: `${pct}%` }} aria-hidden="true">
+        <span className="vbs-thumb-mark">$</span>
+      </div>
     </div>
   );
 }

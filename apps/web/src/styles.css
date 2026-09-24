@@ -1408,10 +1408,23 @@ input[type='range']::-moz-range-thumb {
   background: var(--accent);
   border: 3px solid #10151c;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition:
     bottom 160ms ease,
     transform 120ms ease;
   pointer-events: none;
+}
+.vbs-thumb-mark {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  color: #10151c;
+  /* A hairline light edge keeps the glyph crisp against the orange fill
+     at any size, the same way the bill/track already use a dark-on-light
+     or light-on-dark pairing for contrast. */
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 .vbs-track--dragging .vbs-thumb {
   transition: none;

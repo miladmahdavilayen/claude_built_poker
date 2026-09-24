@@ -2,11 +2,15 @@ import { expect, test } from '@playwright/test';
 import { adminLogin, createTable, guestSignup, inviteToSeat, startHand, takeSeat } from './helpers.js';
 
 // Regression test for the phone/iPhone bet-sizer redesign: below the
-// compact breakpoint, a raise-capable turn now shows the full-screen
-// `.bet-overlay` (vertical bill-stack slider docked to the right, dimmed
-// backdrop over the felt) instead of the old inline `.action-bar`/
-// `.bet-sizer` bar — see ActionBar.tsx, VerticalBetSlider.tsx.
-test('a raise-capable turn on a phone-width viewport shows the vertical bet overlay, and dragging it changes the amount sent', async ({
+// compact breakpoint, a raise-capable turn now shows `.bet-overlay` (a
+// vertical bill-stack slider docked to the right) instead of the old inline
+// `.action-bar`/`.bet-sizer` bar — see ActionBar.tsx, VerticalBetSlider.tsx.
+// `.bet-overlay` itself is a non-visual, non-blocking full-screen
+// positioning wrapper; only `.bet-overlay-panel` (shrink-wrapped to its
+// controls) carries the dim backdrop, so most of the felt stays visible and
+// interactive during a decision — this test asserts that panel stays small
+// relative to the viewport, not just that the overlay "is visible".
+test('a raise-capable turn on a phone-width viewport shows the vertical bet overlay, sized to its controls (not the whole screen), with $1-precision adjustment', async ({
   browser,
 }) => {
   const mobileViewport = { width: 390, height: 844 };
@@ -34,8 +38,26 @@ test('a raise-capable turn on a phone-width viewport shows the vertical bet over
   await expect(raiseFirst.locator('.bet-overlay')).toBeVisible();
   await expect(raiseFirst.locator('.action-bar')).toHaveCount(0);
 
+  // The dimmed panel hugs its controls — it must not swallow the whole
+  // phone screen (that was the exact bug: the felt/cards became invisible
+  // behind a full-screen scrim while deciding an action).
+  const panelBox = await raiseFirst.locator('.bet-overlay-panel').boundingBox();
+  if (!panelBox) throw new Error('Bet overlay panel has no bounding box.');
+  expect(panelBox.width).toBeLessThan(mobileViewport.width * 0.85);
+  expect(panelBox.height).toBeLessThan(mobileViewport.height * 0.8);
+
   const amountInput = raiseFirst.locator('.bet-overlay-input');
   const initialAmount = Number(await amountInput.inputValue());
+
+  // Exact $1 nudges — the table's big blind is 2, so a still-bigBlind-sized
+  // step would land on initialAmount + 2, not +1. This is the direct,
+  // deterministic check that the slider's granularity is really $1, not
+  // just "some step smaller than before" (dragging, below, only proves
+  // monotonic movement, not the exact step size).
+  await raiseFirst.locator('.vbs-nudge').getByRole('button', { name: 'Increase amount by $1' }).click();
+  expect(Number(await amountInput.inputValue())).toBe(initialAmount + 1);
+  await raiseFirst.locator('.vbs-nudge').getByRole('button', { name: 'Decrease amount by $1' }).click();
+  expect(Number(await amountInput.inputValue())).toBe(initialAmount);
 
   const track = raiseFirst.locator('.vbs-track');
   const box = await track.boundingBox();

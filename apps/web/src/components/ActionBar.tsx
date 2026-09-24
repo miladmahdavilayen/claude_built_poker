@@ -58,52 +58,51 @@ export function ActionBar({
 
     return (
       <div className="bet-overlay">
-        <div className="bet-overlay-panel">
-          <div className="bet-overlay-top">
-            <input
-              type="number"
-              className="bet-overlay-input"
-              min={min}
-              max={clampedMax}
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
-            />
-            <div className="bet-overlay-presets">
-              <button type="button" onClick={setHalfPot}>
-                1/2 pot
-              </button>
-              <button type="button" onClick={setPot}>
-                Pot
-              </button>
-              <button type="button" onClick={setAllIn}>
-                All-in
-              </button>
-            </div>
+        {/* Fold/Check/Call live in a thin rail hugging the LEFT edge only —
+            the center ~75% of the screen (board cards, the viewer's own
+            hole cards, camera windows) has no overlay element over it at
+            all, faded or otherwise. See the matching right rail below and
+            the .bet-overlay-rail CSS. */}
+        <div className="bet-overlay-rail bet-overlay-rail--left">
+          {foldButton}
+          {checkButton}
+          {callButton}
+        </div>
+        <div className="bet-overlay-rail bet-overlay-rail--right">
+          <input
+            type="number"
+            className="bet-overlay-input"
+            min={min}
+            max={clampedMax}
+            value={amount}
+            onChange={(e) => setAmount(Number(e.target.value))}
+          />
+          <div className="bet-overlay-presets">
+            <button type="button" onClick={setHalfPot} aria-label="Half pot">
+              ½
+            </button>
+            <button type="button" onClick={setPot} aria-label="Pot">
+              P
+            </button>
+            <button type="button" onClick={setAllIn} aria-label="All-in">
+              AI
+            </button>
           </div>
-          <div className="bet-overlay-bottom">
-            <div className="bet-overlay-actions">
-              {foldButton}
-              {checkButton}
-              {callButton}
-            </div>
-            <div className="bet-overlay-slider-col">
-              {/* $1 precision regardless of the table's big blind — the
-                  slider's own drag curve (see VerticalBetSlider) is what
-                  keeps that comfortable to hit by hand, not a coarser step. */}
-              <VerticalBetSlider min={min} max={clampedMax} step={1} value={amount} onChange={setAmount} formatValue={formatChips} />
-              <div className="vbs-nudge">
-                <button type="button" aria-label="Decrease amount by $1" onClick={() => setAmount(clamp(amount - 1))}>
-                  −
-                </button>
-                <button type="button" aria-label="Increase amount by $1" onClick={() => setAmount(clamp(amount + 1))}>
-                  +
-                </button>
-              </div>
-              <button type="button" className="btn-bet bet-overlay-confirm" onClick={() => commit(confirmType)}>
-                {confirmLabel}
-              </button>
-            </div>
+          {/* $1 precision regardless of the table's big blind — the
+              slider's own drag curve (see VerticalBetSlider) is what keeps
+              that comfortable to hit by hand, not a coarser step. */}
+          <VerticalBetSlider min={min} max={clampedMax} step={1} value={amount} onChange={setAmount} formatValue={formatChips} />
+          <div className="vbs-nudge">
+            <button type="button" aria-label="Decrease amount by $1" onClick={() => setAmount(clamp(amount - 1))}>
+              −
+            </button>
+            <button type="button" aria-label="Increase amount by $1" onClick={() => setAmount(clamp(amount + 1))}>
+              +
+            </button>
           </div>
+          <button type="button" className="btn-bet bet-overlay-confirm" onClick={() => commit(confirmType)}>
+            {confirmLabel}
+          </button>
         </div>
       </div>
     );

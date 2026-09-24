@@ -7,7 +7,7 @@ import { useRef, useState } from 'react';
 // cycle down the stack so individual bills are visually distinguishable —
 // the way overlapping real bills look slightly different from wear and
 // lighting — purely decorative. The actual amount is only ever communicated
-// via the numeric bubble/input, never by bill color or count.
+// via the numeric input right above the track, never by bill color or count.
 const BILL_SHADES: readonly { base: string; edge: string }[] = [
   { base: '#2f7a4f', edge: '#bfe6c9' },
   { base: '#28694a', edge: '#a9dab8' },
@@ -171,9 +171,6 @@ export function VerticalBetSlider({
         })}
       </div>
       <div className="vbs-thumb" style={{ bottom: `${pct}%` }} aria-hidden="true" />
-      <div className="vbs-bubble" style={{ bottom: `${pct}%` }} aria-hidden="true">
-        {formatValue(value)}
-      </div>
     </div>
   );
 }

@@ -1213,99 +1213,93 @@ input[type='range']::-moz-range-thumb {
    bet/raise amount is choosable, instead of squeezing it into the sticky
    bottom bar and shrinking the felt. See ActionBar.tsx.
 
-   `.bet-overlay` itself is just a full-screen POSITIONING wrapper — it has
-   no background and no pointer-events of its own, so the felt/cards behind
-   it stay fully visible and interactive everywhere except the controls
-   themselves. Only `.bet-overlay-panel` (shrink-wrapped to its content, not
-   the screen) gets the dim backdrop, so fading is limited to the small area
-   actually covering the buttons/slider — not the whole table. */
+   `.bet-overlay` itself is a full-screen POSITIONING wrapper with no
+   background and no pointer-events of its own. It holds exactly two thin
+   rails pinned to the left/right edges (each capped at ~12.5% of the
+   viewport width) — ONLY those rails carry the dim backdrop, and each is
+   shrink-wrapped to its own content height and bottom-anchored, NOT
+   stretched to the full screen height. (An earlier version ran them full
+   height, which — in full-screen/immersive mode especially, where the felt
+   sits only ~8px from the viewport edges — visually collided with the
+   fairness-commitment banner and the action timer, both positioned near
+   the felt's own top corners; see git history if this needs revisiting.)
+   The center ~75% of the screen, and the whole top portion where those
+   elements live, has no overlay element over it at all: not faded, not
+   click-blocked, nothing. */
 .bet-overlay {
   position: fixed;
   inset: 0;
   z-index: 40;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: flex-end;
   pointer-events: none;
-  padding: 8px;
-  padding-top: calc(8px + env(safe-area-inset-top));
-  padding-bottom: calc(8px + env(safe-area-inset-bottom));
-  padding-left: calc(8px + env(safe-area-inset-left));
-  padding-right: calc(8px + env(safe-area-inset-right));
 }
-.bet-overlay-panel {
+.bet-overlay-rail {
   pointer-events: auto;
+  flex: 0 0 auto;
+  width: clamp(56px, 12.5vw, 92px);
+  max-height: 70vh;
   background: rgba(6, 9, 14, 0.74);
   backdrop-filter: blur(1px);
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px;
-  max-width: 100%;
+  gap: 6px;
+  padding: 6px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
-.bet-overlay-top {
-  display: flex;
+.bet-overlay-rail--left {
   justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
+  padding-left: calc(6px + env(safe-area-inset-left));
+  border-radius: 0 14px 0 0;
+}
+.bet-overlay-rail--left button {
+  min-height: 44px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: normal;
+  word-break: break-word;
+  border-radius: 10px;
+  padding: 4px 3px;
+}
+.bet-overlay-rail--right {
+  padding-right: calc(6px + env(safe-area-inset-right));
+  border-radius: 14px 0 0 0;
 }
 .bet-overlay-input {
-  width: 108px;
-  text-align: right;
+  width: 100%;
+  text-align: center;
   font-size: 16px; /* >=16px keeps iOS Safari from auto-zooming on focus */
   font-weight: 700;
+  padding: 4px 2px;
 }
 .bet-overlay-presets {
   display: flex;
-  gap: 6px;
+  gap: 4px;
 }
 .bet-overlay-presets button {
-  padding: 9px 10px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 0;
   font-size: 12px;
+  font-weight: 700;
   background: var(--panel-2);
   border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  min-height: 40px;
-}
-.bet-overlay-bottom {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 14px;
-}
-.bet-overlay-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-}
-.bet-overlay-actions button {
-  min-height: 50px;
-  font-size: 16px;
-  font-weight: 700;
-  border-radius: 12px;
-}
-/* Docked to the right edge and anchored to the bottom of the screen —
-   the natural resting arc of a right thumb — with the confirm button
-   directly beneath it, so sizing the bet and confirming it both happen
-   without the thumb having to travel anywhere else on screen. */
-.bet-overlay-slider-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
+  border-radius: 6px;
+  min-height: 30px;
 }
 .vbs-nudge {
   display: flex;
-  gap: 8px;
+  gap: 4px;
 }
 .vbs-nudge button {
-  width: 42px;
-  height: 36px;
-  font-size: 18px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  height: 34px;
+  font-size: 16px;
   font-weight: 800;
   line-height: 1;
   border-radius: 8px;
@@ -1313,16 +1307,28 @@ input[type='range']::-moz-range-thumb {
   border: 1px solid var(--panel-border);
 }
 .bet-overlay-confirm {
-  min-height: 54px;
-  width: 112px;
-  font-size: 15px;
-  border-radius: 12px;
+  min-height: 48px;
+  width: 100%;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: normal;
+  word-break: break-word;
+  border-radius: 10px;
+  padding: 4px 3px;
 }
+/* A tall, bottom-anchored track (not the whole rail height — the rail is
+   deliberately shrink-wrapped and bottom-anchored, staying well clear of
+   the felt's top corners; see .bet-overlay's comment) is what keeps a
+   $1-precision drag comfortable despite the rail's narrow width. */
 .vbs-track {
   position: relative;
-  width: 64px;
-  height: clamp(200px, 42vh, 380px);
-  border-radius: 32px;
+  flex: 0 0 auto;
+  height: clamp(180px, 40vh, 380px);
+  width: 100%;
+  max-width: 56px;
+  align-self: center;
+  border-radius: 28px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
   border: 1px solid var(--panel-border);
   touch-action: none;
@@ -1386,8 +1392,8 @@ input[type='range']::-moz-range-thumb {
   position: absolute;
   left: 50%;
   bottom: 0;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   transform: translate(-50%, 50%);
   background: var(--accent);
@@ -1401,24 +1407,6 @@ input[type='range']::-moz-range-thumb {
 .vbs-track--dragging .vbs-thumb {
   transition: none;
   transform: translate(-50%, 50%) scale(1.15);
-}
-.vbs-bubble {
-  position: absolute;
-  right: calc(100% + 10px);
-  transform: translateY(50%);
-  background: #10151c;
-  border: 1px solid var(--accent);
-  color: var(--accent-strong);
-  padding: 5px 10px;
-  border-radius: 8px;
-  font-weight: 800;
-  font-size: 13px;
-  white-space: nowrap;
-  transition: bottom 160ms ease;
-  pointer-events: none;
-}
-.vbs-track--dragging .vbs-bubble {
-  transition: none;
 }
 
 .chat-panel {

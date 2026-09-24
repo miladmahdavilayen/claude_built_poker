@@ -1,5 +1,6 @@
 import type { BotPolicy } from '../types.js';
 import { adversarial } from './adversarial.js';
+import { allanKeating } from './allanKeating.js';
 import { callingStation } from './callingStation.js';
 import { checkFold } from './checkFold.js';
 import { maniac } from './maniac.js';
@@ -16,11 +17,13 @@ export const ALL_BOT_POLICIES: readonly BotPolicy[] = [
   shoveMonkey,
   checkFold,
   shortStacker,
+  allanKeating,
   adversarial,
 ];
 
 export {
   adversarial,
+  allanKeating,
   callingStation,
   checkFold,
   maniac,

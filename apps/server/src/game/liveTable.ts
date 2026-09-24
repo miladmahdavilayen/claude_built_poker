@@ -50,6 +50,7 @@ export const BOT_PERSONA_LABELS: Readonly<Record<string, string>> = {
   'shove-monkey': 'Shover',
   'check-fold': 'Pushover',
   'short-stacker': 'Stacker',
+  'allan-keating': 'Keating',
 };
 
 // A bot "thinks" for a random 1–6 seconds before acting, so it doesn't

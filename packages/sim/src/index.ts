@@ -10,6 +10,7 @@ export { projectSeatView } from './projection.js';
 export {
   ALL_BOT_POLICIES,
   adversarial,
+  allanKeating,
   callingStation,
   checkFold,
   maniac,

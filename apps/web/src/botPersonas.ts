@@ -13,4 +13,5 @@ export const BOT_PERSONAS: readonly { id: string; label: string; description: st
   { id: 'short-stacker', label: 'Short Stacker', description: 'Push-or-fold, no in-between' },
   { id: 'check-fold', label: 'Pushover', description: 'Checks when free, folds to any bet' },
   { id: 'random-legal', label: 'Wildcard', description: 'Picks a random legal action' },
+  { id: 'allan-keating', label: 'Allan Keating', description: 'Plays purely by equity, pot odds, position, and stack depth' },
 ];

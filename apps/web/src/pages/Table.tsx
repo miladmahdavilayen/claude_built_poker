@@ -179,6 +179,12 @@ export function TablePage(): React.JSX.Element {
     humanCameraSeats.map((s) => ({ id: String(s.seatId), stream: s.stream })),
     speakerBarActive,
   );
+  // On a phone, 1-4 human cameras have enough felt space to run noticeably
+  // (~20%) bigger tiles than the baseline per-seat-count sizing gives them —
+  // more than 4 already collapses into the speaker bar above instead of
+  // shrinking per-seat video further, so boosting past that count would
+  // just fight the collapse and crowd the felt/cards. See .felt-video-boost.
+  const videoBoostActive = isCompactScreen && humanCameraSeats.length >= 1 && humanCameraSeats.length <= 4;
 
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
@@ -334,7 +340,7 @@ export function TablePage(): React.JSX.Element {
         onLeave={() => sock.leaveWaitlist()}
       />
 
-      <div className="felt" style={seatSizeVars(state.settings.maxSeats)}>
+      <div className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`} style={seatSizeVars(state.settings.maxSeats)}>
         <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} />
         {state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
@@ -398,8 +404,16 @@ export function TablePage(): React.JSX.Element {
                   onAddBotClick={user.role === 'admin' && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined}
                   onAssignHumanClick={user.role === 'admin' && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
                   onRemoveBotClick={seat.isBot ? () => sock.removeBot(seatId) : undefined}
+                  // Hidden in full screen / immersive mode — it renders as a
+                  // corner overlay on the seat's video tile, which in
+                  // immersive mode is the player's whole visible camera and
+                  // the button ends up covering their face. Exiting full
+                  // screen brings it back; the owner can still rebuy anyone
+                  // that way. See DECISIONS.md.
                   onRebuyClick={
-                    user.role === 'admin' && !seat.isBot && seat.status !== 'empty' ? () => openRebuyModal(seatId, seat.stack) : undefined
+                    user.role === 'admin' && !seat.isBot && seat.status !== 'empty' && !immersive.active
+                      ? () => openRebuyModal(seatId, seat.stack)
+                      : undefined
                   }
                 />
               </div>

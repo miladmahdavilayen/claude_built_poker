@@ -990,6 +990,16 @@ input[type='range']::-moz-range-thumb {
      of just riding --seat-width's own, much coarser, per-player-count
      ceiling. */
   width: clamp(72px, min(var(--seat-width, 128px), 22vw, 22vh), 150px);
+  transition: width 220ms ease;
+}
+/* Table.tsx's `felt-video-boost` — a phone-width table with 1-4 human
+   cameras on gets ~20% bigger video tiles than the baseline formula above
+   (observed too small on an iPhone 17 Pro Max in Safari for heads-up and
+   small multi-way games). Every bound scales together so it's still a
+   clamp, not a fixed size — a >4-camera table never gets here at all (it
+   collapses into the speaker bar instead), so this never fights that. */
+.felt-video-boost .seat.seat-has-video {
+  width: clamp(86px, min(calc(var(--seat-width, 128px) * 1.2), 26vw, 26vh), 180px);
 }
 .seat-video {
   position: absolute;
@@ -1196,6 +1206,199 @@ input[type='range']::-moz-range-thumb {
 }
 .btn-bet {
   background: var(--good);
+}
+
+/* Compact-screen (phone/iPhone) bet overlay — replaces the inline
+   .bet-sizer/.action-bar entirely below the 767px breakpoint whenever a
+   bet/raise amount is choosable, instead of squeezing it into the sticky
+   bottom bar and shrinking the felt. See ActionBar.tsx. */
+.bet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 9, 14, 0.74);
+  backdrop-filter: blur(1px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 14px;
+  padding-top: calc(14px + env(safe-area-inset-top));
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  padding-left: calc(14px + env(safe-area-inset-left));
+  padding-right: calc(14px + env(safe-area-inset-right));
+}
+.bet-overlay-top {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.bet-overlay-input {
+  width: 108px;
+  text-align: right;
+  font-size: 16px; /* >=16px keeps iOS Safari from auto-zooming on focus */
+  font-weight: 700;
+}
+.bet-overlay-presets {
+  display: flex;
+  gap: 6px;
+}
+.bet-overlay-presets button {
+  padding: 9px 10px;
+  font-size: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  min-height: 40px;
+}
+.bet-overlay-bottom {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+.bet-overlay-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.bet-overlay-actions button {
+  min-height: 50px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 12px;
+}
+/* Docked to the right edge and anchored to the bottom of the screen —
+   the natural resting arc of a right thumb — with the confirm button
+   directly beneath it, so sizing the bet and confirming it both happen
+   without the thumb having to travel anywhere else on screen. */
+.bet-overlay-slider-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.vbs-nudge {
+  display: flex;
+  gap: 8px;
+}
+.vbs-nudge button {
+  width: 42px;
+  height: 36px;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+}
+.bet-overlay-confirm {
+  min-height: 54px;
+  width: 112px;
+  font-size: 15px;
+  border-radius: 12px;
+}
+.vbs-track {
+  position: relative;
+  width: 64px;
+  height: clamp(200px, 42vh, 380px);
+  border-radius: 32px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--panel-border);
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+}
+.vbs-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.vbs-track--dragging {
+  cursor: grabbing;
+}
+.vbs-fill {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 5px;
+  border-radius: 27px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column-reverse;
+  transition: height 160ms ease;
+}
+.vbs-track--dragging .vbs-fill {
+  transition: none;
+}
+.vbs-bill {
+  flex: 1 1 0;
+  min-height: 9px;
+  margin-top: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  border: 1px solid;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  animation: bill-pop-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: bottom center;
+}
+@keyframes bill-pop-in {
+  0% {
+    transform: scale(0.4) translateY(6px);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.06) translateY(-1px);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+.vbs-thumb {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  transform: translate(-50%, 50%);
+  background: var(--accent);
+  border: 3px solid #10151c;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  transition:
+    bottom 160ms ease,
+    transform 120ms ease;
+  pointer-events: none;
+}
+.vbs-track--dragging .vbs-thumb {
+  transition: none;
+  transform: translate(-50%, 50%) scale(1.15);
+}
+.vbs-bubble {
+  position: absolute;
+  right: calc(100% + 10px);
+  transform: translateY(50%);
+  background: #10151c;
+  border: 1px solid var(--accent);
+  color: var(--accent-strong);
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 13px;
+  white-space: nowrap;
+  transition: bottom 160ms ease;
+  pointer-events: none;
+}
+.vbs-track--dragging .vbs-bubble {
+  transition: none;
 }
 
 .chat-panel {

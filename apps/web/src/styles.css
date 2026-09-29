@@ -1037,12 +1037,15 @@ input[type='range']::-moz-range-thumb {
   width: clamp(72px, min(var(--seat-width, 128px), 22vw, 22vh), 150px);
   transition: width 220ms ease;
 }
-/* Table.tsx's `felt-video-boost` — a phone-width table with 1-4 human
+/* Table.tsx's `felt-video-boost` — a phone-width table with 1-3 human
    cameras on gets ~20% bigger video tiles than the baseline formula above
    (observed too small on an iPhone 17 Pro Max in Safari for heads-up and
    small multi-way games). Every bound scales together so it's still a
-   clamp, not a fixed size — a >4-camera table never gets here at all (it
-   collapses into the speaker bar instead), so this never fights that. */
+   clamp, not a fixed size. Deliberately stops at 3, not 4: a >4-camera
+   table already collapses into the speaker bar instead of getting here at
+   all, but AT exactly 4, boosted tiles are big enough to visually overlap
+   the board/pot and the fairness-commitment banner on a real phone width
+   — see Table.tsx's videoBoostActive. */
 .felt-video-boost .seat.seat-has-video {
   width: clamp(86px, min(calc(var(--seat-width, 128px) * 1.2), 26vw, 26vh), 180px);
 }

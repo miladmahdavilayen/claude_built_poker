@@ -194,12 +194,15 @@ export function TablePage(): React.JSX.Element {
     humanCameraSeats.map((s) => ({ id: String(s.seatId), stream: s.stream })),
     speakerBarActive,
   );
-  // On a phone, 1-4 human cameras have enough felt space to run noticeably
-  // (~20%) bigger tiles than the baseline per-seat-count sizing gives them —
-  // more than 4 already collapses into the speaker bar above instead of
-  // shrinking per-seat video further, so boosting past that count would
-  // just fight the collapse and crowd the felt/cards. See .felt-video-boost.
-  const videoBoostActive = isCompactScreen && humanCameraSeats.length >= 1 && humanCameraSeats.length <= 4;
+  // On a phone, 1-3 human cameras have enough felt space to run noticeably
+  // (~20%) bigger tiles than the baseline per-seat-count sizing gives them.
+  // Deliberately NOT extended to exactly 4 (the highest count that still
+  // shows individual video at all — more than that collapses into the
+  // speaker bar instead): a boosted tile at 4 cameras is big enough to
+  // visually overlap the board/pot and the fairness-commitment banner on
+  // a real phone width, found by actually screenshotting that exact
+  // scenario, not by tsc/eslint. See .felt-video-boost.
+  const videoBoostActive = isCompactScreen && humanCameraSeats.length >= 1 && humanCameraSeats.length <= 3;
 
   // Same hook-ordering constraint as `positions`/`humanCameraSeats` above —
   // sock.state can be null pre-connect.

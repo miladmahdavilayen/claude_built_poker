@@ -544,7 +544,7 @@ export function TablePage(): React.JSX.Element {
               <select value={botPersona} onChange={(e) => setBotPersona(e.target.value)}>
                 {orderedBotPersonas.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.label} &mdash; {p.description}
+                    {p.label}
                   </option>
                 ))}
               </select>

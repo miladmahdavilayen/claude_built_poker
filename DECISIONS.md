@@ -1505,3 +1505,44 @@ felt complete, not by writing it carefully the first time — worth
 noting since it's the second time this session a "clearly correct on
 inspection" WebRTC/React change needed the test suite to catch a real
 bug (see the two `adminRoom` entries above).
+
+## Lobby page redesign: the logout button was unreachable on a real iPhone because `.lobby-page` had no safe-area padding at all
+
+A real user report: on an iPhone, the top-right "Log out" button was
+sometimes impossible to actually tap. The root cause was structural,
+not cosmetic — `.lobby-page` (and `.lobby-header`, which lives directly
+inside it) had NO `env(safe-area-inset-*)` padding on any side, unlike
+`.table-header`/`.page-centered` elsewhere in this same app. Since this
+app runs as a standalone PWA (`apple-mobile-web-app-capable` in
+index.html), the header's own top-right button sat right up against —
+or on some devices, functionally underneath — the notch/Dynamic
+Island/rounded corner, which is exactly where a real thumb has the
+least reliable reach. Fixed by giving `.lobby-page` real safe-area
+padding on every side (top/left/right/bottom), at both the base and the
+phone-width tier — the phone tier previously overwrote the whole
+`padding` shorthand with a bare `padding: 12px`, which would have
+silently reintroduced the same bug at exactly the tier that matters
+most, so it now uses the same longhand + `calc(... + env(...))` shape
+as the base rule.
+
+While fixing this, redesigned the rest of the lobby page rather than
+leaving it as a plain functional page around the one bug fix: the old
+`<table>`-based table list (which had to either hide a column via
+`nth-child` or scroll sideways on a phone) became a responsive CSS grid
+of cards (`repeat(auto-fill, minmax(260px, 1fr))`) — collapses to a
+single, full-width, non-scrolling column on a phone with no media query
+needed, and expands to multiple columns on a wider screen. The header
+and toolbar also got real button styling (`.btn-primary`/
+`.btn-secondary`/`.btn-ghost`) in place of bare default `<button>`s.
+
+Chromium's emulation does not simulate non-zero safe-area insets even
+with a mobile viewport configured, so a bounding-box assertion alone
+cannot reproduce (or verify the fix for) the original bug — the
+permanent regression test (`lobbyResponsive.spec.ts`) instead actually
+clicks the logout button and asserts a real, completed log-out, at an
+iPhone 17 Pro Max-sized viewport (approximated via the iPhone 16 Pro
+Max's published 440x956 @3x CSS viewport, carried forward — Playwright's
+bundled device list predates the 17 Pro Max's release and tops out at
+15 Pro Max). A real, working click is the direct, environment-
+independent proof that the button is genuinely reachable, not just
+present in the DOM.

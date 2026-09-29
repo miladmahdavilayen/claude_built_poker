@@ -30,68 +30,66 @@ export function LobbyPage(): React.JSX.Element {
 
   return (
     <div className="lobby-page">
-      <div className="lobby-header">
-        <h1>pokerclause</h1>
+      <header className="lobby-header">
+        <h1 className="lobby-brand">pokerclause</h1>
         {user && (
           <div className="lobby-user">
-            <span>
-              {user.displayName} &middot; {formatChips(user.chips)}
-            </span>
-            {user.isGuest && <button onClick={() => setShowUpgrade(true)}>Create account</button>}
-            <button onClick={() => void logout()}>Log out</button>
+            <div className="lobby-user-info">
+              <span className="lobby-user-name">{user.displayName}</span>
+              <span className="lobby-user-chips">{formatChips(user.chips)}</span>
+            </div>
+            {user.isGuest && (
+              <button type="button" className="btn-ghost" onClick={() => setShowUpgrade(true)}>
+                Create account
+              </button>
+            )}
+            <button type="button" className="btn-logout" onClick={() => void logout()}>
+              Log out
+            </button>
           </div>
         )}
-      </div>
+      </header>
 
       {error && <div className="error-banner">{error}</div>}
 
       <div className="lobby-toolbar">
-        <button type="button" onClick={() => setShowCreate(true)}>
-          Create table
+        <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
+          + Create table
         </button>
-        <button type="button" onClick={() => setShowJoinPrivate(true)}>
-          Join private table
+        <button type="button" className="btn-secondary" onClick={() => setShowJoinPrivate(true)}>
+          🔑 Join private table
         </button>
       </div>
 
-      <div className="table-list-wrap">
-        <table className="table-list">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Stakes</th>
-              <th>Buy-in</th>
-              <th>Seats</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {tables.map((t) => (
-              <tr key={t.tableId}>
-                <td>{t.name}</td>
-                <td>
+      <div className="table-grid">
+        {tables.map((t) => (
+          <div className="table-card" key={t.tableId}>
+            <div className="table-card-top">
+              <h3 className="table-card-name">{t.name}</h3>
+              <span className="table-card-seats" title="Seats filled">
+                {t.seatsFilled}/{t.maxSeats}
+              </span>
+            </div>
+            <div className="table-card-stats">
+              <div className="table-card-stat">
+                <span className="stat-label">Stakes</span>
+                <span className="stat-value">
                   {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
-                </td>
-                <td>
+                </span>
+              </div>
+              <div className="table-card-stat">
+                <span className="stat-label">Buy-in</span>
+                <span className="stat-value">
                   {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
-                </td>
-                <td>
-                  {t.seatsFilled}/{t.maxSeats}
-                </td>
-                <td>
-                  <button type="button" onClick={() => void navigate(`/table/${t.tableId}`)}>
-                    Join
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {tables.length === 0 && (
-              <tr>
-                <td colSpan={5}>No tables yet. Create one to get started.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                </span>
+              </div>
+            </div>
+            <button type="button" className="btn-primary table-card-join" onClick={() => void navigate(`/table/${t.tableId}`)}>
+              Join table
+            </button>
+          </div>
+        ))}
+        {tables.length === 0 && <div className="table-grid-empty">No tables yet. Create one to get started.</div>}
       </div>
 
       {showCreate && accessToken && <CreateTableModal onClose={() => setShowCreate(false)} accessToken={accessToken} />}

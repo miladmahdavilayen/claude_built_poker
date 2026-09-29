@@ -222,48 +222,156 @@ input[type='range']::-moz-range-thumb {
   margin: 8px 0;
 }
 
+/* The page container owns every safe-area inset on every side — the
+   header's own logout button sits at the visual top-right corner (see
+   .lobby-header below), which on an iPhone with a notch/Dynamic Island
+   would otherwise render underneath it, or close enough to the rounded
+   corner/sensor housing to be unreliable to tap. A real user report on a
+   real iPhone, not a theoretical concern — see DECISIONS.md. */
 .lobby-page {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 24px;
+  padding-top: calc(24px + env(safe-area-inset-top));
+  padding-left: calc(24px + env(safe-area-inset-left));
+  padding-right: calc(24px + env(safe-area-inset-right));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 .lobby-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
 }
-.lobby-header h1 {
+.lobby-brand {
   color: var(--accent);
+  margin: 0;
 }
 .lobby-user {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
+.lobby-user-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  text-align: right;
+}
+.lobby-user-name {
+  font-weight: 600;
+}
+.lobby-user-chips {
+  font-size: 12px;
+  color: var(--muted);
+}
+.btn-logout {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+}
+.btn-logout:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
 .lobby-toolbar {
-  margin: 16px 0;
+  margin: 20px 0;
   display: flex;
   flex-wrap: wrap;
+  gap: 10px;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #10151c;
+  font-weight: 600;
+}
+.btn-secondary {
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  font-weight: 600;
+}
+
+/* A responsive card grid replaces the old wide `<table>` — auto-fill +
+   minmax collapses to a single, thumb-friendly column on a phone with NO
+   media query needed (a table's own columns either got cramped or had to
+   scroll sideways at that width; a stacked card has no such ceiling) and
+   grows to as many columns as comfortably fit on a wider screen. */
+.table-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.table-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.table-card:hover {
+  border-color: var(--accent);
+}
+.table-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
 }
-/* A narrow phone can still end up needing more width than it has (long
-   table names, five columns) — this lets that scroll sideways within its
-   own box instead of forcing the whole page to. */
-.table-list-wrap {
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+.table-card-name {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
 }
-.table-list {
-  width: 100%;
-  border-collapse: collapse;
-}
-.table-list th,
-.table-list td {
-  text-align: left;
-  padding: 10px;
-  border-bottom: 1px solid var(--panel-border);
+.table-card-seats {
+  flex: 0 0 auto;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
   white-space: nowrap;
+}
+.table-card-stats {
+  display: flex;
+  gap: 16px;
+}
+.table-card-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stat-value {
+  font-weight: 600;
+}
+.table-card-join {
+  min-height: 44px;
+  width: 100%;
+}
+.table-grid-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--muted);
+  padding: 40px 16px;
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius);
 }
 
 .modal-backdrop {
@@ -1776,16 +1884,20 @@ input[type='range']::-moz-range-thumb {
   .seat-empty {
     gap: 8px;
   }
+  /* Same safe-area-inset-aware shape as the base rule (see .lobby-page),
+     just tighter base numbers — a plain `padding: 12px` here would wipe
+     out the safe-area insets the base rule adds, reopening the exact
+     top-right logout-button-under-the-notch problem this was written to
+     fix (only worse, since this tier is what real phones actually hit). */
   .lobby-page {
     padding: 12px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-left: calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
-  .lobby-header {
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .table-list th:nth-child(3),
-  .table-list td:nth-child(3) {
-    display: none;
+  .table-card-join {
+    min-height: 46px;
   }
   .voice-tile,
   .voice-tile video,

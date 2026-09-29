@@ -166,6 +166,23 @@ export function attachSocketServer(
   }
 
   /**
+   * The admin can self-serve seat/add-bot on ANY table; a table's own
+   * creator gets that same self-serve ability, but ONLY on the one table
+   * they created, and only while genuinely signed in as a non-guest right
+   * now (re-checked from the live socket session, not just baked into
+   * `ownerId` at creation time — a guest can't create a table at all per
+   * the /tables route, but this stays defense-in-depth regardless). This
+   * is the one deliberate carve-out from "owner-only chip economy" (see
+   * DECISIONS.md): a logged-in human can set up and play a practice table
+   * against bots entirely on their own, but still can never invite
+   * another real human to any table — 'assign-seat' stays admin-only.
+   */
+  function canManageTable(table: LiveTable, data: SocketData): boolean {
+    if (data.role === 'admin') return true;
+    return data.userId !== null && !data.isGuest && table.ownerId !== null && table.ownerId === data.userId;
+  }
+
+  /**
    * The actual chip-debit + seat-fill + room-join + broadcast, shared by
    * 'take-seat' (the owner seating themselves directly) and
    * 'redeem-seat-assignment' (a human redeeming an owner-generated
@@ -311,6 +328,14 @@ export function attachSocketServer(
       // later seat changes — see adminRoom's own doc comment.
       if (data.role === 'admin') void socket.join(adminRoom(table.tableId));
       if (data.userId) table.setConnected(data.userId, true);
+      // One-shot, not part of the shared per-room 'state' broadcast:
+      // whether THIS viewer can self-serve seat themselves / add bots on
+      // THIS table never changes over the connection's lifetime (role,
+      // guest status, and the table's fixed ownerId are all static), and a
+      // spectating table creator has no seat/room of their own to target a
+      // "canManage" field on a shared projection to in the first place.
+      // See canManageTable's own doc comment.
+      socket.emit('table-permissions', { canManageTable: canManageTable(table, data) });
       // See registerVoiceParticipant's own doc comment — every human is
       // receive-ready from the moment they're at the table, not only once
       // they opt into sending their own mic/camera.
@@ -331,19 +356,20 @@ export function attachSocketServer(
     });
 
     // Owner-only chip economy (see DECISIONS.md): the ONLY way a regular
-    // player ends up seated is by redeeming an owner-generated invite
-    // link ('redeem-seat-assignment', below) — this direct path is left
-    // open ONLY to the admin/owner account itself, so the owner can seat
-    // themselves without needing to invite themselves first.
+    // player ends up seated at someone ELSE's table is by redeeming an
+    // owner-generated invite link ('redeem-seat-assignment', below) — this
+    // direct path is otherwise open only to the admin/owner account, OR to
+    // a signed-in non-guest human seating themselves at a table they
+    // created (see canManageTable's own doc comment).
     socket.on('take-seat', (raw: unknown): void => {
       if (!data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to take a seat.');
-      if (data.role !== 'admin') {
-        return emitError('SELF_SERVE_DISABLED', 'Only the table owner can seat a player directly — ask them for an invite link.');
-      }
       const parsed = TakeSeatSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed take-seat payload.');
       const table = registry.get(parsed.data.tableId);
       if (!table) return emitError('TABLE_NOT_FOUND', 'Table not found.');
+      if (!canManageTable(table, data)) {
+        return emitError('SELF_SERVE_DISABLED', 'Only the table owner can seat a player directly — ask them for an invite link.');
+      }
 
       // Per-table one-session rule: the same account cannot occupy two seats at one table.
       if (table.seatOfUser(data.userId) !== null) {
@@ -401,7 +427,7 @@ export function attachSocketServer(
     socket.on('add-bot', (raw: unknown): void => {
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to add a computer player.');
-      if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can add a computer player.');
+      if (!canManageTable(table, data)) return emitError('ADMIN_REQUIRED', 'Only the table owner can add a computer player.');
       const parsed = AddBotSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed add-bot payload.');
       const { seatId, persona, buyIn } = parsed.data;

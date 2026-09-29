@@ -34,6 +34,16 @@ export interface LedgerEntryInput {
   handId?: string;
 }
 
+/** One user's own ledger row, for a profile page's transaction history — see `ledgerEntriesForUser`. */
+export interface LedgerEntryRecord {
+  id: string;
+  amount: number;
+  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust';
+  tableId: string | null;
+  handId: string | null;
+  createdAt: Date;
+}
+
 export interface HandSeatInput {
   seat: number;
   userId: string | null;
@@ -127,6 +137,8 @@ export interface Store {
   /** Used only by ensureAdminAccount (index.ts) to keep the owner's password in sync with ADMIN_PASSWORD on every boot — there's no "change my password" flow for a real account otherwise. */
   updatePasswordHash(userId: string, passwordHash: string): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
+  /** Permanently removes a user row. Every other table's foreign key to `users` is `onDelete: 'set null'` (sessions cascade instead) — hand history, chat, and past ledger entries survive with `userId: null`, exactly like a guest table wipe already leaves them. See DECISIONS.md. */
+  deleteUser(userId: string): Promise<void>;
 
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;
   findSessionByTokenHash(tokenHash: string): Promise<{ userId: string; expiresAt: Date } | null>;
@@ -136,6 +148,10 @@ export interface Store {
   recordLedgerEntries(entries: readonly LedgerEntryInput[]): Promise<void>;
   ledgerBalanceForUser(userId: string): Promise<number>;
   ledgerConservationCheck(): Promise<{ balanced: boolean; totalDelta: number }>;
+  /** Most recent ledger rows for one user's own profile page, newest first. */
+  ledgerEntriesForUser(userId: string, limit: number): Promise<LedgerEntryRecord[]>;
+  /** Net result from actually PLAYING hands (sum of `reason: 'pot_win'` entries only) — excludes buy-ins/cash-outs/admin grants, so it reads as "winnings minus losses," not the account's raw balance. */
+  ledgerPlayNetForUser(userId: string): Promise<number>;
 
   createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord>;
   listTables(): Promise<TableRecord[]>;

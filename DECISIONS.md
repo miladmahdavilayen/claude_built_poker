@@ -1546,3 +1546,116 @@ bundled device list predates the 17 Pro Max's release and tops out at
 15 Pro Max). A real, working click is the direct, environment-
 independent proof that the button is genuinely reachable, not just
 present in the DOM.
+
+## Human player accounts: Google-only sign-in, $0 starting balance, self-serve practice tables, and what that meant for "owner-only"
+
+A real product request: human players should sign in with Google (no
+other public registration), start with nothing (only the owner grants a
+real buy-in), be able to track their own balance/win-loss history and
+delete their own account, and — new — be able to set up and play their
+own practice table against bots without the owner's involvement, while
+still never being able to invite another real human to any table. The
+owner/admin account and its credentials are untouched throughout.
+
+**Removing self-registration, not just hiding it.** `/auth/register` and
+`/auth/upgrade` (the email/password guest-upgrade path) are gone as HTTP
+routes entirely, not just unlinked in the UI — the underlying
+`authService.ts` functions (`register`, `login`) stay, because
+`ensureAdminAccount` (index.ts) calls `register` directly (never over
+HTTP) so the owner account gets the same starting-chip-grant code path
+as everyone else, and the owner still needs `login` to authenticate at
+all. `login` is reachable over HTTP for exactly one real reason now: a
+small, deliberately unadvertised trigger (`.admin-login-trigger`, a
+32px low-opacity circle pinned to the bottom-right corner) on the login
+page reveals the same email/password form that always existed — nothing
+else on the page links to it, and it's hidden entirely for an invited
+guest (who should only ever see "Play as guest," same as before this
+change). Since no code path can create a NEW password account anymore,
+this form is functionally admin-only without needing a dedicated
+"is this the owner" check of its own.
+
+**A fresh Google account starts at $0, not the guest's $5,000.**
+`loginOrRegisterWithGoogle` simply doesn't call `grantStartingChips` for
+a brand-new account (a RETURNING Google sign-in already skipped it
+too — this only removes the one call that used to run on first sign-in).
+Guests are completely unaffected (`signUpGuest` still grants $5,000), and
+upgrading an existing guest to Google (`upgradeGuestWithGoogle`) still
+preserves whatever balance that guest had already accumulated — "starts
+at 0" only describes a genuinely brand-new account, not a guest
+converting in place.
+
+**Self-serve seating/bots, scoped to a table's own creator, not
+reopened globally.** This is the one deliberate carve-out from the
+"owner-only chip economy" decision above: `LiveTable` now carries an
+`ownerId: string | null` (threaded from `tables.createdBy`, which the DB
+schema already had — `TableRegistry.createTable` just wasn't passing it
+to the live table object before). `canManageTable(table, data)` in
+socketServer.ts is `true` for the admin on ANY table, or for a signed-in
+(`!isGuest`) human on the ONE table `ownerId` says they created — checked
+against the LIVE socket session's current role/guest status, not just
+baked into the table at creation time, as defense in depth even though a
+guest can never create a table in the first place (`POST /tables` now
+403s a guest with `GUEST_CANNOT_CREATE_TABLE` — before this, a guest
+COULD create a table via the API, but could never do anything with it
+once created, a dead-end UI now closed off entirely). `take-seat` and
+`add-bot` use this new check in place of the old flat `data.role !==
+'admin'` gate; `assign-seat` (inviting a real human) stays hard-coded
+admin-only on every table, full stop — that boundary was the one thing
+this feature explicitly must never cross.
+
+The client learns whether it can manage the current table via a ONE-TIME
+`'table-permissions'` socket event sent from `join-table`, not a field on
+the shared per-room `ProjectedTableState` broadcast — a spectating
+table creator (before they've taken a seat) has no seat/room of their
+own for a shared broadcast to target a per-viewer field at, the same
+structural reason `adminRoom` exists as a separate broadcast rather than
+a field. Since ownerId/role/isGuest are all static for a connection's
+lifetime, one event at join time is enough; no need for a live-updating
+room. `Table.tsx`'s "Sit here"/"Add bot" UI is gated on `user.role ===
+'admin' || sock.canManageTable`, while "Assign human" and "Rebuy" stay
+strictly `admin`-only.
+
+One more permission that had to move off `role === 'admin'` specifically
+for this: `Table.tsx` decided "does this viewer have a lobby to go back
+to, and does 'Leave table' need a confirm first" purely by admin-ness,
+because historically the only non-guest human at a table WAS the admin.
+That's no longer true — a signed-in table creator has a real account and
+a lobby too. Both checks became `!user.isGuest` instead, which is what
+they actually meant all along.
+
+**Testing an account type this sandbox cannot drive through a real
+browser.** There is no way to click through a genuine Google OAuth
+consent screen in an automated test (Google disallows it, and this
+sandbox has no real Cloud credentials regardless — see the Google
+sign-in README section). The actual new PERMISSION boundary (a real
+non-admin, non-guest human can manage only their own table, never
+another's) is therefore verified at the protocol level instead, in
+`socketServer.test.ts`, by creating an account directly in the store via
+`store.createGoogleAccount(...)` — exactly the shape a real Google
+sign-in produces, exactly the same shortcut the existing `makeUser`/
+`makeAdminUser` test helpers already take for guest/admin accounts. The
+e2e suite (`humanAccounts.spec.ts`) instead uses the admin account as a
+stand-in real human to prove the actual UI WIRING works end to end
+(button visibility, the create/self-seat/add-bot flow, the profile and
+admin-dashboard pages) — its own comment is explicit that this proves
+the UI works, not that a non-admin gets the same access; that narrower
+claim is what the server-level test is for.
+
+**Profile page, admin dashboard, and delete-account are new surfaces
+over mostly-existing data.** The chip ledger (`chip_ledger`, already a
+double-entry table) already recorded everything needed — a
+`ledgerPlayNetForUser` query (sum of `reason: 'pot_win'` entries only)
+gives "winnings minus losses from actually playing," deliberately
+excluding admin-granted buy-ins/rebuys, which is what "net result" means
+to a player checking their own performance. `deleteUser` is a plain
+`DELETE FROM users` — every other table's foreign key to `users` was
+ALREADY `onDelete: 'set null'` (sessions cascade instead, which is
+exactly what should happen to a deleted user's sessions), so hand
+history, chat, and past ledger entries survive with `userId: null`,
+identically to how a guest's data already looked once their guest
+session was gone. Self-delete (`/users/me`) refuses a guest (nothing
+durable to delete — just leave the table) and refuses the admin role
+(losing the one owner account this way would be far more disruptive
+than losing a regular player's, and there's no "second admin" to fall
+back to); the admin dashboard's own delete route carries the identical
+admin-role guard for the same reason, whoever's account it targets.

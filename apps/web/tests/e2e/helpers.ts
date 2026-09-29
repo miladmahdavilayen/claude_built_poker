@@ -11,13 +11,12 @@ export async function guestSignup(page: Page, name: string): Promise<void> {
  * Logs in as the owner/admin account the server bootstraps on every boot
  * (`ensureAdminAccount` in apps/server/src/index.ts) — real credentials,
  * not a mock, so this exercises the actual admin-only gating end to end.
+ * The email/password form is reached only via the small, deliberately
+ * unadvertised trigger in the bottom-right corner — see Login.tsx.
  */
 export async function adminLogin(page: Page): Promise<void> {
   await page.goto('/');
-  // "Log in" is the accessible name of both the mode tab AND the submit
-  // button once that mode is active — scope each click so Playwright
-  // doesn't see two matches.
-  await page.locator('.auth-tabs').getByRole('button', { name: 'Log in' }).click();
+  await page.locator('.admin-login-trigger').click();
   await page.getByLabel('Email').fill('admin@pokerclause.local');
   await page.getByLabel('Password').fill('admin12345');
   await page.locator('form').getByRole('button', { name: 'Log in' }).click();

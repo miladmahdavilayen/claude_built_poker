@@ -315,11 +315,12 @@ export function TablePage(): React.JSX.Element {
   return (
     <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
       <div className="table-header">
-        {/* Owner-only — an invited guest has no lobby to go back to at
-            all (self-serve seating doesn't exist; the only way back in
-            is a fresh invite link from the owner). See the leave-table
+        {/* Any real account (admin or a signed-in non-guest human) has a
+            lobby to go back to — an invited GUEST doesn't (self-serve
+            seating doesn't exist for them; the only way back in is a
+            fresh invite link from the owner). See the leave-table
             confirm modal below and DECISIONS.md. */}
-        {user.role === 'admin' && <Link to="/lobby">&larr; Lobby</Link>}
+        {!user.isGuest && <Link to="/lobby">&larr; Lobby</Link>}
         <div className="table-header-name">
           {state.tableName}
           {state.settings.isPrivate && <span className="seat-tag">private</span>}
@@ -330,11 +331,12 @@ export function TablePage(): React.JSX.Element {
             <button
               type="button"
               onClick={() => {
-                // The owner always has a lobby to go back to, so their
-                // own "Leave table" stays the simple, immediate action it
-                // always was. An invited guest gets a confirm first — see
-                // the modal below and DECISIONS.md.
-                if (user.role === 'admin') {
+                // Any real account (admin, or a signed-in non-guest human)
+                // always has a lobby to go back to, so their own "Leave
+                // table" stays the simple, immediate action it always was.
+                // An invited guest gets a confirm first — see the modal
+                // below and DECISIONS.md.
+                if (!user.isGuest) {
                   void sock.leaveTable().then(() => navigate('/lobby'));
                 } else {
                   setLeaveConfirmOpen(true);
@@ -438,9 +440,19 @@ export function TablePage(): React.JSX.Element {
                   justRevealed={justRevealedSeats.has(seatId)}
                   voice={voiceStreamForSeat(seat)}
                   showVideo={!speakerBarActive}
-                  // Self-serve seating/bots/rebuys no longer exist — every one of these is owner-only. See DECISIONS.md.
-                  onEmptySeatClick={user.role === 'admin' && !mySeat && seat.status === 'empty' ? () => openSeatModal(seatId) : undefined}
-                  onAddBotClick={user.role === 'admin' && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined}
+                  // Self-serve seating/bots are admin-only on any table, OR
+                  // open to a signed-in (non-guest) human on the ONE table
+                  // they created (sock.canManageTable — see
+                  // socketServer.ts's canManageTable and its own doc
+                  // comment). Inviting another real human (onAssignHumanClick)
+                  // and rebuying (onRebuyClick) stay admin-only everywhere,
+                  // full stop — see DECISIONS.md.
+                  onEmptySeatClick={
+                    (user.role === 'admin' || sock.canManageTable) && !mySeat && seat.status === 'empty' ? () => openSeatModal(seatId) : undefined
+                  }
+                  onAddBotClick={
+                    (user.role === 'admin' || sock.canManageTable) && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined
+                  }
                   onAssignHumanClick={user.role === 'admin' && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
                   onRemoveBotClick={seat.isBot ? () => sock.removeBot(seatId) : undefined}
                   // Hidden in full screen / immersive mode — it renders as a

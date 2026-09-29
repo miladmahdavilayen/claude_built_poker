@@ -43,6 +43,7 @@ export class TableRegistry {
         now: () => Date.now(),
       },
       inviteCode,
+      createdBy,
     );
     this.tables.set(record.id, table);
     return table;

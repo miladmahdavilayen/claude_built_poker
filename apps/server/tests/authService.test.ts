@@ -6,7 +6,6 @@ import {
   loginOrRegisterWithGoogle,
   register,
   signUpGuest,
-  upgradeGuest,
   upgradeGuestWithGoogle,
 } from '../src/auth/authService.js';
 import { verifyAccessToken } from '../src/auth/session.js';
@@ -50,36 +49,19 @@ describe('authService', () => {
     await expect(register(store, 'dup@example.com', 'password123', 'B')).rejects.toThrow(AuthError);
   });
 
-  it('upgrading a guest preserves their id and chip balance, and they can then log in with a password', async () => {
-    const guest = await signUpGuest(store, 'TempName');
-    await store.adjustUserChips(guest.user.id, 1000);
-    const upgraded = await upgradeGuest(store, guest.user.id, 'temp@example.com', 'newpassword1');
-    expect(upgraded.user.id).toBe(guest.user.id);
-    expect(upgraded.user.chips).toBe(STARTING_CHIP_GRANT + 1000);
-    expect(upgraded.user.isGuest).toBe(false);
-
-    const relogin = await login(store, 'temp@example.com', 'newpassword1');
-    expect(relogin.user.id).toBe(guest.user.id);
-  });
-
-  it('cannot upgrade an account that is not a guest', async () => {
-    const result = await register(store, 'real@example.com', 'password123', 'Real');
-    await expect(upgradeGuest(store, result.user.id, 'new@example.com', 'password123')).rejects.toThrow(AuthError);
-  });
-
   describe('Google sign-in', () => {
-    it('creates a new account on first Google sign-in, with a starting chip grant', async () => {
+    it('creates a new account on first Google sign-in, starting at 0 chips (no self-serve starting grant — only admin sets a real player\'s first buy-in)', async () => {
       const result = await loginOrRegisterWithGoogle(store, { googleId: 'g-1', email: 'a@gmail.com', displayName: 'Ann' });
       expect(result.user.isGuest).toBe(false);
       expect(result.user.googleId).toBe('g-1');
-      expect(result.user.chips).toBe(STARTING_CHIP_GRANT);
+      expect(result.user.chips).toBe(0);
     });
 
-    it('logs back in via the same Google id on a return visit, without creating a second account', async () => {
+    it('logs back in via the same Google id on a return visit, without creating a second account or granting more chips', async () => {
       const first = await loginOrRegisterWithGoogle(store, { googleId: 'g-2', email: 'b@gmail.com', displayName: 'Bob' });
       const second = await loginOrRegisterWithGoogle(store, { googleId: 'g-2', email: 'b@gmail.com', displayName: 'Bob' });
       expect(second.user.id).toBe(first.user.id);
-      expect(second.user.chips).toBe(STARTING_CHIP_GRANT); // no second grant on return login
+      expect(second.user.chips).toBe(0);
     });
 
     it('refuses Google sign-in when the email already belongs to a different (password) account', async () => {
@@ -87,7 +69,7 @@ describe('authService', () => {
       await expect(loginOrRegisterWithGoogle(store, { googleId: 'g-3', email: 'dup@example.com', displayName: 'Dup' })).rejects.toThrow(AuthError);
     });
 
-    it('upgrading a guest via Google preserves id and chips, same as the email/password upgrade path', async () => {
+    it('upgrading a guest via Google preserves their id and existing chip balance in place', async () => {
       const guest = await signUpGuest(store, 'TempName');
       await store.adjustUserChips(guest.user.id, 1000);
       const upgraded = await upgradeGuestWithGoogle(store, guest.user.id, { googleId: 'g-4', email: 'temp@gmail.com', displayName: 'Temp' });

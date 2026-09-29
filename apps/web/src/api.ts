@@ -39,31 +39,45 @@ async function parseOrThrow<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+function authHeaders(accessToken?: string): Record<string, string> {
+  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+}
+
 function postJson<T>(path: string, payload: unknown, accessToken?: string): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   return fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json', ...authHeaders(accessToken) },
     credentials: 'include',
     body: JSON.stringify(payload),
   }).then((res) => parseOrThrow<T>(res));
+}
+
+function getJson<T>(path: string, accessToken: string): Promise<T> {
+  return fetch(`${API_BASE}${path}`, { headers: authHeaders(accessToken), credentials: 'include' }).then((res) => parseOrThrow<T>(res));
+}
+
+function patchJson<T>(path: string, payload: unknown, accessToken: string): Promise<T> {
+  return fetch(`${API_BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(accessToken) },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  }).then((res) => parseOrThrow<T>(res));
+}
+
+function deleteJson<T>(path: string, accessToken: string): Promise<T> {
+  return fetch(`${API_BASE}${path}`, { method: 'DELETE', headers: authHeaders(accessToken), credentials: 'include' }).then((res) =>
+    parseOrThrow<T>(res),
+  );
 }
 
 export function signupGuest(displayName: string): Promise<AuthResponse> {
   return postJson('/auth/guest', { displayName });
 }
 
-export function register(email: string, password: string, displayName: string): Promise<AuthResponse> {
-  return postJson('/auth/register', { email, password, displayName });
-}
-
+/** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
 export function login(email: string, password: string): Promise<AuthResponse> {
   return postJson('/auth/login', { email, password });
-}
-
-export function upgrade(email: string, password: string, accessToken: string): Promise<AuthResponse> {
-  return postJson('/auth/upgrade', { email, password }, accessToken);
 }
 
 export function googleSignIn(idToken: string): Promise<AuthResponse> {
@@ -122,4 +136,62 @@ export function createTable(
   accessToken: string,
 ): Promise<{ tableId: string; name: string; inviteCode: string | null }> {
   return postJson('/tables', input, accessToken);
+}
+
+export interface LedgerEntryDto {
+  id: string;
+  amount: number;
+  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust';
+  tableId: string | null;
+  createdAt: string;
+}
+
+export interface MySummaryDto {
+  balance: number;
+  netPlayResult: number;
+  recentEntries: LedgerEntryDto[];
+}
+
+export function getMySummary(accessToken: string): Promise<MySummaryDto> {
+  return getJson('/users/me/summary', accessToken);
+}
+
+export function deleteMyAccount(accessToken: string): Promise<{ ok: true }> {
+  return deleteJson('/users/me', accessToken);
+}
+
+export interface AdminUserDto {
+  id: string;
+  displayName: string;
+  email: string | null;
+  isGuest: boolean;
+  role: 'player' | 'admin';
+  chips: number;
+  hasGoogle: boolean;
+  createdAt: string;
+}
+
+export interface AdminUserDetailDto extends AdminUserDto {
+  netPlayResult: number;
+  recentEntries: LedgerEntryDto[];
+}
+
+export function adminListUsers(accessToken: string): Promise<{ users: AdminUserDto[] }> {
+  return getJson('/admin/users', accessToken);
+}
+
+export function adminGetUser(userId: string, accessToken: string): Promise<AdminUserDetailDto> {
+  return getJson(`/admin/users/${encodeURIComponent(userId)}`, accessToken);
+}
+
+export function adminUpdateUser(userId: string, displayName: string, accessToken: string): Promise<{ id: string; displayName: string }> {
+  return patchJson(`/admin/users/${encodeURIComponent(userId)}`, { displayName }, accessToken);
+}
+
+export function adminDeleteUser(userId: string, accessToken: string): Promise<{ ok: true }> {
+  return deleteJson(`/admin/users/${encodeURIComponent(userId)}`, accessToken);
+}
+
+export function adminAdjustChips(userId: string, amount: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string }> {
+  return postJson('/admin/chips', { userId, amount, reason }, accessToken);
 }

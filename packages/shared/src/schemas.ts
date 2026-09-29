@@ -158,15 +158,6 @@ export const GoogleSignInSchema = z
   .strict();
 export type GoogleSignInInput = z.infer<typeof GoogleSignInSchema>;
 
-export const RegisterSchema = z
-  .object({
-    email: z.string().email(),
-    password: z.string().min(8).max(200),
-    displayName: z.string().min(1).max(24),
-  })
-  .strict();
-export type RegisterInput = z.infer<typeof RegisterSchema>;
-
 export const LoginSchema = z
   .object({
     email: z.string().email(),
@@ -183,3 +174,11 @@ export const AdminAdjustChipsSchema = z
   })
   .strict();
 export type AdminAdjustChipsInput = z.infer<typeof AdminAdjustChipsSchema>;
+
+/** Admin dashboard: edits a user's display name. Chip changes go through AdminAdjustChipsSchema instead — a delta plus a reason, not a raw overwrite, so every change stays in the ledger. */
+export const AdminUpdateUserSchema = z
+  .object({
+    displayName: z.string().min(1).max(24),
+  })
+  .strict();
+export type AdminUpdateUserInput = z.infer<typeof AdminUpdateUserSchema>;

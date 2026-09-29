@@ -6,13 +6,21 @@ import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 // An owner-generated seat invite (`/table/:id?assign=:token`) sends an
 // unauthenticated visitor here via RedirectToLogin in App.tsx, which stashes
 // the original destination in location.state.from. Invited human players
-// should only ever see "Play as guest" — not log in/register/Google — so
+// should only ever see "Play as guest" — not Google or the admin login — so
 // they can't wander off into an unrelated account instead of taking the seat
 // they were invited to.
 const INVITE_FROM_PATTERN = /^\/table\/[^/]+\?.*\bassign=/;
 
+/**
+ * A human player has exactly two ways in: Google, or a guest session — no
+ * public self-registration exists anymore (see DECISIONS.md). The
+ * email/password form still works, but ONLY for the admin/owner account,
+ * and is deliberately never shown as a real option: a small, easy-to-miss
+ * trigger tucked in the bottom-right corner is the only way to reach it,
+ * so a regular visitor never even notices it's there.
+ */
 export function LoginPage(): React.JSX.Element {
-  const { signupGuest, login, register, loginWithGoogle } = useAuth();
+  const { signupGuest, login, loginWithGoogle } = useAuth();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from;
   const isInvitedPlayer = typeof from === 'string' && INVITE_FROM_PATTERN.test(from);
@@ -22,7 +30,7 @@ export function LoginPage(): React.JSX.Element {
   // an owner-generated invite link). Navigating from here too used to
   // race that route-level redirect — see LoginRoute's doc comment in
   // App.tsx for why that's a real bug, not just redundant code.
-  const [mode, setMode] = useState<'guest' | 'login' | 'register'>('guest');
+  const [mode, setMode] = useState<'guest' | 'admin-login'>('guest');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,8 +43,7 @@ export function LoginPage(): React.JSX.Element {
     setBusy(true);
     try {
       if (mode === 'guest') await signupGuest(displayName || 'Guest');
-      else if (mode === 'login') await login(email, password);
-      else await register(email, password, displayName);
+      else await login(email, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
@@ -60,39 +67,19 @@ export function LoginPage(): React.JSX.Element {
       <div className="auth-card">
         <h1>pokerclause</h1>
 
-        {!isInvitedPlayer && (
+        {!isInvitedPlayer && mode === 'guest' && (
           <div className="google-signin-row">
             <GoogleSignInButton onCredential={handleGoogleCredential} />
           </div>
         )}
 
-        {isInvitedPlayer ? (
-          <div className="auth-tabs">
-            <button type="button" className="active">
-              Play as guest
-            </button>
-          </div>
-        ) : (
-          <div className="auth-tabs">
-            <button type="button" className={mode === 'guest' ? 'active' : ''} onClick={() => setMode('guest')}>
-              Play as guest
-            </button>
-            <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>
-              Log in
-            </button>
-            <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>
-              Register
-            </button>
-          </div>
-        )}
         <form onSubmit={(e) => void submit(e)}>
-          {mode !== 'login' && (
+          {mode === 'guest' ? (
             <label>
               Display name
               <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
             </label>
-          )}
-          {!isInvitedPlayer && mode !== 'guest' && (
+          ) : (
             <>
               <label>
                 Email
@@ -106,10 +93,27 @@ export function LoginPage(): React.JSX.Element {
           )}
           {error && <div className="error-banner">{error}</div>}
           <button type="submit" disabled={busy}>
-            {mode === 'guest' ? 'Play now' : mode === 'login' ? 'Log in' : 'Register'}
+            {mode === 'guest' ? 'Play now' : 'Log in'}
           </button>
+          {mode === 'admin-login' && (
+            <button type="button" className="btn-ghost" onClick={() => setMode('guest')}>
+              &larr; Back
+            </button>
+          )}
         </form>
       </div>
+
+      {!isInvitedPlayer && mode === 'guest' && (
+        <button
+          type="button"
+          className="admin-login-trigger"
+          aria-label="Admin login"
+          title="Admin login"
+          onClick={() => setMode('admin-login')}
+        >
+          &#9881;
+        </button>
+      )}
     </div>
   );
 }

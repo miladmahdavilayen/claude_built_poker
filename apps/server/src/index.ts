@@ -14,6 +14,7 @@ import { registerAuthRoutes } from './http/routes/auth.js';
 import { registerFairnessRoutes } from './http/routes/fairness.js';
 import { registerHealthRoute } from './http/routes/health.js';
 import { registerTableRoutes } from './http/routes/tables.js';
+import { registerUserRoutes } from './http/routes/users.js';
 import type { TableSettings } from '@pokerclause/shared';
 import type { TableRegistry } from './game/tableRegistry.js';
 import { attachSocketServer } from './socket/socketServer.js';
@@ -150,6 +151,7 @@ async function main(): Promise<void> {
   registerHealthRoute(app);
   registerAuthRoutes(app, store);
   registerFairnessRoutes(app, store);
+  registerUserRoutes(app, store);
 
   const { io, registry } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerTableRoutes(app, store, registry);

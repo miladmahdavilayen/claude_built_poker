@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createTable, guestSignup, tableIdFromUrl } from './helpers.js';
+import { adminLogin, createTable, guestSignup, tableIdFromUrl } from './helpers.js';
 
 test('a private table rejects joining without the invite code, and admits joining with it', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -7,7 +7,10 @@ test('a private table rejects joining without the invite code, and admits joinin
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
-  await guestSignup(pageA, 'Carol');
+  // Table creation is admin/logged-in-human-only now (a guest has nothing
+  // they could do with one — see DECISIONS.md); this test is about the
+  // private-table code gate itself, unaffected by who created it.
+  await adminLogin(pageA);
   const link = await createTable(pageA, { name: 'E2E Private Table', smallBlind: 1, bigBlind: 2, maxSeats: 4, isPrivate: true });
   expect(link).toBeTruthy();
   const tableId = tableIdFromUrl(link!);

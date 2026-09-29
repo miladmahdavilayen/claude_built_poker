@@ -64,6 +64,74 @@ describe('MemoryStore', () => {
     expect(await store.listTables()).toHaveLength(0);
   });
 
+  it('ledgerPlayNetForUser sums only pot_win entries — buy-ins, cash-outs, and admin grants never count as "winnings"', async () => {
+    const store = new MemoryStore();
+    const user = await store.createGuestUser('Gina');
+    await store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: 5000, reason: 'admin_adjust' },
+      { userId: null, isHouse: true, amount: -5000, reason: 'admin_adjust' },
+    ]);
+    await store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: -200, reason: 'buy_in' },
+      { userId: null, isHouse: true, amount: 200, reason: 'buy_in' },
+    ]);
+    await store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: 350, reason: 'pot_win' },
+      { userId: null, isHouse: true, amount: -350, reason: 'pot_win' },
+    ]);
+    await store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: -120, reason: 'pot_win' }, // a losing hand's net-negative entry — see settleHand
+      { userId: null, isHouse: true, amount: 120, reason: 'pot_win' },
+    ]);
+
+    expect(await store.ledgerPlayNetForUser(user.id)).toBe(230); // 350 - 120, ignoring the 5000 grant and the buy-in
+    expect(await store.ledgerBalanceForUser(user.id)).toBe(5030); // 5000 - 200 + 350 - 120 — the real total balance, unlike the play-only figure above
+  });
+
+  it('ledgerEntriesForUser returns this user’s own rows, newest first, up to the limit', async () => {
+    const store = new MemoryStore();
+    const user = await store.createGuestUser('Hank');
+    const other = await store.createGuestUser('Ivy');
+    for (let i = 0; i < 3; i++) {
+      await store.recordLedgerEntries([
+        { userId: user.id, isHouse: false, amount: 10, reason: 'pot_win' },
+        { userId: null, isHouse: true, amount: -10, reason: 'pot_win' },
+      ]);
+    }
+    await store.recordLedgerEntries([
+      { userId: other.id, isHouse: false, amount: 999, reason: 'pot_win' },
+      { userId: null, isHouse: true, amount: -999, reason: 'pot_win' },
+    ]);
+
+    const entries = await store.ledgerEntriesForUser(user.id, 2);
+    expect(entries).toHaveLength(2); // limited, and never leaks another user's rows
+    expect(entries.every((e) => e.amount === 10)).toBe(true);
+  });
+
+  it('deleteUser removes the account but leaves past ledger/table/hand/chat references intact with userId nulled out, mirroring the real DB’s onDelete: set null FKs', async () => {
+    const store = new MemoryStore();
+    const user = await store.createGuestUser('Jack');
+    await store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: 100, reason: 'pot_win' },
+      { userId: null, isHouse: true, amount: -100, reason: 'pot_win' },
+    ]);
+    const table = await store.createTable({ name: 'Jack’s Table', config: {}, inviteCode: null, createdBy: user.id });
+    await store.recordChatMessage(table.id, user.id, 'hi');
+    await store.createSession(user.id, 'sess-hash', new Date(Date.now() + 60000));
+
+    await store.deleteUser(user.id);
+
+    expect(await store.findUserById(user.id)).toBeNull();
+    expect(await store.findSessionByTokenHash('sess-hash')).toBeNull();
+    expect(await store.ledgerBalanceForUser(user.id)).toBe(0); // the row itself is gone from this user's own view...
+    const conservation = await store.ledgerConservationCheck();
+    expect(conservation.balanced).toBe(true); // ...but the ledger as a whole still balances — the entry survives with userId: null
+    expect((await store.getTable(table.id))?.createdBy).toBeNull();
+    const chat = await store.listRecentChat(table.id, 10);
+    expect(chat).toHaveLength(1);
+    expect(chat[0]!.userId).toBeNull();
+  });
+
   it('chat messages record the sender display name and list in order', async () => {
     const store = new MemoryStore();
     const table = await store.createTable({ name: 'T', config: {}, inviteCode: null, createdBy: null });

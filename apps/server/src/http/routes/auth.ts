@@ -1,6 +1,6 @@
-import { GoogleSignInSchema, GuestSignupSchema, LoginSchema, RegisterSchema } from '@pokerclause/shared';
+import { GoogleSignInSchema, GuestSignupSchema, LoginSchema } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
-import { AuthError, login, loginOrRegisterWithGoogle, register, signUpGuest, upgradeGuest, upgradeGuestWithGoogle } from '../../auth/authService.js';
+import { AuthError, login, loginOrRegisterWithGoogle, signUpGuest, upgradeGuestWithGoogle } from '../../auth/authService.js';
 import { isGoogleSignInConfigured, verifyGoogleIdToken } from '../../auth/googleAuth.js';
 import { REFRESH_COOKIE_MAX_AGE_SECONDS, REFRESH_COOKIE_NAME, revokeRefreshToken, rotateRefreshToken } from '../../auth/session.js';
 import type { Store } from '../../db/store.js';
@@ -31,19 +31,11 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
     return { user: publicUser(result.user), accessToken: result.accessToken };
   });
 
-  app.post('/auth/register', async (req, reply) => {
-    const body = RegisterSchema.safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid registration payload.' });
-    try {
-      const result = await register(store, body.data.email, body.data.password, body.data.displayName);
-      setRefreshCookie(reply, result.refreshToken);
-      return { user: publicUser(result.user), accessToken: result.accessToken };
-    } catch (err) {
-      if (err instanceof AuthError) return reply.code(409).send({ code: err.code, message: err.message });
-      throw err;
-    }
-  });
-
+  // No public self-registration route — a human player signs in with
+  // Google (below) or plays as a guest. `/auth/login` (email/password)
+  // stays wired up, but is only ever reachable by the admin/owner
+  // account, via a small, deliberately unadvertised trigger on the login
+  // page — see Login.tsx. See DECISIONS.md.
   app.post('/auth/login', async (req, reply) => {
     const body = LoginSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid login payload.' });
@@ -87,19 +79,6 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
     if (!profile) return reply.code(401).send({ code: 'INVALID_GOOGLE_TOKEN', message: 'Could not verify Google sign-in.' });
     try {
       const result = await upgradeGuestWithGoogle(store, req.userId!, profile);
-      setRefreshCookie(reply, result.refreshToken);
-      return { user: publicUser(result.user), accessToken: result.accessToken };
-    } catch (err) {
-      if (err instanceof AuthError) return reply.code(409).send({ code: err.code, message: err.message });
-      throw err;
-    }
-  });
-
-  app.post('/auth/upgrade', { preHandler: requireAuth }, async (req, reply) => {
-    const body = RegisterSchema.omit({ displayName: true }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid upgrade payload.' });
-    try {
-      const result = await upgradeGuest(store, req.userId!, body.data.email, body.data.password);
       setRefreshCookie(reply, result.refreshToken);
       return { user: publicUser(result.user), accessToken: result.accessToken };
     } catch (err) {

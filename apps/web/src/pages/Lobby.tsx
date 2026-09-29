@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
 import type { TableSummaryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
@@ -7,7 +7,7 @@ import { formatChips } from '../chips.js';
 import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
 export function LobbyPage(): React.JSX.Element {
-  const { user, accessToken, logout, upgrade, upgradeWithGoogle } = useAuth();
+  const { user, accessToken, logout, upgradeWithGoogle } = useAuth();
   const [tables, setTables] = useState<TableSummaryDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -43,6 +43,16 @@ export function LobbyPage(): React.JSX.Element {
                 Create account
               </button>
             )}
+            {!user.isGuest && (
+              <Link to="/profile" className="btn-ghost lobby-link-button">
+                My profile
+              </Link>
+            )}
+            {user.role === 'admin' && (
+              <Link to="/admin" className="btn-ghost lobby-link-button">
+                Admin
+              </Link>
+            )}
             <button type="button" className="btn-logout" onClick={() => void logout()}>
               Log out
             </button>
@@ -53,9 +63,14 @@ export function LobbyPage(): React.JSX.Element {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="lobby-toolbar">
-        <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
-          + Create table
-        </button>
+        {/* Guests have nothing to actually do with a table they create —
+            self-serve seating is still gated to the table's own creator
+            (never a guest) or the admin. See DECISIONS.md. */}
+        {user && !user.isGuest && (
+          <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
+            + Create table
+          </button>
+        )}
         <button type="button" className="btn-secondary" onClick={() => setShowJoinPrivate(true)}>
           🔑 Join private table
         </button>
@@ -102,11 +117,7 @@ export function LobbyPage(): React.JSX.Element {
       )}
 
       {showUpgrade && (
-        <UpgradeModal
-          onClose={() => setShowUpgrade(false)}
-          onUpgrade={(email, password) => upgrade(email, password).then(() => setShowUpgrade(false))}
-          onUpgradeGoogle={(idToken) => upgradeWithGoogle(idToken).then(() => setShowUpgrade(false))}
-        />
+        <UpgradeModal onClose={() => setShowUpgrade(false)} onUpgradeGoogle={(idToken) => upgradeWithGoogle(idToken).then(() => setShowUpgrade(false))} />
       )}
     </div>
   );
@@ -221,17 +232,8 @@ function JoinPrivateModal({ onClose, onJoin }: { onClose: () => void; onJoin: (t
   );
 }
 
-function UpgradeModal({
-  onClose,
-  onUpgrade,
-  onUpgradeGoogle,
-}: {
-  onClose: () => void;
-  onUpgrade: (email: string, password: string) => Promise<void>;
-  onUpgradeGoogle: (idToken: string) => Promise<void>;
-}): React.JSX.Element {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+/** Google is the ONLY way to turn a guest session into a real account — see DECISIONS.md. */
+function UpgradeModal({ onClose, onUpgradeGoogle }: { onClose: () => void; onUpgradeGoogle: (idToken: string) => Promise<void> }): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   const handleGoogleCredential = useCallback(
@@ -246,28 +248,14 @@ function UpgradeModal({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>Create an account</h3>
-        <p>Keeps your chips and history under a password.</p>
+        <p>Keeps your chips and history under your Google account, instead of disappearing when you leave.</p>
         {error && <div className="error-banner">{error}</div>}
         <div className="google-signin-row">
           <GoogleSignInButton onCredential={handleGoogleCredential} />
         </div>
-        <label>
-          Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </label>
-        <label>
-          Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </label>
         <div className="modal-actions">
           <button type="button" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void onUpgrade(email, password).catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed.'))}
-          >
-            Create account
           </button>
         </div>
       </div>

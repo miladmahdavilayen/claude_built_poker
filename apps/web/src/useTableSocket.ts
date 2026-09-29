@@ -29,6 +29,8 @@ export interface TableSocketApi {
   lastError: ServerError | null;
   /** Set once the server has closed this table (an owner's "Terminate table," or everyone human having left) — the reason string to show, or null if the table is still live. */
   tableClosedReason: string | null;
+  /** Whether the viewer can self-serve seat themselves / add bots on the table they're currently joined to — true for the admin on any table, or for a signed-in non-guest human on the one table they created. Sent once per join-table (see socketServer.ts's canManageTable) since it never changes over the connection's lifetime. */
+  canManageTable: boolean;
   joinTable: (tableId: string, inviteCode?: string) => void;
   takeSeat: (tableId: string, seatId: number, buyIn: number, displayName?: string) => void;
   /** Resolves only once the server has actually cleared the seat — safe to navigate away (and tear down this socket) only after it resolves, not before. See DECISIONS.md. */
@@ -66,6 +68,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
   const [latestEvents, setLatestEvents] = useState<readonly ProjectedGameEvent[]>([]);
   const [lastError, setLastError] = useState<ServerError | null>(null);
   const [tableClosedReason, setTableClosedReason] = useState<string | null>(null);
+  const [canManageTable, setCanManageTable] = useState(false);
 
   useEffect(() => {
     if (!socket) {
@@ -74,6 +77,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       setRecentEvents([]);
       setLatestEvents([]);
       setTableClosedReason(null);
+      setCanManageTable(false);
       return;
     }
 
@@ -88,12 +92,14 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
     const onChat = (message: ChatMessageRecord): void => setChat((prev) => [...prev, message].slice(-200));
     const onError = (err: ServerError): void => setLastError(err);
     const onTableClosed = (payload: { reason: string }): void => setTableClosedReason(payload.reason);
+    const onTablePermissions = (payload: { canManageTable: boolean }): void => setCanManageTable(payload.canManageTable);
 
     socket.on('state', onState);
     socket.on('chat-history', onChatHistory);
     socket.on('chat', onChat);
     socket.on('error', onError);
     socket.on('table-closed', onTableClosed);
+    socket.on('table-permissions', onTablePermissions);
 
     return () => {
       socket.off('state', onState);
@@ -101,6 +107,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       socket.off('chat', onChat);
       socket.off('error', onError);
       socket.off('table-closed', onTableClosed);
+      socket.off('table-permissions', onTablePermissions);
     };
   }, [socket]);
 
@@ -112,6 +119,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       latestEvents,
       lastError,
       tableClosedReason,
+      canManageTable,
       joinTable: (tableId, inviteCode) => socket?.emit('join-table', inviteCode ? { tableId, inviteCode } : { tableId }),
       takeSeat: (tableId, seatId, buyIn, displayName) =>
         socket?.emit('take-seat', displayName ? { tableId, seatId, buyIn, displayName } : { tableId, seatId, buyIn }),
@@ -144,6 +152,6 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
         }),
       redeemSeatAssignment: (token) => socket?.emit('redeem-seat-assignment', { token }),
     }),
-    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason],
+    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable],
   );
 }

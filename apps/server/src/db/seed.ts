@@ -1,9 +1,17 @@
 /**
- * Seeds a real Postgres database with an admin account and a couple of
- * test player accounts. Live tables aren't seeded here — see
+ * Seeds a real Postgres database with the admin account and a couple of
+ * test HUMAN player accounts. Live tables aren't seeded here — see
  * `seedDefaultTables` in `src/index.ts`, since tables only ever live in
  * the running server process's memory (no horizontal scaling; see
  * DECISIONS).
+ *
+ * The test players are seeded as Google-style accounts with a fake
+ * `googleId` (no email/password) and a $0 starting balance, deliberately
+ * mirroring what a real "Sign in with Google" produces now that email/
+ * password self-registration no longer exists for regular players (see
+ * DECISIONS.md) — only the admin account still has a password, exactly
+ * as ensureAdminAccount (index.ts) creates it on every boot regardless of
+ * whether this script has ever been run.
  *
  * Run with: DATABASE_URL=... pnpm db:seed
  */
@@ -11,15 +19,9 @@ import { getDb, closeDb } from './client.js';
 import { DrizzleStore } from './drizzleStore.js';
 import { hashPassword } from '../auth/passwords.js';
 
-const STARTING_CHIP_GRANT = 5000;
+const ADMIN_STARTING_CHIP_GRANT = 5000; // mirrors authService.ts's STARTING_CHIP_GRANT for guests/admin — see ensureAdminAccount.
 
-async function ensureAccount(
-  store: DrizzleStore,
-  email: string,
-  password: string,
-  displayName: string,
-  role: 'player' | 'admin',
-): Promise<void> {
+async function ensureAdminAccount(store: DrizzleStore, email: string, password: string, displayName: string): Promise<void> {
   const existing = await store.findUserByEmail(email);
   if (existing) {
     console.log(`  ${email} already exists, skipping.`);
@@ -27,13 +29,23 @@ async function ensureAccount(
   }
   const passwordHash = await hashPassword(password);
   const user = await store.createAccount(email, passwordHash, displayName);
-  await store.adjustUserChips(user.id, STARTING_CHIP_GRANT);
+  await store.adjustUserChips(user.id, ADMIN_STARTING_CHIP_GRANT);
   await store.recordLedgerEntries([
-    { userId: user.id, isHouse: false, amount: STARTING_CHIP_GRANT, reason: 'admin_adjust' },
-    { userId: null, isHouse: true, amount: -STARTING_CHIP_GRANT, reason: 'admin_adjust' },
+    { userId: user.id, isHouse: false, amount: ADMIN_STARTING_CHIP_GRANT, reason: 'admin_adjust' },
+    { userId: null, isHouse: true, amount: -ADMIN_STARTING_CHIP_GRANT, reason: 'admin_adjust' },
   ]);
-  if (role === 'admin') await store.setUserRole(user.id, 'admin');
-  console.log(`  created ${role} account: ${email} / ${password}`);
+  await store.setUserRole(user.id, 'admin');
+  console.log(`  created admin account: ${email} / ${password}`);
+}
+
+async function ensureTestPlayer(store: DrizzleStore, googleId: string, email: string, displayName: string): Promise<void> {
+  const existing = await store.findUserByGoogleId(googleId);
+  if (existing) {
+    console.log(`  ${displayName} already exists, skipping.`);
+    return;
+  }
+  await store.createGoogleAccount(googleId, email, displayName);
+  console.log(`  created test player: ${displayName} (0 chips — sign in as them and have the admin grant a buy-in from the dashboard)`);
 }
 
 async function main(): Promise<void> {
@@ -45,9 +57,9 @@ async function main(): Promise<void> {
   const store = new DrizzleStore(getDb());
 
   console.log('Seeding accounts...');
-  await ensureAccount(store, 'admin@pokerclause.local', 'admin12345', 'Admin', 'admin');
-  await ensureAccount(store, 'alice@pokerclause.local', 'password123', 'Alice', 'player');
-  await ensureAccount(store, 'bob@pokerclause.local', 'password123', 'Bob', 'player');
+  await ensureAdminAccount(store, 'admin@pokerclause.local', 'admin12345', 'Admin');
+  await ensureTestPlayer(store, 'seed-test-alice', 'alice@pokerclause.local', 'Alice');
+  await ensureTestPlayer(store, 'seed-test-bob', 'bob@pokerclause.local', 'Bob');
 
   console.log('Done.');
   await closeDb();

@@ -3,6 +3,7 @@ import type {
   ChatMessageRecord,
   HandRecordForVerification,
   LedgerEntryInput,
+  LedgerEntryRecord,
   RecordHandInput,
   Store,
   TableRecord,
@@ -158,6 +159,33 @@ export class MemoryStore implements Store {
     return Promise.resolve([...this.users.values()]);
   }
 
+  /** Mirrors the real DB's `onDelete: 'set null'`/`'cascade'` FKs (see schema.ts) so this test-double stays behaviorally consistent with DrizzleStore. */
+  async deleteUser(userId: string): Promise<void> {
+    const user = this.users.get(userId);
+    if (!user) return Promise.resolve();
+    if (user.email) this.usersByEmail.delete(user.email);
+    if (user.googleId) this.usersByGoogleId.delete(user.googleId);
+    this.users.delete(userId);
+    for (const [hash, s] of [...this.sessions]) {
+      if (s.userId === userId) this.sessions.delete(hash);
+    }
+    for (const entry of this.ledger) {
+      if (entry.userId === userId) entry.userId = null;
+    }
+    for (const [id, t] of [...this.tables]) {
+      if (t.createdBy === userId) this.tables.set(id, { ...t, createdBy: null });
+    }
+    for (const [id, h] of [...this.hands]) {
+      if (h.seats.some((s) => s.userId === userId)) {
+        this.hands.set(id, { ...h, seats: h.seats.map((s) => (s.userId === userId ? { ...s, userId: null } : s)) });
+      }
+    }
+    for (let i = 0; i < this.chat.length; i++) {
+      if (this.chat[i]!.userId === userId) this.chat[i] = { ...this.chat[i]!, userId: null };
+    }
+    return Promise.resolve();
+  }
+
   async createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {
     this.sessions.set(tokenHash, { userId, expiresAt });
     return Promise.resolve();
@@ -192,6 +220,21 @@ export class MemoryStore implements Store {
   async ledgerConservationCheck(): Promise<{ balanced: boolean; totalDelta: number }> {
     const totalDelta = this.ledger.reduce((s, e) => s + e.amount, 0);
     return Promise.resolve({ balanced: totalDelta === 0, totalDelta });
+  }
+
+  async ledgerEntriesForUser(userId: string, limit: number): Promise<LedgerEntryRecord[]> {
+    return Promise.resolve(
+      this.ledger
+        .filter((e) => e.userId === userId)
+        .slice()
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, limit)
+        .map((e) => ({ id: e.id, amount: e.amount, reason: e.reason, tableId: e.tableId ?? null, handId: e.handId ?? null, createdAt: e.createdAt })),
+    );
+  }
+
+  async ledgerPlayNetForUser(userId: string): Promise<number> {
+    return Promise.resolve(this.ledger.filter((e) => e.userId === userId && e.reason === 'pot_win').reduce((s, e) => s + e.amount, 0));
   }
 
   async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord> {

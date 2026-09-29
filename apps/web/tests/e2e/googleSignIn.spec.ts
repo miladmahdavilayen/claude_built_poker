@@ -18,7 +18,11 @@ test('with no Google configuration, the server reports it unavailable, the sign-
   expect(await availability.json()).toEqual({ available: false });
 
   await page.goto('/');
-  await expect(page.getByText('Play as guest')).toBeVisible();
+  // The guest form is the default (and, with no Google configured, only
+  // real) way in — no "Log in"/"Register" tabs exist anymore either (see
+  // Login.tsx; email/password login still works, but only via the small
+  // unadvertised admin trigger, not shown here).
+  await expect(page.getByLabel('Display name')).toBeVisible();
   // No Google button container should be rendered at all.
   await expect(page.locator('.google-signin-row div')).toHaveCount(0);
 

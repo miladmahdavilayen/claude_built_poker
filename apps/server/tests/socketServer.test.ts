@@ -73,6 +73,13 @@ describe('socketServer: live signaling and access control', () => {
     return { userId: user.id, token: issueAccessToken(user) };
   }
 
+  /** A signed-in, non-guest human (what a real Google sign-in produces) — this repo's test harness can't drive a real Google OAuth click-through, so this creates the account directly in the store exactly as `loginOrRegisterWithGoogle` would, the same shortcut `makeUser`/`makeAdminUser` already take for guest/admin accounts. */
+  async function makeRegisteredUser(name: string, chips = 0): Promise<{ userId: string; token: string }> {
+    const created = await store.createGoogleAccount(`google-${name}`, `${name.toLowerCase()}@example.com`, name);
+    const user = chips > 0 ? await store.adjustUserChips(created.id, chips) : created;
+    return { userId: user.id, token: issueAccessToken(user) };
+  }
+
   function connect(token: string): ClientSocket {
     return ioClient(baseUrl, { auth: { token }, transports: ['websocket'] });
   }
@@ -495,6 +502,59 @@ describe('socketServer: live signaling and access control', () => {
     expect((await addBotDenied).code).toBe('ADMIN_REQUIRED');
 
     aliceSocket.close();
+  });
+
+  it("a signed-in (non-guest) human can self-serve seat themselves and add bots — but ONLY on the table they created, never anyone else's, and never by generating an invite link", async () => {
+    const bob = await makeRegisteredUser('Bob', 500);
+    const ownTable = await registry.createTable('Bob’s Practice Table', SETTINGS, bob.userId, null);
+    const othersTable = await registry.createTable('Someone Else’s Table', SETTINGS, null, null);
+
+    const bobSocket = connect(bob.token);
+    await waitFor(bobSocket, 'connect');
+
+    // Both listeners registered BEFORE the triggering emit — join-table
+    // fires 'table-permissions' and 'state' back to back, close enough
+    // together that registering the second listener only after awaiting
+    // the first risks missing it entirely (a one-time EventEmitter
+    // listener attached after an event already fired never sees it).
+    const permissionsPromise = waitFor<{ canManageTable: boolean }>(bobSocket, 'table-permissions');
+    const statePromise = waitFor(bobSocket, 'state');
+    bobSocket.emit('join-table', { tableId: ownTable.tableId });
+    // The one-shot permissions signal join-table sends — this is what the
+    // client UI gates "Sit here"/"Add bot" on (see socketServer.ts).
+    expect((await permissionsPromise).canManageTable).toBe(true);
+    await statePromise;
+
+    const seatFilled = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
+      p.state.seats.some((s) => s.seatId === 0 && s.status !== 'empty'),
+    );
+    bobSocket.emit('take-seat', { tableId: ownTable.tableId, seatId: 0, buyIn: 200 });
+    await seatFilled;
+    expect(ownTable.seatOfUser(bob.userId)).toBe(0);
+
+    const botAdded = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
+      p.state.seats.some((s) => s.seatId === 1 && s.status !== 'empty'),
+    );
+    bobSocket.emit('add-bot', { seatId: 1, persona: 'nit', buyIn: 100 });
+    await botAdded;
+
+    // Still can't invite a real human to their own table — that stays admin-only.
+    const assignDenied = await new Promise<{ ok: boolean; code?: string }>((resolve) => {
+      bobSocket.emit('assign-seat', { seatId: 2, buyIn: 100 }, resolve);
+    });
+    expect(assignDenied).toEqual({ ok: false, code: 'ADMIN_REQUIRED', message: expect.any(String) as string });
+
+    // A different table — even unowned — is off-limits the same as any regular player.
+    const otherPermissionsPromise = waitFor<{ canManageTable: boolean }>(bobSocket, 'table-permissions');
+    const otherStatePromise = waitFor(bobSocket, 'state');
+    bobSocket.emit('join-table', { tableId: othersTable.tableId });
+    expect((await otherPermissionsPromise).canManageTable).toBe(false);
+    await otherStatePromise;
+    const takeSeatDenied = waitFor<{ code: string }>(bobSocket, 'error');
+    bobSocket.emit('take-seat', { tableId: othersTable.tableId, seatId: 0, buyIn: 100 });
+    expect((await takeSeatDenied).code).toBe('SELF_SERVE_DISABLED');
+
+    bobSocket.close();
   });
 
   it('assign-seat + redeem-seat-assignment: a one-time, seat-and-amount-specific invite link, ignoring anything the redeemer tries to supply themselves, consumed on use', async () => {

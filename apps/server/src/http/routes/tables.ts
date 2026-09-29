@@ -19,7 +19,15 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
     return { tableId: table.tableId, name: table.name, settings: table.settings };
   });
 
+  // Guests can't create a table: they'd have nothing they could actually do
+  // with it (self-serve seating is still gated to the table's own creator
+  // OR the admin — see LiveTable.ownerId and socketServer.ts's canManageTable
+  // — and a guest never qualifies as either), so this avoids littering the
+  // lobby with tables nobody can ever sit down at. See DECISIONS.md.
   app.post('/tables', { preHandler: requireAuth }, async (req, reply) => {
+    const creator = await store.findUserById(req.userId!);
+    if (!creator) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
+    if (creator.isGuest) return reply.code(403).send({ code: 'GUEST_CANNOT_CREATE_TABLE', message: 'Sign in with Google to create your own table.' });
     const body = CreateTableSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid table config.' });
     const input = body.data;

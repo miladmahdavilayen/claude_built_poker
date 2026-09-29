@@ -83,7 +83,8 @@ test('a spectator (no seat) using voice chat appears in the compact voice strip 
   const pageA = await ctxA.newPage();
   const pageB = await ctxB.newPage();
 
-  await guestSignup(pageA, 'Grace');
+  // Table creation is admin/logged-in-human-only now — see DECISIONS.md.
+  await adminLogin(pageA);
   await createTable(pageA, { name: 'E2E Voice Spectator Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   const tableUrl = pageA.url();
 

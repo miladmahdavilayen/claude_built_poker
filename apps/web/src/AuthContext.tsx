@@ -7,12 +7,13 @@ interface AuthState {
   accessToken: string | null;
   loading: boolean;
   signupGuest: (displayName: string) => Promise<void>;
-  register: (email: string, password: string, displayName: string) => Promise<void>;
+  /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: (idToken: string) => Promise<void>;
-  upgrade: (email: string, password: string) => Promise<void>;
   upgradeWithGoogle: (idToken: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Permanently deletes the signed-in (non-guest, non-admin) user's own account. Clears local session state on success — the caller still owns navigating away. */
+  deleteAccount: () => Promise<void>;
   /** Optimistically reflects a display-name change already sent to (and applied by) the server — e.g. the owner renaming themselves right before sitting down via 'take-seat'. No round trip of its own; the server is the actual source of truth. */
   setDisplayName: (displayName: string) => void;
 }
@@ -62,12 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setAccessToken(res.accessToken);
   }, []);
 
-  const register = useCallback(async (email: string, password: string, displayName: string) => {
-    const res = await api.register(email, password, displayName);
-    setUser(res.user);
-    setAccessToken(res.accessToken);
-  }, []);
-
   const login = useCallback(async (email: string, password: string) => {
     const res = await api.login(email, password);
     setUser(res.user);
@@ -79,16 +74,6 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setUser(res.user);
     setAccessToken(res.accessToken);
   }, []);
-
-  const upgrade = useCallback(
-    async (email: string, password: string) => {
-      if (!accessToken) throw new Error('Not signed in.');
-      const res = await api.upgrade(email, password, accessToken);
-      setUser(res.user);
-      setAccessToken(res.accessToken);
-    },
-    [accessToken],
-  );
 
   const upgradeWithGoogle = useCallback(
     async (idToken: string) => {
@@ -106,13 +91,20 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setAccessToken(null);
   }, []);
 
+  const deleteAccount = useCallback(async () => {
+    if (!accessToken) throw new Error('Not signed in.');
+    await api.deleteMyAccount(accessToken);
+    setUser(null);
+    setAccessToken(null);
+  }, [accessToken]);
+
   const setDisplayName = useCallback((displayName: string) => {
     setUser((current) => (current ? { ...current, displayName } : current));
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ user, accessToken, loading, signupGuest, register, login, loginWithGoogle, upgrade, upgradeWithGoogle, logout, setDisplayName }),
-    [user, accessToken, loading, signupGuest, register, login, loginWithGoogle, upgrade, upgradeWithGoogle, logout, setDisplayName],
+    () => ({ user, accessToken, loading, signupGuest, login, loginWithGoogle, upgradeWithGoogle, logout, deleteAccount, setDisplayName }),
+    [user, accessToken, loading, signupGuest, login, loginWithGoogle, upgradeWithGoogle, logout, deleteAccount, setDisplayName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

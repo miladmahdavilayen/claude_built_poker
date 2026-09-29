@@ -7,6 +7,7 @@ import type {
   ChatMessageRecord,
   HandRecordForVerification,
   LedgerEntryInput,
+  LedgerEntryRecord,
   RecordHandInput,
   Store,
   TableRecord,
@@ -154,6 +155,10 @@ export class DrizzleStore implements Store {
     return rows.map(toUserRecord);
   }
 
+  async deleteUser(userId: string): Promise<void> {
+    await this.db.delete(schema.users).where(eq(schema.users.id, userId));
+  }
+
   async createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {
     await this.db.insert(schema.sessions).values({ tokenHash, userId, expiresAt });
   }
@@ -200,6 +205,24 @@ export class DrizzleStore implements Store {
     const [row] = await this.db.select({ total: sql<string>`coalesce(sum(${schema.chipLedger.amount}), 0)` }).from(schema.chipLedger);
     const totalDelta = Number(row?.total ?? 0);
     return { balanced: totalDelta === 0, totalDelta };
+  }
+
+  async ledgerEntriesForUser(userId: string, limit: number): Promise<LedgerEntryRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.chipLedger)
+      .where(eq(schema.chipLedger.userId, userId))
+      .orderBy(desc(schema.chipLedger.createdAt))
+      .limit(limit);
+    return rows.map((r) => ({ id: r.id, amount: r.amount, reason: r.reason, tableId: r.tableId, handId: r.handId, createdAt: r.createdAt }));
+  }
+
+  async ledgerPlayNetForUser(userId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ total: sql<string>`coalesce(sum(${schema.chipLedger.amount}), 0)` })
+      .from(schema.chipLedger)
+      .where(and(eq(schema.chipLedger.userId, userId), eq(schema.chipLedger.reason, 'pot_win')));
+    return Number(row?.total ?? 0);
   }
 
   async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord> {

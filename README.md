@@ -168,12 +168,15 @@ DECISIONS.md.
 
 ## Owner-controlled chip economy
 
-Buy-ins, rebuys, and adding a computer player are **owner-only** — a
-regular player can't seat themselves, top themselves up, or add a bot.
-Only the account logged in as the owner (`role: 'admin'` — see the
-quickstart above) can do any of that, for anyone, human or bot. This
-isn't just a UI restriction; every one of these is enforced
-server-side.
+Buy-ins, rebuys, and adding a computer player are **owner-only** for
+every table but one exception: a signed-in (non-guest) human can also
+self-serve seat themselves and add bots, but only on a table THEY
+created (see "Human player accounts" below) — never on anyone else's,
+and never a real human invite (that stays owner-only, full stop, on
+every table). Otherwise, only the account logged in as the owner
+(`role: 'admin'` — see the quickstart above) can seat/top up/add a bot
+for anyone, human or bot. This isn't just a UI restriction; every one of
+these is enforced server-side.
 
 - **Seating a human**: the owner picks an empty seat and a buy-in amount
   in the **"+ Assign human"** flow, which generates a one-time invite
@@ -203,6 +206,36 @@ are refunded to your balance, and you're sent back to the lobby. If that
 leaves nobody human still seated, the table closes itself immediately
 (any spectator watching gets sent to the lobby too) — a table with only
 bots left in it, or nobody at all, has no reason to keep running.
+
+## Human player accounts
+
+A guest's data (chips, seat, everything) disappears the moment they leave
+a table, or the table resets/terminates — unchanged from before. A
+signed-in (Google) human is different: their account, balance, and hand
+history persist across sessions and devices.
+
+- **Starting balance is $0.** Unlike a guest's automatic $5,000, a fresh
+  Google sign-in starts with nothing — only the owner/admin can grant a
+  real player their first buy-in or a rebuy (via the admin dashboard, or
+  the in-table "Rebuy" flow once they're seated). This is deliberate: real
+  accounts persist, so their balance is something the owner actually
+  controls, not a self-serve grant.
+- **Self-serve practice tables.** A signed-in human can create their own
+  table (**"+ Create table"** in the lobby — hidden for guests, who'd have
+  nothing to do with one) and, on that ONE table only, seat themselves and
+  add computer players, all without the owner's involvement. They still
+  can never invite another real human to any table — that stays
+  owner-only everywhere, including their own table.
+- **Profile page** (`/profile`, linked from the lobby): balance, net
+  result from actually playing hands (separate from an owner-granted
+  buy-in — this is winnings minus losses, not the raw balance), a recent
+  transaction history, and a delete-account option (behind a
+  type-to-confirm prompt — permanent, and the owner/admin account is
+  exempt from it).
+- **Admin dashboard** (`/admin`, owner-only): search every account on the
+  deployment, view a player's balance and history, rename them, adjust
+  their chips (a ledgered delta + reason, same double-entry accounting as
+  every other chip movement), or delete their account outright.
 
 ## Computer players
 
@@ -316,10 +349,13 @@ DNS setup, by encoding the IP in the hostname itself (e.g.
 
 ## Sign in with Google
 
-Guests and email/password accounts work with zero configuration — Google
-sign-in is an optional, additional way to make an account with one click,
-not a requirement. It's entirely absent (button doesn't render, nothing
-breaks) until you configure it:
+A human player has exactly two ways in: play as a guest, or sign in with
+Google — there is no public self-registration anymore (see "Human player
+accounts" below). Email/password login still exists, but only for the
+owner/admin account, reached via a small, deliberately unadvertised
+trigger in the corner of the login page, not a visible option. Guest play
+works with zero configuration regardless; Google sign-in is entirely
+absent (button doesn't render, nothing breaks) until you configure it:
 
 1. In the [Google Cloud Console credentials page](https://console.cloud.google.com/apis/credentials),
    create an **OAuth client ID** of type **Web application**.
@@ -335,9 +371,8 @@ breaks) until you configure it:
    client ships as a static bundle).
 
 A guest can also link Google to their existing guest account later
-("Create account" in the lobby offers it alongside email/password),
-converting the same account in place — same id, same chips, same hand
-history, exactly like the email/password upgrade path.
+("Create account" in the lobby), converting the same account in place —
+same id, same chips, same hand history.
 
 > This project's sandbox has no real Google Cloud project to test the
 > actual "click the button, sign in with a real Google account" flow
@@ -401,14 +436,9 @@ comments and/or DECISIONS.md, but the shortlist is:
   for camera/mic access off `localhost` — see "Voice & video chat" above.
 - **Google account linking only works from a guest.** A brand-new Google
   sign-in creates a fresh account, and a *guest* can link Google to
-  upgrade in place. An already-registered email/password account has no
-  UI path to additionally link Google — signing in with Google using that
-  same email is refused (`EMAIL_TAKEN`) rather than silently creating a
-  second account or silently merging into the existing one (either of
-  which would be worse: a surprise duplicate account, or an unverified
-  merge based on email match alone). Fixing this the right way is a
-  "linked accounts" settings page, which was out of scope for the time
-  available.
+  upgrade in place — there's no other account type a regular player could
+  even have anymore (see "Human player accounts" below), so this covers
+  every real case today.
 - **Computer players are simple, table-stakes-scale bots**, not a strong
   or adaptive AI — they're the same fixed heuristic policies the
   simulation harness uses for fuzz testing (see "Computer players"

@@ -144,3 +144,23 @@ export function playSoftLossTone(): void {
   if (!c) return;
   playTone(c.currentTime, 0.3, 220, 0.05, 'sine');
 }
+
+/** A bright flick-and-chime — for a player voluntarily showing a genuine made hand after winning without a call. See RevealHandButton.tsx. */
+export function playHandRevealSound(): void {
+  const c = getCtx();
+  if (!c) return;
+  const now = c.currentTime;
+  burst(c, now, 0.05, 3000, 0.12);
+  playTone(now + 0.05, 0.22, 1046.5, 0.12, 'triangle'); // C6
+  playTone(now + 0.14, 0.22, 1318.5, 0.12, 'triangle'); // E6
+}
+
+/** A comedic descending "sad trombone" — for a player voluntarily showing they were bluffing. See RevealHandButton.tsx. */
+export function playBluffRevealSound(): void {
+  const c = getCtx();
+  if (!c) return;
+  const now = c.currentTime;
+  burst(c, now, 0.05, 3000, 0.1);
+  const notes = [392, 349.23, 293.66]; // G4, F4, D4 — descending
+  notes.forEach((freq, i) => playTone(now + 0.08 + i * 0.16, 0.3, freq, 0.14, 'sawtooth'));
+}

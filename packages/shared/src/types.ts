@@ -98,6 +98,15 @@ export interface ProjectedTableState {
   actionDeadline: number | null;
   /** Epoch ms — a new hand can't start before this (the post-hand shuffle break), or null once it's over/not applicable. */
   nextHandAt: number | null;
+  /**
+   * The seat that won the just-finished hand entirely because every other
+   * player folded (never had to show anything) and hasn't yet chosen to
+   * voluntarily reveal — `null` the rest of the time, including once that
+   * seat has revealed. A seat only ever sees its OWN reveal button by
+   * comparing this to its own `viewerSeatId`; every viewer receives the
+   * same value (the seat id itself isn't sensitive, unlike hole cards).
+   */
+  revealEligibleSeatId: number | null;
   rakePot: number;
   /**
    * Everyone waiting for a seat, in queue order. Visible to all viewers

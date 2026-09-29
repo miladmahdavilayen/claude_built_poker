@@ -34,6 +34,7 @@ export function Seat({
   isViewer,
   positionLabel,
   showCards,
+  justRevealed = false,
   voice,
   showVideo = true,
   onEmptySeatClick,
@@ -49,6 +50,8 @@ export function Seat({
   positionLabel?: string | undefined;
   /** False before this table's very first hand has ever been dealt — an occupied seat shouldn't show placeholder card-backs for a hand that hasn't started. */
   showCards: boolean;
+  /** True for a brief window right after this seat voluntarily reveals its hand (see useJustRevealedSeats.ts) — plays a flip animation instead of the cards just silently appearing. */
+  justRevealed?: boolean;
   voice?: SeatVoiceStream | null | undefined;
   /** False when the table-wide camera speaker-bar has collapsed every seat's video (see Table.tsx's `speakerBarActive`) — audio keeps playing via StreamMedia's own fallback, only the video box is suppressed. */
   showVideo?: boolean;
@@ -99,8 +102,8 @@ export function Seat({
   const inVoiceCall = !!voice;
   const holeCards = showCards ? (
     <>
-      <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} />
-      <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} />
+      <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} />
+      <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} />
     </>
   ) : null;
   // The video overlay never shows a face-down card-back placeholder for

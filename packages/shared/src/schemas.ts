@@ -14,6 +14,14 @@ export const PlayerActionIntentSchema = z
   .strict();
 export type PlayerActionIntent = z.infer<typeof PlayerActionIntentSchema>;
 
+/** Voluntary post-fold-win card reveal — see LiveTable.revealHand. `handId` guards it the same way PlayerActionIntentSchema's does: it must match the hand this seat actually won, even though the hand itself has already moved to 'hand-complete' by the time this can be sent. */
+export const RevealHandSchema = z
+  .object({
+    handId: z.string().min(1),
+  })
+  .strict();
+export type RevealHandIntent = z.infer<typeof RevealHandSchema>;
+
 export const PreActionSchema = z
   .object({
     handId: z.string().min(1),

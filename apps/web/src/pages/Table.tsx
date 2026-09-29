@@ -10,6 +10,7 @@ import { ChatPanel } from '../components/ChatPanel.js';
 import { ChipStack } from '../components/ChipStack.js';
 import { DealAnimation } from '../components/DealAnimation.js';
 import { HandBreakPanel } from '../components/HandBreakPanel.js';
+import { RevealHandButton } from '../components/RevealHandButton.js';
 import { Seat } from '../components/Seat.js';
 import { SpeakerBar, type SpeakerBarTile } from '../components/SpeakerBar.js';
 import { VoicePanel } from '../components/VoicePanel.js';
@@ -17,12 +18,14 @@ import { WaitlistPanel } from '../components/WaitlistPanel.js';
 import { WinCelebration } from '../components/WinCelebration.js';
 import { BOT_PERSONAS } from '../botPersonas.js';
 import { formatChips } from '../chips.js';
+import { isBluffHand } from '../handStrength.js';
 import { computePositionLabels } from '../positionLabels.js';
 import { livePotTotal } from '../potTotal.js';
 import { seatPositions, seatSizeVars } from '../seatLayout.js';
 import { useActiveSpeakers } from '../useActiveSpeakers.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
+import { useJustRevealedSeats } from '../useJustRevealedSeats.js';
 import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
@@ -198,6 +201,10 @@ export function TablePage(): React.JSX.Element {
   // just fight the collapse and crowd the felt/cards. See .felt-video-boost.
   const videoBoostActive = isCompactScreen && humanCameraSeats.length >= 1 && humanCameraSeats.length <= 4;
 
+  // Same hook-ordering constraint as `positions`/`humanCameraSeats` above —
+  // sock.state can be null pre-connect.
+  const justRevealedSeats = useJustRevealedSeats(sock.latestEvents, sock.state?.board ?? []);
+
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
   }
@@ -225,6 +232,10 @@ export function TablePage(): React.JSX.Element {
   // cards) should show before this table's very first deal — it only
   // becomes true once a hand has actually started at least once.
   const handEverDealt = state.phase !== 'waiting';
+  // Only the seat that actually won this way, and only until it reveals or
+  // the next hand deals — see ProjectedTableState.revealEligibleSeatId.
+  const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
+  const revealLabel = mySeat && isBluffHand(mySeat.holeCards, state.board) ? 'Show Bluff' : 'Reveal Hand';
 
   const voiceStreamForSeat = (seat: (typeof state.seats)[number]): { stream: MediaStream; isLocal: boolean } | null => {
     if (voice.inCall && seat.seatId === state.viewerSeatId && voice.localStream) {
@@ -421,6 +432,7 @@ export function TablePage(): React.JSX.Element {
                   isViewer={state.viewerSeatId === seatId}
                   positionLabel={handEverDealt ? positionLabels.get(seatId) : undefined}
                   showCards={handEverDealt}
+                  justRevealed={justRevealedSeats.has(seatId)}
                   voice={voiceStreamForSeat(seat)}
                   showVideo={!speakerBarActive}
                   // Self-serve seating/bots/rebuys no longer exist — every one of these is owner-only. See DECISIONS.md.
@@ -463,6 +475,14 @@ export function TablePage(): React.JSX.Element {
           onAction={(type, amountTo) => {
             if (!state.handId) return;
             sock.submitAction(state.handId, state.actionSeq, type, amountTo);
+          }}
+        />
+      )}
+      {!state.legalActions && revealEligible && (
+        <RevealHandButton
+          label={revealLabel}
+          onReveal={() => {
+            if (state.handId) sock.revealHand(state.handId);
           }}
         />
       )}

@@ -48,6 +48,7 @@ function makeContext(revealedSeatIds: ReadonlySet<number> = new Set()): Projecti
     revealedSeatIds,
     actionDeadline: null,
     nextHandAt: null,
+    revealEligibleSeatId: null,
     now: 0,
     rakePot: 0,
     handId: 'hand-1',

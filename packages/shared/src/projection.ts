@@ -28,6 +28,8 @@ export interface ProjectionContext {
   actionDeadline: number | null;
   /** Epoch ms — a new hand can't start before this (the post-hand shuffle break). */
   nextHandAt: number | null;
+  /** See `ProjectedTableState.revealEligibleSeatId` — passed through as-is, not seat-dependent. */
+  revealEligibleSeatId: number | null;
   /** Server's own clock at projection time — compared against `nextHandAt` for `canStartHand`, not `Date.now()`, so this stays testable with a fake clock exactly like `actionDeadline` already is. */
   now: number;
   rakePot: number;
@@ -133,6 +135,7 @@ export function projectStateForSeat(
     viewerSeatId,
     actionDeadline: ctx.actionDeadline,
     nextHandAt: ctx.nextHandAt,
+    revealEligibleSeatId: ctx.revealEligibleSeatId,
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
   };

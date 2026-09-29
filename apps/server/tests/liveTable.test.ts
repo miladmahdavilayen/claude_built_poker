@@ -449,3 +449,107 @@ describe('LiveTable: fair initial button placement (high-card draw)', () => {
     expect(table.state.buttonSeat).toBe(firstButton === 0 ? 1 : 0);
   });
 });
+
+describe('LiveTable: voluntary post-fold-win reveal', () => {
+  let store: MemoryStore;
+  let table: LiveTable;
+
+  beforeEach(() => {
+    store = new MemoryStore();
+    table = new LiveTable('table-1', 'Test Table', SETTINGS, store, {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => Date.now(),
+    });
+    table.takeSeat(0, 'user-a', meta('Alice'), 100);
+    table.takeSeat(1, 'user-b', meta('Bob'), 100);
+  });
+
+  /** Heads-up: whoever is first to act folds immediately, so the hand ends right away with zero `showdown-reveal` events — the exact shape `revealEligibleSeatId` looks for. */
+  function foldOutTheHand(): { winnerSeatId: number; loserSeatId: number } {
+    table.startNextHand();
+    const loserSeatId = table.state.betting.actingSeat!;
+    const winnerSeatId = loserSeatId === 0 ? 1 : 0;
+    const result = table.applyPlayerAction(loserSeatId, { seatId: loserSeatId, type: 'fold' });
+    expect(result.ok).toBe(true);
+    expect(table.state.phase).toBe('hand-complete');
+    return { winnerSeatId, loserSeatId };
+  }
+
+  it('offers only the fold-win winner the option — the same value is broadcast to every viewer, so each client gates its own button against its own seat id', () => {
+    const { winnerSeatId, loserSeatId } = foldOutTheHand();
+    expect(table.revealEligibleSeatId).toBe(winnerSeatId);
+    expect(table.projectionFor(winnerSeatId).revealEligibleSeatId).toBe(winnerSeatId);
+    expect(table.projectionFor(loserSeatId).revealEligibleSeatId).toBe(winnerSeatId);
+  });
+
+  it('is never offered after a genuine showdown — both hands are already shown, nothing left to voluntarily reveal', () => {
+    table.startNextHand();
+    let guard = 0;
+    while (table.state.phase === 'in-hand' && guard < 50) {
+      guard += 1;
+      const seatId = table.state.betting.actingSeat!;
+      const toCall = table.state.betting.currentBet - (table.state.seats[seatId]?.committedThisStreet ?? 0);
+      const result = table.applyPlayerAction(seatId, toCall > 0 ? { seatId, type: 'call' } : { seatId, type: 'check' });
+      expect(result.ok).toBe(true);
+    }
+    expect(table.state.phase).toBe('hand-complete');
+    expect(table.revealEligibleSeatId).toBeNull();
+  });
+
+  it("revealHand() broadcasts the winner's real hole cards to every viewer and extends whatever's left of the break by a further 5 real seconds", () => {
+    const { winnerSeatId, loserSeatId } = foldOutTheHand();
+    const handId = table.handId!;
+    const winnerHoleCards = table.state.seats[winnerSeatId]!.holeCards;
+
+    const remainingBefore = table.nextHandAt! - Date.now();
+    expect(remainingBefore).toBeGreaterThan(0);
+
+    const result = table.revealHand(winnerSeatId, handId);
+    expect(result).toEqual({ ok: true });
+
+    // Extends whatever was actually left, by a further 5s — never just
+    // resets to a flat 5s regardless of how much break time remained.
+    const remainingAfter = table.nextHandAt! - Date.now();
+    expect(remainingAfter).toBeGreaterThan(remainingBefore + 4900);
+    expect(remainingAfter).toBeLessThan(remainingBefore + 5300);
+
+    // Every viewer — not just the winner — now legitimately sees the real cards.
+    expect(table.projectionFor(winnerSeatId).seats[winnerSeatId]?.holeCards).toEqual(winnerHoleCards);
+    expect(table.projectionFor(loserSeatId).seats[winnerSeatId]?.holeCards).toEqual(winnerHoleCards);
+
+    // One-shot: no longer eligible once revealed.
+    expect(table.revealEligibleSeatId).toBeNull();
+  });
+
+  it('rejects a reveal from the seat that folded — it never won anything to reveal', () => {
+    const { loserSeatId } = foldOutTheHand();
+    const result = table.revealHand(loserSeatId, table.handId!);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('NOT_ELIGIBLE');
+  });
+
+  it('rejects a stale handId once the next hand has already started', () => {
+    foldOutTheHand();
+    const staleHandId = table.handId!;
+    try {
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(6000);
+      table.startNextHand();
+    } finally {
+      vi.useRealTimers();
+    }
+    const result = table.revealHand(0, staleHandId);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('STALE_HAND');
+  });
+
+  it('rejects a second reveal attempt from the same seat — one-shot, not spammable', () => {
+    const { winnerSeatId } = foldOutTheHand();
+    const handId = table.handId!;
+    expect(table.revealHand(winnerSeatId, handId).ok).toBe(true);
+    const second = table.revealHand(winnerSeatId, handId);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.code).toBe('NOT_ELIGIBLE');
+  });
+});

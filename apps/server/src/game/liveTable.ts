@@ -107,6 +107,9 @@ const DEFAULT_TIME_BANK_REFILL_MS = 15000;
 // Overridable so e2e tests don't genuinely burn 5s per hand (see
 // RATE_LIMIT_MAX in index.ts for the same env-override-for-tests pattern).
 const HAND_BREAK_MS = Number(process.env.HAND_BREAK_MS ?? 5000);
+// Extra riffle time tacked onto the current break whenever a player
+// voluntarily reveals their hand after winning uncalled — see revealHand().
+const REVEAL_HAND_BREAK_EXTENSION_MS = 5000;
 
 export class LiveTable {
   readonly tableId: string;
@@ -115,6 +118,17 @@ export class LiveTable {
   state: TableState;
   seats: LiveSeat[];
   private revealedSeatIds = new Set<number>();
+  /**
+   * The seat that just won a hand purely because everyone else folded (no
+   * `showdown-reveal` happened at all this hand — see computeFoldWinSeatId)
+   * — `null` for any hand that reached a real showdown or an all-in
+   * runout. Reset at the start of every hand; only meaningful once the
+   * hand is actually `hand-complete`. Drives `revealEligibleSeatId`, which
+   * additionally excludes this seat once it's used its one voluntary
+   * reveal (tracked the same way a real showdown reveal is, in
+   * `revealedSeatIds`).
+   */
+  private foldWinSeatId: number | null = null;
   private actionLog: PendingActionLogEntry[] = [];
   private currentHandId: string | null = null;
   private currentHandInitialState: TableState | null = null;
@@ -482,6 +496,7 @@ export class LiveTable {
     this.handStartedAt = new Date();
     this.lastActionAt = this.callbacks.now();
     this.nextHandAt = null;
+    this.foldWinSeatId = null;
     this.clearNextHandTimer();
 
     for (const seat of this.seats) {
@@ -519,6 +534,25 @@ export class LiveTable {
       }
       if (e.type === 'showdown-reveal') this.revealedSeatIds.add(e.seatId);
     }
+  }
+
+  /**
+   * `null` unless this hand ended with zero `showdown-reveal` events (no
+   * real showdown, no early all-in runout reveal) AND every `pot-awarded`
+   * event named the exact same single winner — i.e. everyone else folded
+   * and the survivor never had to show anything. Checked against
+   * `this.revealedSeatIds` AFTER `recordEngineEvents` has already folded
+   * this hand's own events into it, so a genuine showdown's reveals are
+   * always accounted for first.
+   */
+  private computeFoldWinSeatId(events: readonly GameEvent[]): number | null {
+    if (this.revealedSeatIds.size > 0) return null;
+    const winnerSeatIds = new Set<number>();
+    for (const e of events) {
+      if (e.type === 'pot-awarded') for (const w of e.winners) winnerSeatIds.add(w.seatId);
+    }
+    if (winnerSeatIds.size !== 1) return null;
+    return [...winnerSeatIds][0]!;
   }
 
   private armClock(): void {
@@ -657,6 +691,7 @@ export class LiveTable {
     this.recordEngineEvents(result.events);
 
     if (this.state.phase === 'hand-complete') {
+      this.foldWinSeatId = this.computeFoldWinSeatId(result.events);
       this.clearClock();
       this.clearBotMove();
       this.actionDeadline = null;
@@ -803,6 +838,50 @@ export class LiveTable {
     return this.currentHandId;
   }
 
+  /** See `ProjectedTableState.revealEligibleSeatId`'s doc comment. */
+  get revealEligibleSeatId(): number | null {
+    if (this.state.phase !== 'hand-complete' || this.foldWinSeatId === null) return null;
+    return this.revealedSeatIds.has(this.foldWinSeatId) ? null : this.foldWinSeatId;
+  }
+
+  /**
+   * A human voluntarily shows their hand after winning a pot nobody else
+   * contested to the end — either "showing the bluff" or just showing a
+   * real hand for fun. Only the seat that actually won that way, only
+   * once, and only before the next hand deals (`handId` still identifies
+   * the just-finished hand until then — see the `currentHandId` doc
+   * comment in `settleHand`). Reuses the same `showdown-reveal` event a
+   * genuine showdown broadcasts, so every client's existing "make this
+   * seat's hole cards visible" logic (projection.ts's `revealedSeatIds`
+   * gate) picks it up with no special-casing.
+   */
+  revealHand(seatId: number, handId: string): { ok: true } | { ok: false; code: string; message: string } {
+    if (this.currentHandId === null || handId !== this.currentHandId) {
+      return { ok: false, code: 'STALE_HAND', message: 'This action refers to a hand that is not currently in progress.' };
+    }
+    if (this.revealEligibleSeatId !== seatId) {
+      return { ok: false, code: 'NOT_ELIGIBLE', message: 'You are not eligible to reveal your hand right now.' };
+    }
+    const engineSeat = this.state.seats[seatId];
+    if (!engineSeat) return { ok: false, code: 'SEAT_EMPTY', message: 'That seat is empty.' };
+
+    this.revealedSeatIds.add(seatId);
+    const event: GameEvent = { type: 'showdown-reveal', seatId, holeCards: [...engineSeat.holeCards] };
+
+    // Extend whatever's actually left on the current break, never shorten
+    // it (a reveal arriving right as the break was about to elapse still
+    // gets the dealer a full extra 5s, not "5s minus whatever's left").
+    const now = this.callbacks.now();
+    const remainingMs = this.nextHandAt !== null ? Math.max(0, this.nextHandAt - now) : 0;
+    const extendedMs = remainingMs + REVEAL_HAND_BREAK_EXTENSION_MS;
+    this.nextHandAt = now + extendedMs;
+    this.clearNextHandTimer();
+    this.nextHandTimer = setTimeout(() => this.broadcastAll([]), extendedMs);
+
+    this.broadcastAll([event]);
+    return { ok: true };
+  }
+
   /** `viewerIsAdmin` reveals every seat's `ownerNickname` — see projectStateForSeat's own doc comment. Only ever passed `true` for the owner's own dedicated broadcast (adminRoom in socketServer.ts). */
   projectionFor(viewerSeatId: number | null, viewerIsAdmin = false): ProjectedTableState {
     return projectStateForSeat(
@@ -818,6 +897,7 @@ export class LiveTable {
         revealedSeatIds: this.revealedSeatIds,
         actionDeadline: this.actionDeadline,
         nextHandAt: this.nextHandAt,
+        revealEligibleSeatId: this.revealEligibleSeatId,
         now: this.callbacks.now(),
         rakePot: 0,
       },

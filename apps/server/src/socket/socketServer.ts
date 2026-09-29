@@ -10,6 +10,7 @@ import {
   projectEvent,
   RedeemAssignmentSchema,
   RemoveBotSchema,
+  RevealHandSchema,
   RtcSignalSchema,
   TakeSeatSchema,
 } from '@pokerclause/shared';
@@ -597,6 +598,20 @@ export function attachSocketServer(
       if (seatId === null) return emitError('NOT_SEATED', 'You are not seated at this table.');
 
       const result = table.submitAction(seatId, parsed.data);
+      if (!result.ok) socket.emit('error', { code: result.code, message: result.message });
+      // The successful path's broadcast already happened via LiveTable's onBroadcast -> registry callback above.
+    });
+
+    socket.on('reveal-hand', (raw: unknown): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Not authenticated.');
+      const parsed = RevealHandSchema.safeParse(raw);
+      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed reveal-hand payload.');
+
+      const seatId = table.seatOfUser(data.userId);
+      if (seatId === null) return emitError('NOT_SEATED', 'You are not seated at this table.');
+
+      const result = table.revealHand(seatId, parsed.data.handId);
       if (!result.ok) socket.emit('error', { code: result.code, message: result.message });
       // The successful path's broadcast already happened via LiveTable's onBroadcast -> registry callback above.
     });

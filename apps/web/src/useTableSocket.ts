@@ -42,6 +42,8 @@ export interface TableSocketApi {
   addBot: (seatId: number, persona: string, buyIn: number) => void;
   removeBot: (seatId: number) => void;
   submitAction: (handId: string, actionSeq: number, type: 'fold' | 'check' | 'call' | 'bet' | 'raise', amountTo?: number) => void;
+  /** Voluntary post-fold-win card reveal — see `ProjectedTableState.revealEligibleSeatId`. */
+  revealHand: (handId: string) => void;
   sendChat: (message: string) => void;
   /** Owner-only (admin role) — terminates this table for everyone. */
   terminateTable: () => Promise<void>;
@@ -123,6 +125,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       removeBot: (seatId) => socket?.emit('remove-bot', { seatId }),
       submitAction: (handId, actionSeq, type, amountTo) =>
         socket?.emit('action', amountTo === undefined ? { handId, actionSeq, type } : { handId, actionSeq, type, amountTo }),
+      revealHand: (handId) => socket?.emit('reveal-hand', { handId }),
       sendChat: (message) => socket?.emit('chat', { message }),
       terminateTable: () => new Promise<void>((resolve) => (socket ? socket.emit('terminate-table', () => resolve()) : resolve())),
       resetTable: () => new Promise<void>((resolve) => (socket ? socket.emit('reset-table', () => resolve()) : resolve())),

@@ -1659,3 +1659,114 @@ durable to delete — just leave the table) and refuses the admin role
 than losing a regular player's, and there's no "second admin" to fall
 back to); the admin dashboard's own delete route carries the identical
 admin-role guard for the same reason, whoever's account it targets.
+
+## Guests are never persisted at all: `HybridStore`, anonymization over omission, and cleaning up what was already in the database
+
+The previous round made a guest's *session* ephemeral (data disappears
+once they leave a table), but their user row, chip-ledger entries, hand
+seats, and chat messages still went through the same `DrizzleStore` as a
+real account while they existed — meaning a guest's name, chip amounts,
+and hand history genuinely sat in Postgres for as long as their table
+did. The ask this round was stricter: a guest should never reach the
+database, full stop, not even transiently.
+
+**`HybridStore` as a decorator, not a rewrite of either store.** Rather
+than teaching `DrizzleStore` to special-case guests (which would leak
+guest-awareness into the one class that's supposed to just be "Postgres,
+faithfully"), `HybridStore` wraps whichever backend `index.ts` picked
+(`DrizzleStore` or the no-`DATABASE_URL` fallback `MemoryStore`) and
+holds a second, private `MemoryStore` purely for guests. Every `Store`
+method routes to one side or the other; for methods where the target
+could be either (`adjustUserChips`, `deleteUser`, session lookups), it
+checks `isGuestId` by probing the guest store first — cheap, since
+that's an in-memory map lookup, not a query. This is the same shape
+`MemoryStore` vs. `DrizzleStore` already have (both implement `Store`
+identically so game logic doesn't care which backend is active) —
+`HybridStore` is just a third implementation that happens to delegate
+instead of storing directly.
+
+**Anonymize a guest's ledger/hand rows, don't omit them.** A guest can
+play a hand alongside a real account, and `recordLedgerEntries` requires
+every group to sum to zero — omitting the guest's half of a pot-transfer
+group entirely would leave the real player's half unbalanced and fail
+`ledgerConservationCheck`. Instead, `anonymizeGuestUserId` rewrites any
+guest `userId` to `null` before the entries/seats reach the real store —
+indistinguishable from the pre-existing `onDelete: 'set null'` shape a
+deleted account's old rows already have. The real co-player's side of
+the same group, and the group's zero-sum invariant, are both preserved
+exactly; nothing about the guest's identity is ever written down.
+`ledgerBalanceForUser` for a guest reads their live in-memory chip count
+instead (there's no ledger trail to sum), and
+`ledgerEntriesForUser`/`ledgerPlayNetForUser` return empty/zero for a
+guest id — there is genuinely nothing attributable to them to return.
+
+**Chat needed the same anonymize-on-write, but with a
+read-your-own-write wrinkle.** `recordChatMessage` persists a guest's
+message with `userId: null` immediately (not lazily on their eventual
+departure), but the caller (the socket handler broadcasting the message
+right now) still needs the guest's current display name to show in the
+live broadcast — a later page load or history re-fetch of that same
+message will correctly show it anonymized, same as any real deleted
+user's old messages already do. So the persisted row and the returned
+value intentionally diverge for one call: what's written down has no
+guest identity in it; what's handed back to the caller is enriched with
+the guest's live name for that one immediate render.
+
+**Guest → Google promotion had to become "create fresh in the real
+store," not "convert in place."** The old single-store design could just
+`UPDATE users SET is_guest = false, google_id = ...` on the same row,
+since the guest row already lived in Postgres. Now the guest's only
+representation is an in-memory record that was never durable, so
+`linkGoogleToGuest` reads that record, calls a new
+`Store.createGoogleAccountFromGuest` on the real backend with the
+guest's *current* id/chips/displayName/seeds explicitly carried over
+(so the account the client already has a token for keeps working without
+re-authenticating), then deletes the now-redundant guest record. The
+account is genuinely being persisted for the first time at that moment —
+its chip balance carries over, but any hands played before linking were
+already anonymized on write, so there's no guest-era hand history to
+bring along either (documented in the README's Google sign-in section,
+which previously overclaimed "same hand history").
+
+**Cleaning up what was already there.** Everything above stops new guest
+data from reaching Postgres, but doesn't touch rows already written under
+the previous design. `migrations/0002_remove_guest_accounts.sql` is a
+single `DELETE FROM users WHERE is_guest = true` — deliberately not a
+bigger script, because every foreign key from another table into
+`users` (`chip_ledger.user_id`, `hand_seats.user_id`,
+`chat_messages.user_id`) was already `onDelete: 'set null'` and
+`sessions.user_id` was already `onDelete: 'cascade'`, so the database
+itself does the anonymization/cleanup of every dependent row as soon as
+the guest row is deleted — identical in shape to what a real account's
+own delete-account flow already produces. This runs automatically the
+next time the deploy pipeline's `pnpm db:migrate` step runs, with no
+manual production access needed.
+
+**Swipe-left and multi-select delete, and why they needed a real e2e
+account-creation backdoor.** Both are plain client-side UI on top of the
+existing single-delete and a new `POST /admin/users/bulk-delete` route
+(same per-id "skip if admin role" guard as the single-delete route,
+returning `{ deleted, skipped }` so the UI can report partial success
+honestly rather than assuming all-or-nothing). The swipe gesture is
+pointer events, not a drag library: `onPointerDown` records a start
+position and captures the pointer, `onPointerMove` clamps the row's
+`translateX` between 0 and `-SWIPE_REVEAL_PX`, and `onPointerUp`
+disambiguates a tap (total movement under `TAP_MAX_MOVEMENT_PX` — open
+the detail view, or close an already-open row) from a real swipe (snap
+open/closed based on whether it crossed `SWIPE_OPEN_THRESHOLD_PX`). The
+harder problem was testing either feature at all: with guests now
+excluded from the admin dashboard by construction, the existing
+`humanAccounts.spec.ts` admin-dashboard test (which had used a guest as
+its target account) broke, and there was no account left that this
+sandbox could put in front of a swipe/bulk-delete test — it still can't
+drive a real Google OAuth consent screen. Fixed the same way this
+codebase already gates other test-only behavior (`RATE_LIMIT_MAX`,
+`SEED_DEFAULT_TABLES`, `HAND_BREAK_MS`): a new `POST
+/test-only/seed-account` route in `testSeed.ts` that only registers when
+`ALLOW_TEST_SEEDING=true`, which is set only in `playwright.config.ts`'s
+server env and never in a real deployment — so the route doesn't exist
+at all outside the e2e suite. It creates a real (non-guest) account via
+the same `loginOrRegisterWithGoogle` path a real Google sign-in uses,
+just with a synthetic Google id, giving the e2e suite a genuine,
+admin-dashboard-visible account to swipe/select/delete without ever
+touching real OAuth.

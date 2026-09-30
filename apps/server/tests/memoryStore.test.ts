@@ -11,15 +11,24 @@ describe('MemoryStore', () => {
     expect(a.clientSeed).not.toBe(b.clientSeed);
   });
 
-  it('upgrades a guest to a full account, preserving id and chips', async () => {
+  it('createGoogleAccountFromGuest inserts a real account at a caller-specified id, carrying over the guest’s current chips/seeds', async () => {
     const store = new MemoryStore();
     const guest = await store.createGuestUser('Carol');
     await store.adjustUserChips(guest.id, 500);
-    const upgraded = await store.upgradeGuestToAccount(guest.id, 'carol@example.com', 'hashed');
-    expect(upgraded.id).toBe(guest.id);
-    expect(upgraded.isGuest).toBe(false);
-    expect(upgraded.chips).toBe(500);
-    expect(await store.findUserByEmail('carol@example.com')).toMatchObject({ id: guest.id });
+    const promoted = await store.createGoogleAccountFromGuest({
+      id: guest.id,
+      googleId: 'g-carol',
+      email: 'carol@gmail.com',
+      displayName: guest.displayName,
+      chips: 500,
+      avatarSeed: guest.avatarSeed,
+      clientSeed: guest.clientSeed,
+    });
+    expect(promoted.id).toBe(guest.id);
+    expect(promoted.isGuest).toBe(false);
+    expect(promoted.chips).toBe(500);
+    expect(promoted.avatarSeed).toBe(guest.avatarSeed);
+    expect(await store.findUserByGoogleId('g-carol')).toMatchObject({ id: guest.id });
   });
 
   it('rejects a duplicate email', async () => {

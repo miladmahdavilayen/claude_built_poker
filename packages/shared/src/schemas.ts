@@ -182,3 +182,11 @@ export const AdminUpdateUserSchema = z
   })
   .strict();
 export type AdminUpdateUserInput = z.infer<typeof AdminUpdateUserSchema>;
+
+/** Admin dashboard's multi-select delete — the admin's own account is silently skipped rather than erroring the whole batch, same as the single-delete route's own CANNOT_DELETE_ADMIN guard. */
+export const AdminBulkDeleteUsersSchema = z
+  .object({
+    userIds: z.array(z.string().min(1)).min(1).max(200),
+  })
+  .strict();
+export type AdminBulkDeleteUsersInput = z.infer<typeof AdminBulkDeleteUsersSchema>;

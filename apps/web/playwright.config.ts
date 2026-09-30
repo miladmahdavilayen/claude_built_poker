@@ -51,6 +51,13 @@ export default defineConfig({
         // non-zero so the gate itself (button hidden, then reappearing)
         // is still genuinely exercised, not bypassed.
         HAND_BREAK_MS: '1200',
+        // Registers POST /test-only/seed-account (testSeed.ts) — the only
+        // way this sandbox can get a second real, persisted, admin-
+        // dashboard-visible account onto the page, since there's no way to
+        // drive an actual Google OAuth click-through in an automated
+        // test. Never set in a real deployment, so that route doesn't
+        // exist there at all. See DECISIONS.md.
+        ALLOW_TEST_SEEDING: 'true',
       },
       url: `http://localhost:${String(API_PORT)}/health`,
       reuseExistingServer: false,

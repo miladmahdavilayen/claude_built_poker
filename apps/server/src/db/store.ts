@@ -128,9 +128,27 @@ export interface Store {
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByGoogleId(googleId: string): Promise<UserRecord | null>;
   createGoogleAccount(googleId: string, email: string | null, displayName: string): Promise<UserRecord>;
-  /** Links a Google identity onto an EXISTING guest account, converting it in place (same pattern as `upgradeGuestToAccount`). */
+  /** Links a Google identity onto an EXISTING guest account, converting it in place. */
   linkGoogleToGuest(userId: string, googleId: string, email: string | null): Promise<UserRecord>;
-  upgradeGuestToAccount(userId: string, email: string, passwordHash: string): Promise<UserRecord>;
+  /**
+   * Used only by HybridStore (hybridStore.ts) to migrate a guest's identity
+   * INTO the real, persisted store on upgrade — inserts a new row with a
+   * caller-specified `id` (the guest's existing, in-memory-only one)
+   * instead of generating a fresh one, and carries over their current
+   * chips/avatarSeed/clientSeed, so a guest who upgrades mid-session keeps
+   * the exact same id (their live table seat doesn't need to know
+   * anything changed) even though their data is only now actually being
+   * persisted for the first time. See DECISIONS.md.
+   */
+  createGoogleAccountFromGuest(input: {
+    id: string;
+    googleId: string;
+    email: string | null;
+    displayName: string;
+    chips: number;
+    avatarSeed: string;
+    clientSeed: string;
+  }): Promise<UserRecord>;
   adjustUserChips(userId: string, delta: number): Promise<UserRecord>;
   setUserRole(userId: string, role: 'player' | 'admin'): Promise<void>;
   updateDisplayName(userId: string, displayName: string): Promise<UserRecord>;

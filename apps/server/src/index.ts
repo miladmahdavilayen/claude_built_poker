@@ -7,6 +7,7 @@ import { register } from './auth/authService.js';
 import { hashPassword } from './auth/passwords.js';
 import { closeDb, getDb } from './db/client.js';
 import { DrizzleStore } from './db/drizzleStore.js';
+import { HybridStore } from './db/hybridStore.js';
 import { MemoryStore } from './db/memoryStore.js';
 import type { Store } from './db/store.js';
 import { registerAdminRoutes } from './http/routes/admin.js';
@@ -14,6 +15,7 @@ import { registerAuthRoutes } from './http/routes/auth.js';
 import { registerFairnessRoutes } from './http/routes/fairness.js';
 import { registerHealthRoute } from './http/routes/health.js';
 import { registerTableRoutes } from './http/routes/tables.js';
+import { registerTestSeedRoutes } from './http/routes/testSeed.js';
 import { registerUserRoutes } from './http/routes/users.js';
 import type { TableSettings } from '@pokerclause/shared';
 import type { TableRegistry } from './game/tableRegistry.js';
@@ -137,14 +139,19 @@ async function main(): Promise<void> {
     done();
   });
 
-  let store: Store;
+  let persistentStore: Store;
   if (process.env.DATABASE_URL) {
-    store = new DrizzleStore(getDb());
+    persistentStore = new DrizzleStore(getDb());
     app.log.info('Using DrizzleStore (Postgres).');
   } else {
-    store = new MemoryStore();
+    persistentStore = new MemoryStore();
     app.log.warn('DATABASE_URL not set — using in-memory storage. Data will NOT persist across restarts. Set DATABASE_URL for production use.');
   }
+  // Wraps whichever backend above with the guest boundary: a guest's user
+  // row, session, and any ledger/hand/chat rows they're party to never
+  // reach it — only a signed-in (Google) account is ever persisted. See
+  // HybridStore's own doc comment and DECISIONS.md.
+  const store: Store = new HybridStore(persistentStore);
 
   const adminUserId = await ensureAdminAccount(store, app.log);
 
@@ -152,6 +159,7 @@ async function main(): Promise<void> {
   registerAuthRoutes(app, store);
   registerFairnessRoutes(app, store);
   registerUserRoutes(app, store);
+  registerTestSeedRoutes(app, store);
 
   const { io, registry } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerTableRoutes(app, store, registry);

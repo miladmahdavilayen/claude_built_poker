@@ -23,6 +23,21 @@ export async function adminLogin(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/lobby/);
 }
 
+/**
+ * Creates a real, persisted (non-guest) account directly on the server —
+ * the only way this suite can get a second real, admin-dashboard-visible
+ * account onto the page, since there's no way to drive an actual Google
+ * OAuth click-through in an automated test (see DECISIONS.md). Only
+ * works because playwright.config.ts sets `ALLOW_TEST_SEEDING=true` for
+ * this suite's own server process — the route this hits doesn't exist at
+ * all in a real deployment. Returns the new account's id.
+ */
+export async function seedRealAccount(page: Page, displayName: string): Promise<string> {
+  const res = await page.request.post('http://localhost:4210/test-only/seed-account', { data: { displayName } });
+  const body = (await res.json()) as { id: string; displayName: string };
+  return body.id;
+}
+
 export interface CreateTableOptions {
   name: string;
   smallBlind: number;

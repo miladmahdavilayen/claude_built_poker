@@ -160,5 +160,27 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect(deletedAdmin.json<{ code: string }>().code).toBe('CANNOT_DELETE_ADMIN');
       expect(await store.findUserById(admin.id)).not.toBeNull();
     });
+
+    it('POST /admin/users/bulk-delete removes every selected regular user, silently skipping the admin id if it’s included', async () => {
+      const admin = await store.createAccount('admin5@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const adminToken = issueAccessToken({ ...admin, role: 'admin' });
+      const userA = await store.createGoogleAccount('g-a', 'a2@gmail.com', 'A');
+      const userB = await store.createGoogleAccount('g-b', 'b2@gmail.com', 'B');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/admin/users/bulk-delete',
+        headers: auth(adminToken),
+        payload: { userIds: [userA.id, userB.id, admin.id] },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json<{ deleted: string[]; skipped: string[] }>();
+      expect(body.deleted.sort()).toEqual([userA.id, userB.id].sort());
+      expect(body.skipped).toEqual([admin.id]);
+      expect(await store.findUserById(userA.id)).toBeNull();
+      expect(await store.findUserById(userB.id)).toBeNull();
+      expect(await store.findUserById(admin.id)).not.toBeNull();
+    });
   });
 });

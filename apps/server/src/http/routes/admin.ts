@@ -1,4 +1,4 @@
-import { AdminAdjustChipsSchema, AdminUpdateUserSchema } from '@pokerclause/shared';
+import { AdminAdjustChipsSchema, AdminBulkDeleteUsersSchema, AdminUpdateUserSchema } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
 import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
@@ -75,6 +75,24 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
     if (user.role === 'admin') return reply.code(400).send({ code: 'CANNOT_DELETE_ADMIN', message: 'The admin account cannot be deleted.' });
     await store.deleteUser(userId);
     return { ok: true };
+  });
+
+  /** Multi-select delete from the dashboard — the admin's own account (or any id that turns out not to exist) is silently skipped rather than failing the whole batch, so selecting-all-and-deleting never has to special-case the one row that can't go. */
+  app.post('/admin/users/bulk-delete', { preHandler: requireAdmin }, async (req, reply) => {
+    const body = AdminBulkDeleteUsersSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid payload.' });
+    const deleted: string[] = [];
+    const skipped: string[] = [];
+    for (const userId of body.data.userIds) {
+      const user = await store.findUserById(userId);
+      if (!user || user.role === 'admin') {
+        skipped.push(userId);
+        continue;
+      }
+      await store.deleteUser(userId);
+      deleted.push(userId);
+    }
+    return { ok: true, deleted, skipped };
   });
 
   app.post('/admin/chips', { preHandler: requireAdmin }, async (req, reply) => {

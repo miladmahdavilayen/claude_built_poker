@@ -192,6 +192,11 @@ export function adminDeleteUser(userId: string, accessToken: string): Promise<{ 
   return deleteJson(`/admin/users/${encodeURIComponent(userId)}`, accessToken);
 }
 
+/** The admin's own account (or any id that no longer exists) is silently skipped server-side rather than failing the whole batch — see `skipped` in the response. */
+export function adminBulkDeleteUsers(userIds: string[], accessToken: string): Promise<{ ok: true; deleted: string[]; skipped: string[] }> {
+  return postJson('/admin/users/bulk-delete', { userIds }, accessToken);
+}
+
 export function adminAdjustChips(userId: string, amount: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string }> {
   return postJson('/admin/chips', { userId, amount, reason }, accessToken);
 }

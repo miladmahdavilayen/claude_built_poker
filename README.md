@@ -209,10 +209,13 @@ bots left in it, or nobody at all, has no reason to keep running.
 
 ## Human player accounts
 
-A guest's data (chips, seat, everything) disappears the moment they leave
-a table, or the table resets/terminates — unchanged from before. A
+A guest is never written to the database at all, not even briefly — their
+account, chips, seat, and chat all live only in the server process's
+memory for as long as they're connected, and vanish the moment they
+leave a table, the table resets/terminates, or the server restarts. A
 signed-in (Google) human is different: their account, balance, and hand
-history persist across sessions and devices.
+history are the only human data that's ever persisted, and they carry
+over across sessions and devices.
 
 - **Starting balance is $0.** Unlike a guest's automatic $5,000, a fresh
   Google sign-in starts with nothing — only the owner/admin can grant a
@@ -233,9 +236,13 @@ history persist across sessions and devices.
   type-to-confirm prompt — permanent, and the owner/admin account is
   exempt from it).
 - **Admin dashboard** (`/admin`, owner-only): search every account on the
-  deployment, view a player's balance and history, rename them, adjust
-  their chips (a ledgered delta + reason, same double-entry accounting as
-  every other chip movement), or delete their account outright.
+  deployment (guests never show up here — they're never persisted), view
+  a player's balance and history, rename them, adjust their chips (a
+  ledgered delta + reason, same double-entry accounting as every other
+  chip movement), or delete their account outright. A row can be swiped
+  left (or dragged, with a mouse) to reveal a per-row delete action, and
+  a "Select all" checkbox plus per-row checkboxes let the owner delete
+  several accounts in one bulk action.
 
 ## Computer players
 
@@ -371,8 +378,11 @@ absent (button doesn't render, nothing breaks) until you configure it:
    client ships as a static bundle).
 
 A guest can also link Google to their existing guest account later
-("Create account" in the lobby), converting the same account in place —
-same id, same chips, same hand history.
+("Create account" in the lobby), which is the moment their account is
+actually persisted for the first time — same id, same current chip
+balance carry over, but any hands they played as a guest were never
+written to the database at all (see "Human player accounts" above), so
+there's no guest-era history to bring along.
 
 > This project's sandbox has no real Google Cloud project to test the
 > actual "click the button, sign in with a real Google account" flow

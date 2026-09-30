@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../api.js';
 import type { AdminUserDetailDto, AdminUserDto, LedgerEntryDto } from '../api.js';
@@ -15,10 +15,12 @@ const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
 
 /**
  * Admin-only: look up and manage every human account on this deployment —
- * see and edit their balance, rename them, or delete their account
- * outright. The list/detail/chip-adjust/patch/delete endpoints this reads
- * from (apps/server/src/http/routes/admin.ts) already existed or were
- * added alongside this page; this is the first UI to actually use them.
+ * see and edit their balance, rename them, or delete their account, one
+ * at a time (swipe a row left to reveal a delete action) or several at
+ * once (select multiple, or "select all", then bulk-delete). Every
+ * account listed here is a real, signed-in (Google) human — a guest is
+ * never persisted at all anymore (see HybridStore), so there's nothing
+ * of theirs for this page to ever show or manage in the first place.
  */
 export function AdminDashboardPage(): React.JSX.Element {
   const { accessToken } = useAuth();
@@ -26,6 +28,8 @@ export function AdminDashboardPage(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = (): void => {
     if (!accessToken) return;
@@ -42,6 +46,49 @@ export function AdminDashboardPage(): React.JSX.Element {
     if (!q) return true;
     return u.displayName.toLowerCase().includes(q) || (u.email?.toLowerCase().includes(q) ?? false);
   });
+  // The admin's own row never gets a checkbox (it can't be deleted — see
+  // the server's own CANNOT_DELETE_ADMIN guard, mirrored here so "select
+  // all" never includes an id that would just get silently skipped).
+  const selectableIds = filtered.filter((u) => u.role !== 'admin').map((u) => u.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => checkedIds.has(id));
+
+  const toggleChecked = (id: string): void => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = (): void => {
+    setCheckedIds(allSelected ? new Set() : new Set(selectableIds));
+  };
+
+  const handleRowDeleted = (id: string): void => {
+    if (selectedId === id) setSelectedId(null);
+    setCheckedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    refresh();
+  };
+
+  const bulkDelete = (): void => {
+    if (!accessToken || checkedIds.size === 0) return;
+    setBulkBusy(true);
+    setError(null);
+    api
+      .adminBulkDeleteUsers([...checkedIds], accessToken)
+      .then(() => {
+        if (selectedId && checkedIds.has(selectedId)) setSelectedId(null);
+        setCheckedIds(new Set());
+        refresh();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to delete the selected accounts.'))
+      .finally(() => setBulkBusy(false));
+  };
 
   return (
     <div className="lobby-page">
@@ -61,27 +108,146 @@ export function AdminDashboardPage(): React.JSX.Element {
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      <div className="admin-list-toolbar">
+        <label className="admin-select-all">
+          <input type="checkbox" checked={allSelected} disabled={selectableIds.length === 0} onChange={toggleSelectAll} />
+          Select all
+        </label>
+        {checkedIds.size > 0 && (
+          <button type="button" className="btn-owner-action btn-owner-danger" disabled={bulkBusy} onClick={bulkDelete}>
+            {bulkBusy ? 'Deleting…' : `Delete ${String(checkedIds.size)} selected`}
+          </button>
+        )}
+      </div>
+
       <div className="admin-layout">
         <div className="admin-user-list">
           {filtered.map((u) => (
-            <button
-              type="button"
+            <AdminUserRow
               key={u.id}
-              className={`admin-user-row ${selectedId === u.id ? 'admin-user-row-active' : ''}`}
-              onClick={() => setSelectedId(u.id)}
-            >
-              <span className="admin-user-row-name">
-                {u.displayName}
-                {u.role === 'admin' && <span className="seat-tag seat-tag-allin">admin</span>}
-                {u.isGuest && <span className="seat-tag">guest</span>}
-              </span>
-              <span className="admin-user-row-chips">{formatChips(u.chips)}</span>
-            </button>
+              user={u}
+              isActive={selectedId === u.id}
+              isChecked={checkedIds.has(u.id)}
+              onOpen={() => setSelectedId(u.id)}
+              onToggleChecked={() => toggleChecked(u.id)}
+              onDeleted={() => handleRowDeleted(u.id)}
+            />
           ))}
           {filtered.length === 0 && <p className="profile-hint">No users match.</p>}
         </div>
 
         {selectedId && <AdminUserDetail userId={selectedId} onClose={() => setSelectedId(null)} onChanged={refresh} />}
+      </div>
+    </div>
+  );
+}
+
+const SWIPE_REVEAL_PX = 84;
+const SWIPE_OPEN_THRESHOLD_PX = 40;
+const TAP_MAX_MOVEMENT_PX = 8;
+
+/**
+ * One row: a leading checkbox (untouched by the swipe gesture below it),
+ * and a swipeable content area — dragging it left reveals a red "Delete"
+ * action underneath, the same convention as a native mobile mail app's
+ * swipe-to-delete. Tapping the revealed action deletes immediately (the
+ * swipe itself is already the deliberate, hard-to-do-by-accident
+ * confirmation — the same convention those apps rely on), and admin's
+ * own row never becomes swipeable at all (it can't be deleted regardless).
+ */
+function AdminUserRow({
+  user,
+  isActive,
+  isChecked,
+  onOpen,
+  onToggleChecked,
+  onDeleted,
+}: {
+  user: AdminUserDto;
+  isActive: boolean;
+  isChecked: boolean;
+  onOpen: () => void;
+  onToggleChecked: () => void;
+  onDeleted: () => void;
+}): React.JSX.Element {
+  const { accessToken } = useAuth();
+  const [open, setOpen] = useState(false); // fully swiped open, Delete action revealed
+  const [dragOffset, setDragOffset] = useState<number | null>(null); // non-null only while an active drag is in progress
+  const [deleting, setDeleting] = useState(false);
+  const dragStartRef = useRef<{ x: number; base: number } | null>(null);
+
+  const canDelete = user.role !== 'admin';
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!canDelete) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStartRef.current = { x: e.clientX, base: open ? -SWIPE_REVEAL_PX : 0 };
+    setDragOffset(open ? -SWIPE_REVEAL_PX : 0);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!dragStartRef.current) return;
+    const delta = e.clientX - dragStartRef.current.x;
+    setDragOffset(Math.min(0, Math.max(dragStartRef.current.base + delta, -SWIPE_REVEAL_PX)));
+  };
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!dragStartRef.current) return;
+    const totalDelta = e.clientX - dragStartRef.current.x;
+    const wasOpen = open;
+    dragStartRef.current = null;
+    const finalOffset = dragOffset ?? 0;
+    setDragOffset(null);
+
+    if (Math.abs(totalDelta) < TAP_MAX_MOVEMENT_PX) {
+      // A plain tap, not a drag: closes an already-open row, or opens the detail view.
+      if (wasOpen) setOpen(false);
+      else onOpen();
+      return;
+    }
+    setOpen(finalOffset <= -SWIPE_OPEN_THRESHOLD_PX);
+  };
+
+  const handleDelete = (): void => {
+    if (!accessToken || deleting) return;
+    setDeleting(true);
+    api
+      .adminDeleteUser(user.id, accessToken)
+      .then(() => onDeleted())
+      .catch(() => setDeleting(false));
+  };
+
+  const offset = dragOffset ?? (open ? -SWIPE_REVEAL_PX : 0);
+
+  return (
+    <div className="admin-user-row-wrap">
+      {canDelete && (
+        <button type="button" className="admin-user-row-delete-action" onClick={handleDelete} disabled={deleting} aria-label={`Delete ${user.displayName}`}>
+          {deleting ? '…' : 'Delete'}
+        </button>
+      )}
+      <div
+        className={`admin-user-row ${isActive ? 'admin-user-row-active' : ''} ${dragOffset !== null ? 'admin-user-row-dragging' : ''}`}
+        style={{ transform: `translateX(${String(offset)}px)` }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {canDelete ? (
+          <input
+            type="checkbox"
+            className="admin-user-row-checkbox"
+            checked={isChecked}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={onToggleChecked}
+          />
+        ) : (
+          <span className="admin-user-row-checkbox" />
+        )}
+        <span className="admin-user-row-name">
+          {user.displayName}
+          {user.role === 'admin' && <span className="seat-tag seat-tag-allin">admin</span>}
+        </span>
+        <span className="admin-user-row-chips">{formatChips(user.chips)}</span>
       </div>
     </div>
   );

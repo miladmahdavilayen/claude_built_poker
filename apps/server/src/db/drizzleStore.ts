@@ -104,20 +104,35 @@ export class DrizzleStore implements Store {
     return toUserRecord(row!);
   }
 
+  async createGoogleAccountFromGuest(input: {
+    id: string;
+    googleId: string;
+    email: string | null;
+    displayName: string;
+    chips: number;
+    avatarSeed: string;
+    clientSeed: string;
+  }): Promise<UserRecord> {
+    const [row] = await this.db
+      .insert(schema.users)
+      .values({
+        id: input.id,
+        email: input.email,
+        googleId: input.googleId,
+        displayName: input.displayName,
+        isGuest: false,
+        avatarSeed: input.avatarSeed,
+        clientSeed: input.clientSeed,
+        chips: input.chips,
+      })
+      .returning();
+    return toUserRecord(row!);
+  }
+
   async linkGoogleToGuest(userId: string, googleId: string, email: string | null): Promise<UserRecord> {
     const [row] = await this.db
       .update(schema.users)
       .set(email ? { googleId, email, isGuest: false } : { googleId, isGuest: false })
-      .where(eq(schema.users.id, userId))
-      .returning();
-    if (!row) throw new Error('USER_NOT_FOUND');
-    return toUserRecord(row);
-  }
-
-  async upgradeGuestToAccount(userId: string, email: string, passwordHash: string): Promise<UserRecord> {
-    const [row] = await this.db
-      .update(schema.users)
-      .set({ email, passwordHash, isGuest: false })
       .where(eq(schema.users.id, userId))
       .returning();
     if (!row) throw new Error('USER_NOT_FOUND');

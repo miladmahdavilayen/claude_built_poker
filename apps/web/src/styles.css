@@ -478,27 +478,78 @@ input[type='range']::-moz-range-thumb {
     grid-template-columns: 1fr;
   }
 }
+.admin-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.admin-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
 .admin-user-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   max-height: 70vh;
   overflow-y: auto;
+  /* So a swiped-open row's revealed Delete action (positioned behind it,
+     see .admin-user-row-wrap) never gets clipped by this scroll container
+     — .admin-user-row-wrap itself has no overflow rule for exactly that
+     reason. */
+  overflow-x: visible;
+}
+/* Positions the revealed Delete action BEHIND the row, so dragging the
+   row's own top layer left uncovers it — the standard swipe-to-delete
+   list-item shape. */
+.admin-user-row-wrap {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.admin-user-row-delete-action {
+  position: absolute;
+  inset: 0;
+  left: auto;
+  width: 84px;
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 .admin-user-row {
+  position: relative;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   padding: 10px 12px;
   text-align: left;
   width: 100%;
+  cursor: pointer;
+  user-select: none;
+  /* Lets a vertical scroll of the list still work with a finger while a
+     horizontal drag on this same row drives the swipe gesture. */
+  touch-action: pan-y;
+  transition: transform 0.2s ease;
+}
+.admin-user-row-dragging {
+  transition: none; /* live-tracks the pointer during an active drag — a transition here would visibly lag behind a real finger */
 }
 .admin-user-row-active {
   border-color: var(--accent);
+}
+.admin-user-row-checkbox {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
 }
 .admin-user-row-name {
   display: flex;
@@ -507,6 +558,8 @@ input[type='range']::-moz-range-thumb {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .admin-user-row-chips {
   flex: 0 0 auto;

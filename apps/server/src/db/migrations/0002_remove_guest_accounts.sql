@@ -1,0 +1,13 @@
+-- One-time data cleanup: guest accounts are no longer persisted at all
+-- (see HybridStore in src/db/hybridStore.ts) — a guest's user row, session,
+-- and any ledger/hand/chat rows they were party to now only ever live in
+-- an in-process, in-memory store for the duration of their visit. This
+-- removes every guest row that was persisted before that change existed.
+--
+-- Every other table's foreign key to `users` from a guest's past activity
+-- (chip_ledger.user_id, hand_seats.user_id, chat_messages.user_id) is
+-- already `ON DELETE SET NULL` (sessions is `ON DELETE CASCADE`), so this
+-- single statement is enough: those rows survive with user_id set to
+-- NULL, identically to how a deleted real account's history already
+-- looks — no manual UPDATE needed for any of them.
+DELETE FROM "users" WHERE "is_guest" = true;

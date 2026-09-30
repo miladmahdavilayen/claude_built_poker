@@ -102,6 +102,36 @@ export class MemoryStore implements Store {
     return Promise.resolve(user);
   }
 
+  async createGoogleAccountFromGuest(input: {
+    id: string;
+    googleId: string;
+    email: string | null;
+    displayName: string;
+    chips: number;
+    avatarSeed: string;
+    clientSeed: string;
+  }): Promise<UserRecord> {
+    if (this.usersByGoogleId.has(input.googleId)) throw new Error('GOOGLE_ACCOUNT_ALREADY_LINKED');
+    if (input.email && this.usersByEmail.has(input.email)) throw new Error('EMAIL_TAKEN');
+    const user: UserRecord = {
+      id: input.id,
+      email: input.email,
+      passwordHash: null,
+      googleId: input.googleId,
+      displayName: input.displayName,
+      isGuest: false,
+      role: 'player',
+      avatarSeed: input.avatarSeed,
+      clientSeed: input.clientSeed,
+      chips: input.chips,
+      createdAt: new Date(),
+    };
+    this.users.set(user.id, user);
+    this.usersByGoogleId.set(input.googleId, user.id);
+    if (input.email) this.usersByEmail.set(input.email, user.id);
+    return Promise.resolve(user);
+  }
+
   async linkGoogleToGuest(userId: string, googleId: string, email: string | null): Promise<UserRecord> {
     const user = this.users.get(userId);
     if (!user) throw new Error('USER_NOT_FOUND');
@@ -111,16 +141,6 @@ export class MemoryStore implements Store {
     this.users.set(userId, updated);
     this.usersByGoogleId.set(googleId, userId);
     if (email) this.usersByEmail.set(email, userId);
-    return Promise.resolve(updated);
-  }
-
-  async upgradeGuestToAccount(userId: string, email: string, passwordHash: string): Promise<UserRecord> {
-    const user = this.users.get(userId);
-    if (!user) throw new Error('USER_NOT_FOUND');
-    if (this.usersByEmail.has(email)) throw new Error('EMAIL_TAKEN');
-    const updated: UserRecord = { ...user, email, passwordHash, isGuest: false };
-    this.users.set(userId, updated);
-    this.usersByEmail.set(email, userId);
     return Promise.resolve(updated);
   }
 

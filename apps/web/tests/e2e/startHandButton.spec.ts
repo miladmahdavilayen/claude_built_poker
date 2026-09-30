@@ -27,6 +27,14 @@ test('no hand deals automatically — seating players only enables "Play Hand", 
   await expect(page.locator('[data-testid="seat-0"] .seat-cards')).toHaveCount(0);
 
   await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  // Explicitly "The Nit" — this test's whole second half depends on BOTH
+  // stacks surviving a single check/call-only hand so hand #2 can start;
+  // leaving the persona at whatever the dropdown defaults to is fragile
+  // (it's "Allan Keating" as of this session, an aggressive bot that can
+  // genuinely bust a 200-chip stack in one hand at these blinds, which
+  // would make canStartHand() correctly — and permanently — false
+  // afterward, not a bug in the app). See DECISIONS.md.
+  await page.getByLabel('Persona').selectOption('nit');
   await page.getByLabel(/Buy-in/).fill('200');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
 

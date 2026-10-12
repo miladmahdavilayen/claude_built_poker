@@ -123,12 +123,15 @@ export function listTables(): Promise<{ tables: TableSummaryDto[] }> {
   return fetch(`${API_BASE}/tables`).then((res) => parseOrThrow<{ tables: TableSummaryDto[] }>(res));
 }
 
+/** Amounts are integer cents — see packages/shared/src/money.ts. */
 export interface CreateTableInput {
   name: string;
   smallBlind: number;
   bigBlind: number;
   maxSeats: number;
   isPrivate: boolean;
+  minBuyIn?: number;
+  maxBuyIn?: number;
 }
 
 export function createTable(

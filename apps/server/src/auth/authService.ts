@@ -11,7 +11,7 @@ export interface AuthResult {
 }
 
 /** Play money only — this has no cash value. A generous default so new players can sit at most tables immediately. */
-export const STARTING_CHIP_GRANT = 5000;
+export const STARTING_CHIP_GRANT = 500_000; // $5,000 — every amount is integer cents (see packages/shared/src/money.ts)
 
 async function buildAuthResult(store: Store, user: UserRecord): Promise<AuthResult> {
   const accessToken = issueAccessToken(user);

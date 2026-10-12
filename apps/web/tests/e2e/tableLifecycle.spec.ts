@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, takeSeat } from './helpers.js';
 
 test('leaving a table navigates back to the lobby and genuinely frees the seat for someone else', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -76,9 +76,11 @@ test('the owner can terminate a table with confirmation, closing it for a seated
   await guestSignup(pageAlice, 'Alice');
   await inviteToSeat(pageOwner, pageAlice, 0, 100);
 
-  // A non-owner never even sees the control.
+  // A non-owner never even sees the control — nor the owner menu it lives in.
+  await expect(pageAlice.getByRole('button', { name: 'Table menu' })).toHaveCount(0);
   await expect(pageAlice.getByRole('button', { name: 'Terminate table' })).toHaveCount(0);
 
+  await openOwnerMenu(pageOwner);
   await pageOwner.getByRole('button', { name: 'Terminate table' }).click();
   await expect(pageOwner.getByText('Terminate this table?')).toBeVisible();
   await pageOwner.getByRole('button', { name: 'Yes, terminate' }).click();
@@ -159,6 +161,7 @@ test('the owner can reset a table, freeing every seat while keeping the table it
   await guestSignup(pageAlice, 'Alice');
   await inviteToSeat(pageOwner, pageAlice, 0, 100);
 
+  await openOwnerMenu(pageOwner);
   await pageOwner.getByRole('button', { name: 'Reset table' }).click();
   await expect(pageOwner.getByText('Reset this table?')).toBeVisible();
   await pageOwner.getByRole('button', { name: 'Yes, reset' }).click();

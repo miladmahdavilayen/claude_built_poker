@@ -208,6 +208,10 @@ export class HybridStore implements Store {
     return this.real.closeTable(id);
   }
 
+  updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {
+    return this.real.updateTable(id, patch);
+  }
+
   // --- Hands: anonymize any guest seat the same way ledger entries are ---
 
   async recordHand(input: RecordHandInput): Promise<void> {

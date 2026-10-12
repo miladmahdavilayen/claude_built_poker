@@ -31,11 +31,14 @@ test('a seat with video on overlays its name/cards/stack on the full-size video;
 
   // Seat 0 (video on): the seat itself is the video frame (no separate,
   // smaller, redundant video-only border) — its name renders in the top
-  // overlay, its cards/stack/rebuy in the bottom one, both nested inside
+  // overlay, its stack/rebuy in the bottom one, both nested inside
   // .seat-video (i.e. on top of the video), not in a standalone .seat-info.
+  // The viewer's OWN cards sit just above the box instead, so they don't
+  // cover the viewer's own face.
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat')).toHaveClass(/\bseat-has-video\b/);
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .seat-video-overlay-top .seat-name')).toBeVisible();
-  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .seat-video-overlay-bottom .card')).toHaveCount(2);
+  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-cards-above-video .card')).toHaveCount(2);
+  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .card')).toHaveCount(0);
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .seat-video-overlay-bottom .seat-stack')).toBeVisible();
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat-info')).toHaveCount(0);
 
@@ -78,11 +81,12 @@ test("an opponent's video shows no card-back placeholders during the hand, only 
   await startHand(pageOwner);
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat-cards')).toBeVisible({ timeout: 10_000 });
 
-  // Mid-hand, from the owner's own point of view: their own video shows
-  // their real 2 cards, but Priya's (seat 1) video shows none at all — not
-  // even face-down backs — since her hand isn't revealed to the owner yet.
-  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .card')).toHaveCount(2);
-  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .card:not(.card-back)')).toHaveCount(2);
+  // Mid-hand, from the owner's own point of view: their real 2 cards show
+  // just above their own video (not over it), but Priya's (seat 1) video
+  // shows none at all — not even face-down backs — since her hand isn't
+  // revealed to the owner yet.
+  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-cards-above-video .card:not(.card-back)')).toHaveCount(2);
+  await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video .card')).toHaveCount(0);
   await expect(pageOwner.locator('[data-testid="seat-1"] .seat-video .card')).toHaveCount(0);
   // Her stack/name still show on her video — only the card slot is skipped.
   await expect(pageOwner.locator('[data-testid="seat-1"] .seat-video .seat-stack')).toBeVisible();

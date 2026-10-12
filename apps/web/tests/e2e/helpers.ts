@@ -150,3 +150,9 @@ export async function playHandToCompletion(pages: Page[], maxRounds = 300): Prom
   }
   throw new Error('Hand did not reach completion within the round budget.');
 }
+
+/** Opens the owner's table-controls drawer (the header's ☰ Menu button) — reset/terminate, settings, seats and chips all live there. */
+export async function openOwnerMenu(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Table menu' }).click();
+  await expect(page.getByRole('dialog', { name: 'Table controls' })).toBeVisible();
+}

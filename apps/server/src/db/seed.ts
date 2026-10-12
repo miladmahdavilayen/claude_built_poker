@@ -19,7 +19,7 @@ import { getDb, closeDb } from './client.js';
 import { DrizzleStore } from './drizzleStore.js';
 import { hashPassword } from '../auth/passwords.js';
 
-const ADMIN_STARTING_CHIP_GRANT = 5000; // mirrors authService.ts's STARTING_CHIP_GRANT for guests/admin — see ensureAdminAccount.
+const ADMIN_STARTING_CHIP_GRANT = 500_000; // $5,000 in cents // mirrors authService.ts's STARTING_CHIP_GRANT for guests/admin — see ensureAdminAccount.
 
 async function ensureAdminAccount(store: DrizzleStore, email: string, password: string, displayName: string): Promise<void> {
   const existing = await store.findUserByEmail(email);

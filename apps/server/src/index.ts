@@ -29,14 +29,15 @@ import type { FastifyBaseLogger } from 'fastify';
  * fresh on every boot, so a new self-host isn't a blank lobby.
  */
 async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger): Promise<void> {
+  // All amounts in cents (see packages/shared/src/money.ts): $1/$2 blinds, $40–$200 buy-in.
   const microStakes: TableSettings = {
-    smallBlind: 1,
-    bigBlind: 2,
+    smallBlind: 100,
+    bigBlind: 200,
     ante: 0,
     maxSeats: 6,
     straddleEnabled: false,
-    minBuyIn: 40,
-    maxBuyIn: 200,
+    minBuyIn: 4_000,
+    maxBuyIn: 20_000,
     actionSeconds: 25,
     timeBankSeconds: 60,
     runItTwiceEnabled: false,
@@ -48,10 +49,10 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
   };
   const highStakes: TableSettings = {
     ...microStakes,
-    smallBlind: 5,
-    bigBlind: 10,
-    minBuyIn: 200,
-    maxBuyIn: 1000,
+    smallBlind: 500,
+    bigBlind: 1_000,
+    minBuyIn: 20_000,
+    maxBuyIn: 100_000,
     maxSeats: 9,
   };
   await registry.createTable('Micro Stakes 1/2', microStakes, null, null);

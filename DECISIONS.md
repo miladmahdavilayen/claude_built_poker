@@ -1770,3 +1770,73 @@ the same `loginOrRegisterWithGoogle` path a real Google sign-in uses,
 just with a synthetic Google id, giving the e2e suite a genuine,
 admin-dashboard-visible account to swipe/select/delete without ever
 touching real OAuth.
+
+## Owner table controls mid-hand, cents everywhere, and voided hands
+
+**Every amount is integer cents.** Sub-dollar stakes ($0.10/$0.20) need
+fractions of a dollar, and floating-point dollars would make pot,
+side-pot and odd-chip math inexact. So the unit changed everywhere at once
+(engine, server, database, wire) from whole dollars to whole cents; only
+the UI converts, through `formatMoney`/`dollarsToCents` in
+`packages/shared/src/money.ts`. The web app imports those through the
+`@pokerclause/shared/money` subpath, never the package root: the root
+re-exports the engine's hand evaluator, which needs Node (`__dirname`) and
+crashed the whole page in a browser on the first attempt. Existing data is
+converted once by migration `0003_amounts_to_cents.sql` (balances, ledger,
+hand history, table configs, and every hand's saved `initial_state` JSON so
+old hands still replay). It was verified against a real Postgres holding
+dollar-era data, including a second `db:migrate` run to confirm it applies
+exactly once. The bet slider and −/+ nudge step by the table's small
+blind, so a $1/$2 table still moves in $1 steps; the slider's two ends are
+exactly min and all-in, never the nearest step.
+
+**What the owner can change mid-hand, and when it applies.** The rule is
+that a hand in progress is never altered underneath itself:
+- Engine config (blinds, ante, straddle) is read on every street (see
+  `streets.ts`), so mid-hand changes queue in `pendingConfig`, show to
+  everyone as `pendingSettings`, and apply when the hand ends. Everything
+  else (name, buy-in range, timers, privacy, chat rule) applies at once.
+- Anyone seated mid-hand (owner, invite link, bot) gets engine status
+  `sitting-out`, not `active`: the engine treats every `active` seat as
+  live in the betting round (`betting.ts`). Before this change, redeeming
+  an invite link mid-hand did exactly that. They switch to `active` when
+  the hand ends.
+- A rebuy for a player still in the hand is debited immediately but held
+  as `pendingChips`, credited when the hand ends: stacks feed all-in and
+  side-pot math. A folded player's stack takes no further part, so theirs
+  is credited at once. `cashOutAmount` always includes pending chips.
+- Removing a player or deleting their seat while they're in the hand
+  (folded included, since their chips are in the pot) marks
+  `pendingRemoval`. They're folded automatically when their turn comes
+  (all-in players play out), then vacated and refunded through
+  `onSeatsVacated` when the hand ends.
+- `settleHand` snapshots everything it needs before its first `await`, and
+  `applyHandEndChanges` runs right after. So pending chips and removals can
+  never leak into that hand's results or `pot_win` ledger rows (covered by
+  a conservation test).
+
+**Deleted seats are hidden, not renumbered.** Seat ids are referenced by
+everything in a hand (button, acting seat, pot eligibility) and by socket
+rooms, so deleting a seat adds it to `removedSeatIds` and the client lays
+out only the visible ones (`seatPositionsFor`). "Add seat" restores the
+lowest deleted slot, or appends a new one up to 9 (the engine's `maxSeats`
+change waits for the hand to end, because the odd-chip rule reads it).
+
+**Reset/terminate mid-hand voids the hand.** Both used to refund only the
+current stack, so every chip already bet that hand was destroyed.
+`voidedHandRefund` returns stack + `committedThisHand` + the ante (paid by
+`lastBigBlindSeat`) + pending chips.
+
+**Permissions.** Settings, adding/deleting empty or bot seats, and removing
+bots need `canManageTable`. Anything that moves a real person's chips
+(adding chips, removing a human, inviting, reset/terminate) stays
+admin-only. `remove-bot` previously had no permission check at all: any
+seated player could remove the owner's bots.
+
+**Layout changes must not replay animations.** `DealAnimation` and
+`WinCelebration` re-ran their effects whenever `positions`/`viewerSeatId`
+changed, replaying the last batch's deal or win banners when the owner
+added or deleted a seat. Each now processes an events batch exactly once.
+The e2e regression check is deliberately non-retrying: a retrying
+assertion passed even without the fix, because it simply waited out the
+replay.

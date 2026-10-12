@@ -31,14 +31,18 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
     const body = CreateTableSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid table config.' });
     const input = body.data;
+    if (input.smallBlind > input.bigBlind) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'The small blind cannot be bigger than the big blind.' });
+    if ((input.minBuyIn ?? input.minBuyInBB * input.bigBlind) > (input.maxBuyIn ?? input.maxBuyInBB * input.bigBlind)) {
+      return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'The minimum buy-in cannot be above the maximum.' });
+    }
     const settings: TableSettings = {
       smallBlind: input.smallBlind,
       bigBlind: input.bigBlind,
       ante: input.ante,
       maxSeats: input.maxSeats,
       straddleEnabled: input.straddleEnabled,
-      minBuyIn: input.minBuyInBB * input.bigBlind,
-      maxBuyIn: input.maxBuyInBB * input.bigBlind,
+      minBuyIn: input.minBuyIn ?? input.minBuyInBB * input.bigBlind,
+      maxBuyIn: input.maxBuyIn ?? input.maxBuyInBB * input.bigBlind,
       actionSeconds: input.actionSeconds,
       timeBankSeconds: input.timeBankSeconds,
       runItTwiceEnabled: input.runItTwiceEnabled,

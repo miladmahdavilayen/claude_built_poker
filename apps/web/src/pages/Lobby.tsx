@@ -4,6 +4,7 @@ import * as api from '../api.js';
 import type { TableSummaryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
+import { MoneyInput } from '../components/MoneyInput.js';
 import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
 export function LobbyPage(): React.JSX.Element {
@@ -125,8 +126,16 @@ export function LobbyPage(): React.JSX.Element {
 
 function CreateTableModal({ onClose, accessToken }: { onClose: () => void; accessToken: string }): React.JSX.Element {
   const [name, setName] = useState('New Table');
-  const [smallBlind, setSmallBlind] = useState(1);
-  const [bigBlind, setBigBlind] = useState(2);
+  // Cents, like every amount (see packages/shared/src/money.ts) — the inputs show dollars.
+  const [smallBlind, setSmallBlind] = useState<number | ''>(100);
+  const [bigBlind, setBigBlind] = useState<number | ''>(200);
+  // null = "follow the big blind" (the usual 40–100 big blinds) until the
+  // creator types their own.
+  const [minBuyInOverride, setMinBuyInOverride] = useState<number | '' | null>(null);
+  const [maxBuyInOverride, setMaxBuyInOverride] = useState<number | '' | null>(null);
+  const bb = bigBlind === '' ? 0 : bigBlind;
+  const minBuyIn = minBuyInOverride ?? bb * 40;
+  const maxBuyIn = maxBuyInOverride ?? bb * 100;
   const [maxSeats, setMaxSeats] = useState(6);
   const [isPrivate, setIsPrivate] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,8 +143,16 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
   const navigate = useNavigate();
 
   const submit = (): void => {
+    if (smallBlind === '' || bigBlind === '' || smallBlind <= 0 || bigBlind <= 0) {
+      setError('Enter both blinds — as low as $0.01.');
+      return;
+    }
+    if (minBuyIn === '' || maxBuyIn === '' || minBuyIn <= 0 || maxBuyIn <= 0) {
+      setError('Enter a minimum and maximum buy-in.');
+      return;
+    }
     api
-      .createTable({ name, smallBlind, bigBlind, maxSeats, isPrivate }, accessToken)
+      .createTable({ name, smallBlind, bigBlind, maxSeats, isPrivate, minBuyIn, maxBuyIn }, accessToken)
       .then((res) => setCreated({ tableId: res.tableId, inviteCode: res.inviteCode }))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to create table.'));
   };
@@ -173,14 +190,26 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
           Name
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </label>
-        <label>
-          Small blind
-          <input type="number" min={1} value={smallBlind} onChange={(e) => setSmallBlind(Number(e.target.value))} />
-        </label>
-        <label>
-          Big blind
-          <input type="number" min={1} value={bigBlind} onChange={(e) => setBigBlind(Number(e.target.value))} />
-        </label>
+        <div className="form-row">
+          <label>
+            Small blind ($)
+            <MoneyInput minCents={1} cents={smallBlind} onChange={setSmallBlind} />
+          </label>
+          <label>
+            Big blind ($)
+            <MoneyInput minCents={1} cents={bigBlind} onChange={setBigBlind} />
+          </label>
+        </div>
+        <div className="form-row">
+          <label>
+            Min buy-in ($)
+            <MoneyInput minCents={1} cents={minBuyIn} onChange={setMinBuyInOverride} />
+          </label>
+          <label>
+            Max buy-in ($)
+            <MoneyInput minCents={1} cents={maxBuyIn} onChange={setMaxBuyInOverride} />
+          </label>
+        </div>
         <label>
           Max seats
           <input type="number" min={2} max={9} value={maxSeats} onChange={(e) => setMaxSeats(Number(e.target.value))} />

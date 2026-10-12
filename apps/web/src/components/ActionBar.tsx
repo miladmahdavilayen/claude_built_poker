@@ -2,6 +2,7 @@ import type { LegalActions } from '@pokerclause/engine';
 import { useEffect, useState } from 'react';
 import { formatChips } from '../chips.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
+import { MoneyInput } from './MoneyInput.js';
 import { VerticalBetSlider } from './VerticalBetSlider.js';
 
 export function ActionBar({
@@ -9,11 +10,14 @@ export function ActionBar({
   onAction,
   potSize,
   bigBlind,
+  smallBlind,
 }: {
   legalActions: LegalActions;
   onAction: (type: 'fold' | 'check' | 'call' | 'bet' | 'raise', amountTo?: number) => void;
   potSize: number;
+  /** Amounts are cents, like everything — see packages/shared/src/money.ts. */
   bigBlind: number;
+  smallBlind: number;
 }): React.JSX.Element {
   const showsAmount = legalActions.canBet || legalActions.canRaise;
   const min = legalActions.canRaise ? legalActions.minRaiseTo : legalActions.minBet;
@@ -28,6 +32,9 @@ export function ActionBar({
   }, [legalActions.seatId, min, max]);
 
   const clampedMax = Math.max(max, min);
+  // The −/+ nudge moves by the table's small blind: $1 on a $1/$2 table,
+  // $0.10 on a $0.10/$0.20 one — fine-grained at any stake.
+  const nudge = Math.max(1, smallBlind);
   const clamp = (v: number): number => Math.min(Math.max(v, min), clampedMax);
   const commit = (type: 'bet' | 'raise'): void => onAction(type, clamp(amount));
   const setHalfPot = (): void => setAmount(clamp(Math.round(potSize / 2)));
@@ -69,13 +76,12 @@ export function ActionBar({
           {callButton}
         </div>
         <div className="bet-overlay-rail bet-overlay-rail--right">
-          <input
-            type="number"
+          <MoneyInput
             className="bet-overlay-input"
-            min={min}
-            max={clampedMax}
-            value={amount}
-            onChange={(e) => setAmount(Number(e.target.value))}
+            minCents={min}
+            maxCents={clampedMax}
+            cents={amount}
+            onChange={(c) => setAmount(c === '' ? min : c)}
           />
           <div className="bet-overlay-presets">
             <button type="button" onClick={setHalfPot}>
@@ -88,15 +94,16 @@ export function ActionBar({
               All-in
             </button>
           </div>
-          {/* $1 precision regardless of the table's big blind — the
-              slider's own drag curve (see VerticalBetSlider) is what keeps
-              that comfortable to hit by hand, not a coarser step. */}
-          <VerticalBetSlider min={min} max={clampedMax} step={1} value={amount} onChange={setAmount} formatValue={formatChips} />
+          {/* Small-blind precision ($1 on a $1/$2 table, $0.10 on a
+              $0.10/$0.20 one) regardless of the big blind — the slider's
+              own drag curve (see VerticalBetSlider) is what keeps that
+              comfortable to hit by hand, not a coarser step. */}
+          <VerticalBetSlider min={min} max={clampedMax} step={nudge} value={amount} onChange={setAmount} formatValue={formatChips} />
           <div className="vbs-nudge">
-            <button type="button" aria-label="Decrease amount by $1" onClick={() => setAmount(clamp(amount - 1))}>
+            <button type="button" aria-label={`Decrease amount by ${formatChips(nudge)}`} onClick={() => setAmount(clamp(amount - nudge))}>
               −
             </button>
-            <button type="button" aria-label="Increase amount by $1" onClick={() => setAmount(clamp(amount + 1))}>
+            <button type="button" aria-label={`Increase amount by ${formatChips(nudge)}`} onClick={() => setAmount(clamp(amount + nudge))}>
               +
             </button>
           </div>
@@ -121,13 +128,7 @@ export function ActionBar({
             onChange={(e) => setAmount(Number(e.target.value))}
           />
           <div className="bet-sizer-row">
-            <input
-              type="number"
-              min={min}
-              max={max}
-              value={amount}
-              onChange={(e) => setAmount(Number(e.target.value))}
-            />
+            <MoneyInput minCents={min} maxCents={max} cents={amount} onChange={(c) => setAmount(c === '' ? min : c)} />
             <button type="button" onClick={setHalfPot}>
               1/2 pot
             </button>

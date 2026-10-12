@@ -285,6 +285,12 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  async updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {
+    const t = this.tables.get(id);
+    if (t) this.tables.set(id, { ...t, ...patch });
+    return Promise.resolve();
+  }
+
   async recordHand(input: RecordHandInput): Promise<void> {
     this.hands.set(input.id, { ...input });
     return Promise.resolve();

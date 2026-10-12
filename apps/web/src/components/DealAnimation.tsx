@@ -71,8 +71,15 @@ export function DealAnimation({
   const dealBatchRef = useRef(0);
   const streetBatchRef = useRef(0);
   const chipBatchRef = useRef(0);
+  const lastEventsRef = useRef<readonly ProjectedGameEvent[] | null>(null);
 
   useEffect(() => {
+    // Animate each events batch exactly once. `positions` is a dependency
+    // only so a batch uses the current layout — when it changes on its own
+    // (the owner adding or deleting a seat), that must NOT replay the last
+    // batch's shuffle/deal/chip flights.
+    if (events === lastEventsRef.current) return;
+    lastEventsRef.current = events;
     if (events.some((e) => e.type === 'hand-started')) {
       playShuffleSound();
       setShuffling(true);

@@ -22,6 +22,13 @@
       "when": 1790810000000,
       "tag": "0002_remove_guest_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0003_amounts_to_cents",
+      "breakpoints": true
     }
   ]
 }

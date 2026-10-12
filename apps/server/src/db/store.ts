@@ -175,6 +175,8 @@ export interface Store {
   listTables(): Promise<TableRecord[]>;
   getTable(id: string): Promise<TableRecord | null>;
   closeTable(id: string): Promise<void>;
+  /** Persists an owner's mid-table changes (name, settings, privacy) — see LiveTable.updateSettings. */
+  updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void>;
 
   recordHand(input: RecordHandInput): Promise<void>;
   getHandForVerification(handId: string): Promise<HandRecordForVerification | null>;

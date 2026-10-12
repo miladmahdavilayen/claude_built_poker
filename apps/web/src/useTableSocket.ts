@@ -1,4 +1,4 @@
-import type { ProjectedGameEvent, ProjectedTableState } from '@pokerclause/shared';
+import type { ProjectedGameEvent, ProjectedTableState, UpdateTableSettingsIntent } from '@pokerclause/shared';
 import { useEffect, useMemo, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import type { ChatMessageRecord } from './types.js';
@@ -7,6 +7,8 @@ interface ServerError {
   code: string;
   message: string;
 }
+
+export type OwnerAck = { ok: true; deferred?: boolean; seatId?: number } | { ok: false; code: string; message: string };
 
 interface StatePayload {
   state: ProjectedTableState;
@@ -57,7 +59,19 @@ export interface TableSocketApi {
   assignSeat: (seatId: number, buyIn: number, nickname?: string) => Promise<{ ok: true; token: string } | { ok: false; code: string; message: string }>;
   /** Redeems an owner-generated invite link — the buy-in comes from the link itself. */
   redeemSeatAssignment: (token: string) => void;
+  /** Owner-only, any time — blinds/ante/straddle changed mid-hand come back `deferred: true` (they apply from the next hand). Amounts in cents. */
+  updateTableSettings: (patch: UpdateTableSettingsIntent) => Promise<OwnerAck>;
+  /** Owner-only — restores a deleted seat or adds a new one (up to 9). */
+  addSeat: () => Promise<OwnerAck>;
+  /** Owner-only — takes the occupant off the table (seat stays). Mid-hand: folded on their turn, gone and refunded when the hand ends. */
+  removePlayer: (seatId: number) => Promise<OwnerAck>;
+  /** Owner-only — removes the seat itself (and its occupant, same timing as removePlayer). */
+  deleteSeat: (seatId: number) => Promise<OwnerAck>;
+  /** Owner-only — the private table's invite code, or null when it's public. */
+  getInviteCode: () => Promise<string | null>;
 }
+
+const NOT_CONNECTED: OwnerAck = { ok: false, code: 'NOT_CONNECTED', message: 'Not connected.' };
 
 const MAX_RECENT_EVENTS = 60;
 
@@ -151,6 +165,15 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
           );
         }),
       redeemSeatAssignment: (token) => socket?.emit('redeem-seat-assignment', { token }),
+      updateTableSettings: (patch) =>
+        new Promise((resolve) => (socket ? socket.emit('update-table-settings', patch, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      addSeat: () => new Promise((resolve) => (socket ? socket.emit('add-seat', (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      removePlayer: (seatId) =>
+        new Promise((resolve) => (socket ? socket.emit('remove-player', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      deleteSeat: (seatId) =>
+        new Promise((resolve) => (socket ? socket.emit('delete-seat', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      getInviteCode: () =>
+        new Promise((resolve) => (socket ? socket.emit('get-invite-code', (r: { inviteCode: string | null }) => resolve(r.inviteCode)) : resolve(null))),
     }),
     [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable],
   );

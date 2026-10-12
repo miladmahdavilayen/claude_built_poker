@@ -41,7 +41,7 @@ export const TakeSeatSchema = z
   .strict();
 export type TakeSeatIntent = z.infer<typeof TakeSeatSchema>;
 
-/** Owner-only: rebuys a specific seat's occupant — see DECISIONS.md ("owner-only chip economy"). Self-serve rebuy no longer exists. */
+/** Owner-only: rebuys (adds chips to) a specific seat's occupant, any time — mid-hand for a player still in the hand, the chips land the moment that hand ends. See DECISIONS.md ("owner-only chip economy"). Self-serve rebuy no longer exists. */
 export const AdminRebuySchema = z
   .object({
     seatId: z.number().int().min(0).max(8),
@@ -131,6 +131,9 @@ export const CreateTableSchema = z
     straddleEnabled: z.boolean().default(false),
     minBuyInBB: z.number().int().positive().default(40),
     maxBuyInBB: z.number().int().positive().default(100),
+    /** Optional absolute buy-in range in cents — overrides minBuyInBB/maxBuyInBB when given. */
+    minBuyIn: z.number().int().positive().optional(),
+    maxBuyIn: z.number().int().positive().optional(),
     actionSeconds: z.number().int().min(5).max(120).default(25),
     timeBankSeconds: z.number().int().min(0).max(600).default(60),
     runItTwiceEnabled: z.boolean().default(false),
@@ -142,6 +145,38 @@ export const CreateTableSchema = z
   })
   .strict();
 export type CreateTableInput = z.infer<typeof CreateTableSchema>;
+
+/**
+ * Owner-only, any time — including mid-hand. Every field is optional; only
+ * the ones present change. Blinds/ante/straddle can't change under a hand
+ * already in progress (the engine reads them on every street), so mid-hand
+ * those queue and apply from the next deal — see LiveTable.updateSettings.
+ * All amounts are integer cents.
+ */
+export const UpdateTableSettingsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60).optional(),
+    smallBlind: z.number().int().positive().optional(),
+    bigBlind: z.number().int().positive().optional(),
+    ante: z.number().int().nonnegative().optional(),
+    straddleEnabled: z.boolean().optional(),
+    minBuyIn: z.number().int().positive().optional(),
+    maxBuyIn: z.number().int().positive().optional(),
+    actionSeconds: z.number().int().min(5).max(120).optional(),
+    timeBankSeconds: z.number().int().min(0).max(600).optional(),
+    isPrivate: z.boolean().optional(),
+    disableChatInHand: z.boolean().optional(),
+  })
+  .strict();
+export type UpdateTableSettingsIntent = z.infer<typeof UpdateTableSettingsSchema>;
+
+/** Owner-only: removes a seat's occupant (seat stays) or deletes the seat entirely — see LiveTable.removeSeatOccupant/deleteSeat. */
+export const SeatTargetSchema = z
+  .object({
+    seatId: z.number().int().min(0).max(8),
+  })
+  .strict();
+export type SeatTargetIntent = z.infer<typeof SeatTargetSchema>;
 
 export const GuestSignupSchema = z
   .object({

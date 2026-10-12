@@ -282,7 +282,8 @@ describe('LiveTable: computer players (bots)', () => {
 
   it('removeBot frees the seat and it can be taken by a real player afterward', () => {
     table.addBot(0, 'nit', 100);
-    expect(table.removeBot(0)).toEqual({ ok: true });
+    // A bot's chips aren't anyone's balance, but the vacated seat still reports its stack — the caller just has no userId to refund.
+    expect(table.removeBot(0)).toEqual({ ok: true, vacated: { seatId: 0, userId: null, refund: 100 } });
     expect(() => table.takeSeat(0, 'user-a', meta('Alice'), 100)).not.toThrow();
   });
 
@@ -335,15 +336,16 @@ describe('LiveTable: computer players (bots)', () => {
     expect((await store.ledgerBalanceForUser('user-a')) !== 0 || totalStacks === 200).toBe(true);
   });
 
-  it('blocks removing a bot mid-hand, and allows it once the hand ends', async () => {
+  it('removing a bot mid-hand folds it on its turn and frees the seat the moment the hand ends — never before', async () => {
     vi.useFakeTimers();
     table.takeSeat(0, 'user-a', meta('Alice'), 100);
     table.addBot(1, 'check-fold', 100);
     table.startNextHand();
 
-    const midHandResult = table.removeBot(1);
-    expect(midHandResult.ok).toBe(false);
-    if (!midHandResult.ok) expect(midHandResult.code).toBe('CANNOT_REMOVE_MID_HAND');
+    expect(table.removeBot(1)).toEqual({ ok: true, vacated: null });
+    // Still seated (and in the hand) until it ends.
+    expect(table.state.seats[1]?.status).not.toBe('empty');
+    expect(table.projectionFor(0).seats[1]?.leavingAfterHand).toBe(true);
 
     let guard = 0;
     while (table.state.phase === 'in-hand' && guard < 50) {
@@ -357,7 +359,9 @@ describe('LiveTable: computer players (bots)', () => {
       }
     }
 
-    expect(table.removeBot(1)).toEqual({ ok: true });
+    expect(table.state.phase).toBe('hand-complete');
+    expect(table.state.seats[1]?.status).toBe('empty');
+    expect(table.seats[1]?.botPolicyName).toBeNull();
   });
 });
 

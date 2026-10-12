@@ -23,6 +23,22 @@ export function seatPositions(seatCount: number, bottomSeatId: number): SeatPosi
 }
 
 /**
+ * Same oval layout, over an arbitrary set of seat ids — what a table with
+ * owner-deleted seats needs: seat ids stay stable (see
+ * ProjectedTableState.removedSeatIds), so the visible ones aren't always
+ * 0..n-1. Spread evenly around the oval in seat order, with
+ * `bottomSeatId` (the viewer's own seat) at the bottom when it's one of
+ * them, otherwise the lowest visible seat.
+ */
+export function seatPositionsFor(seatIds: readonly number[], bottomSeatId: number | null): SeatPosition[] {
+  const ring = [...seatIds].sort((a, b) => a - b);
+  if (ring.length === 0) return [];
+  const start = bottomSeatId !== null && ring.includes(bottomSeatId) ? ring.indexOf(bottomSeatId) : 0;
+  const byRingIndex = seatPositions(ring.length, 0);
+  return byRingIndex.map((pos, i) => ({ ...pos, seatId: ring[(start + i) % ring.length]! }));
+}
+
+/**
  * A table with fewer max seats has more room per seat to work with — a
  * heads-up (2-max) table gets noticeably larger seats, cards, avatars and
  * video tiles (`.seat-video` is sized as a percentage of `.seat`, so it

@@ -12,12 +12,14 @@ import {
   RemoveBotSchema,
   RevealHandSchema,
   RtcSignalSchema,
+  SeatTargetSchema,
   TakeSeatSchema,
+  UpdateTableSettingsSchema,
 } from '@pokerclause/shared';
 import { Server, type Socket } from 'socket.io';
 import { verifyAccessToken } from '../auth/session.js';
 import type { Store } from '../db/store.js';
-import type { LiveTable } from '../game/liveTable.js';
+import type { LiveTable, VacatedSeat } from '../game/liveTable.js';
 import { TableRegistry } from '../game/tableRegistry.js';
 import { filterProfanity } from './profanityFilter.js';
 import { RateLimiter } from './rateLimiter.js';
@@ -95,7 +97,38 @@ export function attachSocketServer(
     // for an explicit 'start-hand' from a seated player. See DECISIONS.md.
     const table = registry.get(tableId);
     if (table) broadcastAdminView(table, rawEvents);
+  }, (tableId, vacated) => {
+    // A deferred owner removal finishing at hand end (see
+    // LiveTable.removeSeatOccupant). The table's own end-of-hand broadcast
+    // follows right after this returns, so this only moves sockets and
+    // settles chips — no broadcast of its own.
+    const table = registry.get(tableId);
+    if (table) void settleVacatedSeats(table, vacated);
   });
+
+  /**
+   * Refunds each vacated human's chips (stack + any pending rebuy) to
+   * their balance with the same paired cash_out ledger rows as leaving on
+   * their own, and moves their socket to spectating so it keeps getting
+   * updates (see evictSeatToSpectator). Room moves happen synchronously,
+   * before the first await, so they're in place before any broadcast that
+   * follows. Closes the table if that removed its last human, same rule
+   * as everyone leaving.
+   */
+  async function settleVacatedSeats(table: LiveTable, vacated: readonly VacatedSeat[]): Promise<void> {
+    for (const v of vacated) evictSeatToSpectator(io, table.tableId, v.seatId);
+    for (const v of vacated) {
+      if (!v.userId || v.refund <= 0) continue;
+      await deps.store.adjustUserChips(v.userId, v.refund);
+      await deps.store.recordLedgerEntries([
+        { userId: v.userId, isHouse: false, amount: v.refund, reason: 'cash_out', tableId: table.tableId },
+        { userId: null, isHouse: true, amount: -v.refund, reason: 'cash_out', tableId: table.tableId },
+      ]);
+    }
+    if (vacated.some((v) => v.userId) && !table.seats.some((s) => s.userId !== null)) {
+      await closeTableWithNotice(table.tableId, 'All players left.');
+    }
+  }
 
   /**
    * The admin socket's ONLY 'state' event for a given update — never a
@@ -144,12 +177,11 @@ export function attachSocketServer(
     if (!table) return;
     const humanSeats = table.seats.filter((s) => s.userId !== null);
     for (const seat of humanSeats) {
-      const engineSeat = table.state.seats[seat.seatId];
-      if (!engineSeat) continue;
-      await deps.store.adjustUserChips(seat.userId!, engineSeat.stack);
+      const amount = table.voidedHandRefund(seat.seatId);
+      await deps.store.adjustUserChips(seat.userId!, amount);
       await deps.store.recordLedgerEntries([
-        { userId: seat.userId, isHouse: false, amount: engineSeat.stack, reason: 'cash_out', tableId },
-        { userId: null, isHouse: true, amount: -engineSeat.stack, reason: 'cash_out', tableId },
+        { userId: seat.userId, isHouse: false, amount, reason: 'cash_out', tableId },
+        { userId: null, isHouse: true, amount: -amount, reason: 'cash_out', tableId },
       ]);
     }
     const rooms = [spectatorRoom(tableId), ...humanSeats.map((s) => seatRoom(tableId, s.seatId))];
@@ -376,9 +408,8 @@ export function attachSocketServer(
         return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
       }
       const { buyIn, seatId } = parsed.data;
-      if (buyIn < table.settings.minBuyIn || buyIn > table.settings.maxBuyIn) {
-        return emitError('BUY_IN_OUT_OF_RANGE', `Buy-in must be between ${String(table.settings.minBuyIn)} and ${String(table.settings.maxBuyIn)}.`);
-      }
+      const range = table.checkBuyInRange(buyIn);
+      if (!range.ok) return emitError(range.code, range.message);
       const userId = data.userId;
       const { displayName } = parsed.data;
       void (displayName ? deps.store.updateDisplayName(userId, displayName) : Promise.resolve())
@@ -431,9 +462,8 @@ export function attachSocketServer(
       const parsed = AddBotSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed add-bot payload.');
       const { seatId, persona, buyIn } = parsed.data;
-      if (buyIn < table.settings.minBuyIn || buyIn > table.settings.maxBuyIn) {
-        return emitError('BUY_IN_OUT_OF_RANGE', `Buy-in must be between ${String(table.settings.minBuyIn)} and ${String(table.settings.maxBuyIn)}.`);
-      }
+      const range = table.checkBuyInRange(buyIn);
+      if (!range.ok) return emitError(range.code, range.message);
       const result = table.addBot(seatId, persona, buyIn);
       if (!result.ok) return emitError(result.code, result.message);
       broadcastTable(table);
@@ -443,12 +473,113 @@ export function attachSocketServer(
     socket.on('remove-bot', (raw: unknown): void => {
       const table = currentTable();
       if (!table || !data.userId) return;
+      if (!canManageTable(table, data)) return emitError('ADMIN_REQUIRED', 'Only the table owner can remove a computer player.');
       const parsed = RemoveBotSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed remove-bot payload.');
       const result = table.removeBot(parsed.data.seatId);
       if (!result.ok) return emitError(result.code, result.message);
       broadcastTable(table);
     });
+
+    // --- Owner table controls: everything below works mid-hand. ---
+
+    /**
+     * Who may change a given seat: removing/deleting a seat that holds a
+     * real human is part of the chip economy (it cashes them out), so it's
+     * admin-only — same line as assign-seat and admin-rebuy. A bot or an
+     * empty seat is table layout, open to anyone who can manage the table.
+     */
+    function canChangeSeat(table: LiveTable, seatId: number): boolean {
+      if (data.role === 'admin') return true;
+      return canManageTable(table, data) && !table.seats[seatId]?.userId;
+    }
+
+    function persistTable(table: LiveTable): void {
+      void deps.store.updateTable(table.tableId, {
+        name: table.name,
+        config: table.targetSettings as unknown as Record<string, unknown>,
+        inviteCode: table.inviteCode,
+      });
+    }
+
+    type Ack = (result: { ok: true; deferred?: boolean; seatId?: number } | { ok: false; code: string; message: string }) => void;
+
+    socket.on('update-table-settings', (raw: unknown, callback?: Ack): void => {
+      const table = currentTable();
+      if (!table || !canManageTable(table, data)) {
+        callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can change table settings.' });
+        return;
+      }
+      const parsed = UpdateTableSettingsSchema.safeParse(raw);
+      if (!parsed.success) {
+        callback?.({ ok: false, code: 'INVALID_PAYLOAD', message: 'Invalid table settings.' });
+        return;
+      }
+      const result = table.updateSettings(parsed.data);
+      if (!result.ok) {
+        callback?.(result);
+        return;
+      }
+      persistTable(table);
+      broadcastTable(table);
+      callback?.({ ok: true, deferred: result.deferred });
+    });
+
+    socket.on('get-invite-code', (callback?: (result: { inviteCode: string | null }) => void): void => {
+      const table = currentTable();
+      if (!table || !canManageTable(table, data)) {
+        callback?.({ inviteCode: null });
+        return;
+      }
+      callback?.({ inviteCode: table.settings.isPrivate ? table.inviteCode : null });
+    });
+
+    socket.on('add-seat', (callback?: Ack): void => {
+      const table = currentTable();
+      if (!table || !canManageTable(table, data)) {
+        callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can add a seat.' });
+        return;
+      }
+      const result = table.addSeat();
+      if (result.ok) {
+        persistTable(table);
+        broadcastTable(table);
+      }
+      callback?.(result);
+    });
+
+    for (const [event, deleteSeat] of [
+      ['remove-player', false],
+      ['delete-seat', true],
+    ] as const) {
+      socket.on(event, (raw: unknown, callback?: Ack): void => {
+        const table = currentTable();
+        const parsed = SeatTargetSchema.safeParse(raw);
+        if (!table || !parsed.success) {
+          callback?.({ ok: false, code: 'INVALID_PAYLOAD', message: 'Malformed seat payload.' });
+          return;
+        }
+        const { seatId } = parsed.data;
+        if (!canChangeSeat(table, seatId)) {
+          callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can do that.' });
+          return;
+        }
+        const result = deleteSeat ? table.deleteSeat(seatId) : table.removeSeatOccupant(seatId, false);
+        if (!result.ok) {
+          callback?.(result);
+          return;
+        }
+        if (deleteSeat) persistTable(table);
+        if (result.vacated) {
+          void settleVacatedSeats(table, [result.vacated]).then(() => {
+            if (registry.get(table.tableId)) broadcastTable(table);
+          });
+        } else {
+          broadcastTable(table);
+        }
+        callback?.({ ok: true });
+      });
+    }
 
     // Takes an optional ack callback so the client can wait for the
     // server to actually finish processing before navigating away and
@@ -581,6 +712,10 @@ export function attachSocketServer(
     // themselves; the owner rebuys a specific seat's occupant instead.
     // Still debits that PLAYER's own chip balance (identical ledger
     // mechanics to before), just triggered by the owner, not the player.
+    // Works any time, mid-hand included: a seat still in the hand gets
+    // the chips the moment that hand ends (see LiveTable.addChips). The
+    // player is debited right away either way, so a pending rebuy is
+    // always part of what they're refunded if they leave first.
     socket.on('admin-rebuy', (raw: unknown): void => {
       const table = currentTable();
       if (!table) return;
@@ -590,25 +725,33 @@ export function attachSocketServer(
       const { seatId, amount } = parsed.data;
       const engineSeat = table.state.seats[seatId];
       const liveSeat = table.seats[seatId];
-      if (!engineSeat || !liveSeat?.userId) return emitError('SEAT_EMPTY', 'That seat has no player to rebuy.');
-      const cap = table.settings.maxBuyIn - engineSeat.stack;
-      const cappedAmount = Math.min(amount, Math.max(cap, 0));
+      if (!engineSeat || !liveSeat || engineSeat.status === 'empty') return emitError('SEAT_EMPTY', 'That seat has no player to rebuy.');
+      if (liveSeat.pendingRemoval) return emitError('CANNOT_REBUY', 'That player is leaving after this hand.');
+      const cappedAmount = Math.min(amount, table.rebuyHeadroom(seatId));
       if (cappedAmount <= 0) return emitError('CANNOT_REBUY', 'That seat is already at the maximum buy-in.');
+      // A computer player's chips aren't anyone's balance — nothing to debit.
+      if (!liveSeat.userId) {
+        table.addChips(seatId, cappedAmount);
+        broadcastTable(table);
+        return;
+      }
       const targetUserId = liveSeat.userId;
       void (async () => {
         const user = await deps.store.findUserById(targetUserId);
         if (!user || user.chips < cappedAmount) return emitError('INSUFFICIENT_CHIPS', 'That player does not have enough chips for this rebuy.');
-        try {
-          table.rebuy(seatId, cappedAmount);
-        } catch (err) {
-          return emitError('CANNOT_REBUY', err instanceof Error ? err.message : 'Cannot rebuy right now.');
-        }
+        // Re-checked after the await: the player may have left meanwhile.
+        // The chips go onto the table synchronously, right here — never
+        // after the writes below, or a player leaving during them would be
+        // debited for chips that never reached their seat (and so never
+        // came back in their refund).
+        if (table.seats[seatId]?.userId !== targetUserId) return emitError('SEAT_EMPTY', 'That player is no longer seated.');
+        table.addChips(seatId, cappedAmount);
+        broadcastTable(table);
         await deps.store.adjustUserChips(user.id, -cappedAmount);
         await deps.store.recordLedgerEntries([
           { userId: user.id, isHouse: false, amount: -cappedAmount, reason: 'buy_in', tableId: table.tableId },
           { userId: null, isHouse: true, amount: cappedAmount, reason: 'buy_in', tableId: table.tableId },
         ]);
-        broadcastTable(table);
       })();
     });
 

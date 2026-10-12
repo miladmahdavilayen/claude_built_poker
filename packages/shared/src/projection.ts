@@ -1,7 +1,7 @@
 import type { GameEvent, TableState } from '@pokerclause/engine';
 import { getLegalActions } from '@pokerclause/engine';
 import type { ProjectedGameEvent } from './events.js';
-import type { ProjectedSeat, ProjectedTableState, TableSettings, WaitlistEntry } from './types.js';
+import type { PendingTableSettings, ProjectedSeat, ProjectedTableState, TableSettings, WaitlistEntry } from './types.js';
 
 export interface SeatMeta {
   playerId: string | null;
@@ -13,6 +13,9 @@ export interface SeatMeta {
   timeBankMs: number;
   isBot: boolean;
   ownerNickname: string | null;
+  pendingChips?: number;
+  leavingAfterHand?: boolean;
+  joiningNextHand?: boolean;
 }
 
 export interface ProjectionContext {
@@ -36,6 +39,8 @@ export interface ProjectionContext {
   handId: string | null;
   handCommitment: string | null;
   waitlist: readonly WaitlistEntry[];
+  removedSeatIds?: readonly number[];
+  pendingSettings?: PendingTableSettings | null;
 }
 
 const EMPTY_SEAT_META: SeatMeta = {
@@ -94,6 +99,9 @@ export function projectStateForSeat(
       timeBankMs: meta.timeBankMs,
       isBot: meta.isBot,
       ownerNickname: viewerIsAdmin ? meta.ownerNickname : null,
+      pendingChips: meta.pendingChips ?? 0,
+      leavingAfterHand: meta.leavingAfterHand ?? false,
+      joiningNextHand: meta.joiningNextHand ?? false,
     };
   });
 
@@ -138,6 +146,8 @@ export function projectStateForSeat(
     revealEligibleSeatId: ctx.revealEligibleSeatId,
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
+    removedSeatIds: ctx.removedSeatIds ?? [],
+    pendingSettings: ctx.pendingSettings ?? null,
   };
 }
 

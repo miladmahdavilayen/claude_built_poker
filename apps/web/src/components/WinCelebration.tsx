@@ -45,8 +45,14 @@ export function WinCelebration({
   const badgeBatchRef = useRef(0);
   const winBatchRef = useRef(0);
   const lossBatchRef = useRef(0);
+  const lastEventsRef = useRef<readonly ProjectedGameEvent[] | null>(null);
 
   useEffect(() => {
+    // Celebrate each events batch once — a later viewerSeatId change on its
+    // own (e.g. the owner removing this player, who becomes a spectator)
+    // must not replay the last hand's win/loss banners.
+    if (events === lastEventsRef.current) return;
+    lastEventsRef.current = events;
     for (const e of events) {
       if (e.type === 'hand-started') viewerInHandRef.current = false;
       if (e.type === 'cards-dealt' && viewerSeatId !== null && e.seats.includes(viewerSeatId)) viewerInHandRef.current = true;

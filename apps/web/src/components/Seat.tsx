@@ -134,7 +134,11 @@ export function Seat({
       )}
       {seat.isBot && <span className="seat-tag seat-tag-bot" title="Computer player">🤖 bot</span>}
       {inVoiceCall && !showSeatVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
-      {seat.status === 'sitting-out' && <span className="seat-tag">sitting out</span>}
+      {seat.status === 'sitting-out' && !seat.joiningNextHand && <span className="seat-tag">sitting out</span>}
+      {/* Owner changes made mid-hand that land when it ends — see LiveTable.applyHandEndChanges. */}
+      {seat.joiningNextHand && <span className="seat-tag seat-tag-pending">next hand</span>}
+      {seat.leavingAfterHand && <span className="seat-tag seat-tag-leaving">leaving</span>}
+      {seat.pendingChips > 0 && <span className="seat-tag seat-tag-pending">+{formatChips(seat.pendingChips)}</span>}
       {seat.status === 'all-in' && <span className="seat-tag seat-tag-allin">all-in</span>}
     </div>
   );
@@ -172,11 +176,13 @@ export function Seat({
               overlays on top instead of taking their own space below. */}
           <div className="seat-video-overlay-top">{nameRow}</div>
           <div className="seat-video-overlay-bottom">
-            {showHoleCardsOnVideo && <div className="seat-cards">{holeCards}</div>}
+            {showHoleCardsOnVideo && !isViewer && <div className="seat-cards">{holeCards}</div>}
             {stackRow}
           </div>
         </div>
       )}
+      {/* The viewer's own cards sit just above their camera box rather than over it, so they can still see their own video. */}
+      {showSeatVideo && showHoleCardsOnVideo && isViewer && <div className="seat-cards seat-cards-above-video">{holeCards}</div>}
       {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
       {!showSeatVideo && (
         <>

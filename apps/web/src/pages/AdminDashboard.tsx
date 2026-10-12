@@ -4,6 +4,7 @@ import * as api from '../api.js';
 import type { AdminUserDetailDto, AdminUserDto, LedgerEntryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
+import { MoneyInput } from '../components/MoneyInput.js';
 
 const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
   buy_in: 'Bought in',
@@ -362,8 +363,8 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
       </button>
 
       <label>
-        Adjust balance (a buy-in, rebuy, or correction — positive or negative)
-        <input type="number" value={chipAmount} onChange={(e) => setChipAmount(Number(e.target.value))} disabled={busy} />
+        Adjust balance in $ (a buy-in, rebuy, or correction — positive or negative)
+        <MoneyInput cents={chipAmount} onChange={(c) => setChipAmount(c === '' ? 0 : c)} disabled={busy} />
       </label>
       <label>
         Reason

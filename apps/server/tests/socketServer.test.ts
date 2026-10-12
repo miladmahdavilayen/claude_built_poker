@@ -337,7 +337,7 @@ describe('socketServer: live signaling and access control', () => {
     aliceSocket.close();
   });
 
-  it('removing a bot frees the seat, broadcast to everyone at the table', async () => {
+  it('removing a bot frees the seat, broadcast to everyone at the table — and only the owner can do it', async () => {
     const alice = await makeAdminUser('Alice'); // add-bot is owner-only now — see DECISIONS.md
     const bob = await makeUser('Bob');
     const table = await registry.createTable('Bot Table', SETTINGS, null, null);
@@ -354,8 +354,15 @@ describe('socketServer: live signaling and access control', () => {
     const bobSeesBot = await bobSeesBotPromise;
     expect(bobSeesBot.state.seats.find((s) => s.seatId === 0)?.isBot).toBe(true);
 
-    const bobSeesRemovalPromise = waitFor<{ state: { seats: { seatId: number; isBot: boolean; status: string }[] } }>(bobSocket, 'state');
+    // A regular player can't remove the owner's bot...
+    const bobRejectedPromise = waitFor<{ code: string }>(bobSocket, 'error');
     bobSocket.emit('remove-bot', { seatId: 0 });
+    expect((await bobRejectedPromise).code).toBe('ADMIN_REQUIRED');
+    expect(table.seats[0]?.botPolicyName).toBe('nit');
+
+    // ...the owner can, and everyone sees it.
+    const bobSeesRemovalPromise = waitFor<{ state: { seats: { seatId: number; isBot: boolean; status: string }[] } }>(bobSocket, 'state');
+    aliceSocket.emit('remove-bot', { seatId: 0 });
     const bobSeesRemoval = await bobSeesRemovalPromise;
     expect(bobSeesRemoval.state.seats.find((s) => s.seatId === 0)?.status).toBe('empty');
 
@@ -679,5 +686,137 @@ describe('socketServer: live signaling and access control', () => {
 
     adminSocket.close();
     aliceSocket.close();
+  });
+
+  /** Emits an event with a payload and resolves with the server's ack result. */
+  function request<T>(socket: ClientSocket, event: string, payload?: unknown): Promise<T> {
+    return new Promise((resolve) => {
+      if (payload === undefined) socket.emit(event, (result: T) => resolve(result));
+      else socket.emit(event, payload, (result: T) => resolve(result));
+    });
+  }
+
+  /** Owner (admin) + one regular player, both seated with `buyIn` at a fresh table and joined. */
+  async function ownerAndPlayerSeated(buyIn = 100): Promise<{
+    owner: { userId: string; token: string };
+    bob: { userId: string; token: string };
+    ownerSocket: ClientSocket;
+    bobSocket: ClientSocket;
+    table: ReturnType<TableRegistry['get']> & object;
+  }> {
+    const owner = await makeAdminUser('Owner');
+    const bob = await makeUser('Bob');
+    const table = await registry.createTable('Owner Controls', SETTINGS, null, null);
+    const ownerSocket = connect(owner.token);
+    const bobSocket = connect(bob.token);
+    await Promise.all([waitFor(ownerSocket, 'connect'), waitFor(bobSocket, 'connect')]);
+    ownerSocket.emit('join-table', { tableId: table.tableId });
+    bobSocket.emit('join-table', { tableId: table.tableId });
+    await Promise.all([waitFor(ownerSocket, 'state'), waitFor(bobSocket, 'state')]);
+    ownerSocket.emit('take-seat', { tableId: table.tableId, seatId: 0, buyIn });
+    await waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(ownerSocket, (p) => p.state.seats[0]?.status === 'active');
+    const link = await new Promise<{ ok: true; token: string }>((resolve) =>
+      ownerSocket.emit('assign-seat', { seatId: 1, buyIn }, (r: { ok: true; token: string }) => resolve(r)),
+    );
+    bobSocket.emit('redeem-seat-assignment', { token: link.token });
+    await waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) => p.state.seats[1]?.status === 'active');
+    return { owner, bob, ownerSocket, bobSocket, table };
+  }
+
+  it('only the owner can change table settings; a mid-hand blind change is acknowledged as deferred to the next hand', async () => {
+    const { ownerSocket, bobSocket, table } = await ownerAndPlayerSeated();
+    expect(await request(bobSocket, 'update-table-settings', { bigBlind: 4 })).toMatchObject({ ok: false, code: 'ADMIN_REQUIRED' });
+
+    ownerSocket.emit('start-hand');
+    await waitForState<{ state: { phase: string } }>(ownerSocket, (p) => p.state.phase === 'in-hand');
+    const bobSeesPending = waitForState<{ state: { pendingSettings: unknown } }>(bobSocket, (p) => p.state.pendingSettings !== null);
+    expect(await request(ownerSocket, 'update-table-settings', { smallBlind: 2, bigBlind: 4, name: 'Renamed' })).toEqual({ ok: true, deferred: true });
+    expect((await bobSeesPending).state.pendingSettings).toEqual({ smallBlind: 2, bigBlind: 4 });
+    expect(table.name).toBe('Renamed');
+    expect(table.settings.bigBlind).toBe(2);
+    // Persisted with the values it's heading to.
+    const record = await store.getTable(table.tableId);
+    expect(record?.name).toBe('Renamed');
+    expect(record?.config).toMatchObject({ smallBlind: 2, bigBlind: 4 });
+
+    ownerSocket.close();
+    bobSocket.close();
+  });
+
+  it('removing a human between hands refunds their whole stack to their balance; a regular player cannot remove anyone', async () => {
+    const { bob, ownerSocket, bobSocket, table } = await ownerAndPlayerSeated(150);
+    expect((await store.findUserById(bob.userId))?.chips).toBe(1000 - 150);
+
+    expect(await request(bobSocket, 'remove-player', { seatId: 0 })).toMatchObject({ ok: false, code: 'ADMIN_REQUIRED' });
+
+    expect(await request(ownerSocket, 'remove-player', { seatId: 1 })).toEqual({ ok: true });
+    await waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) => p.state.seats[1]?.status === 'empty');
+    // Settled asynchronously right after the ack — give the store a tick.
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await store.findUserById(bob.userId))?.chips).toBe(1000);
+    expect(table.seatOfUser(bob.userId)).toBeNull();
+
+    ownerSocket.close();
+    bobSocket.close();
+  });
+
+  it('a mid-hand rebuy debits the player now and, if they are removed before the hand ends, comes back with their refund', async () => {
+    const { bob, ownerSocket, bobSocket, table } = await ownerAndPlayerSeated(100);
+    ownerSocket.emit('start-hand');
+    await waitForState<{ state: { phase: string } }>(ownerSocket, (p) => p.state.phase === 'in-hand');
+
+    ownerSocket.emit('admin-rebuy', { seatId: 1, amount: 50 });
+    await waitForState<{ state: { seats: { seatId: number; pendingChips: number }[] } }>(bobSocket, (p) => p.state.seats[1]?.pendingChips === 50);
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await store.findUserById(bob.userId))?.chips).toBe(1000 - 100 - 50);
+
+    // Owner removes Bob mid-hand: he's folded on his turn, then refunded when the hand ends.
+    expect(await request(ownerSocket, 'remove-player', { seatId: 1 })).toEqual({ ok: true });
+    const bobBlind = table.state.seats[1]!.committedThisHand;
+    // Owner checks/calls until the hand ends.
+    for (let guard = 0; table.state.phase === 'in-hand' && guard < 50; guard++) {
+      if (table.state.betting.actingSeat === 0) {
+        const toCall = table.state.betting.currentBet - table.state.seats[0]!.committedThisStreet;
+        ownerSocket.emit('action', { handId: table.handId, actionSeq: table.state.actionSeq, type: toCall > 0 ? 'call' : 'check' });
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    expect(table.state.phase).toBe('hand-complete');
+    await new Promise((r) => setTimeout(r, 100));
+    // He lost what he'd put in before folding; everything else — including the 50 pending — came back.
+    expect((await store.findUserById(bob.userId))?.chips).toBe(1000 - bobBlind);
+    expect(table.seats[1]?.userId).toBeNull();
+
+    ownerSocket.close();
+    bobSocket.close();
+  });
+
+  it('terminating a table mid-hand voids the hand: every player gets back exactly what they bought in with', async () => {
+    const { owner, bob, ownerSocket, bobSocket } = await ownerAndPlayerSeated(100);
+    ownerSocket.emit('start-hand');
+    await waitForState<{ state: { phase: string } }>(ownerSocket, (p) => p.state.phase === 'in-hand');
+
+    await emitWithAck(ownerSocket, 'terminate-table');
+    expect((await store.findUserById(bob.userId))?.chips).toBe(1000);
+    expect((await store.findUserById(owner.userId))?.chips).toBe(1000);
+
+    ownerSocket.close();
+    bobSocket.close();
+  });
+
+  it('deleting seats and adding them back is reflected for everyone; a regular player cannot change the layout', async () => {
+    const { ownerSocket, bobSocket } = await ownerAndPlayerSeated();
+    expect(await request(bobSocket, 'delete-seat', { seatId: 3 })).toMatchObject({ ok: false, code: 'ADMIN_REQUIRED' });
+
+    const bobSeesDelete = waitForState<{ state: { removedSeatIds: number[] } }>(bobSocket, (p) => p.state.removedSeatIds.includes(3));
+    expect(await request(ownerSocket, 'delete-seat', { seatId: 3 })).toEqual({ ok: true });
+    await bobSeesDelete;
+
+    const bobSeesAdd = waitForState<{ state: { removedSeatIds: number[] } }>(bobSocket, (p) => p.state.removedSeatIds.length === 0);
+    expect(await request(ownerSocket, 'add-seat')).toEqual({ ok: true, seatId: 3 });
+    await bobSeesAdd;
+
+    ownerSocket.close();
+    bobSocket.close();
   });
 });

@@ -10,6 +10,8 @@ import { ChatPanel } from '../components/ChatPanel.js';
 import { ChipStack } from '../components/ChipStack.js';
 import { DealAnimation } from '../components/DealAnimation.js';
 import { HandBreakPanel } from '../components/HandBreakPanel.js';
+import { MoneyInput } from '../components/MoneyInput.js';
+import { OwnerMenu } from '../components/OwnerMenu.js';
 import { RevealHandButton } from '../components/RevealHandButton.js';
 import { Seat } from '../components/Seat.js';
 import { SpeakerBar, type SpeakerBarTile } from '../components/SpeakerBar.js';
@@ -21,8 +23,9 @@ import { formatChips } from '../chips.js';
 import { isBluffHand } from '../handStrength.js';
 import { computePositionLabels } from '../positionLabels.js';
 import { livePotTotal } from '../potTotal.js';
-import { seatPositions, seatSizeVars } from '../seatLayout.js';
+import { seatPositionsFor, seatSizeVars } from '../seatLayout.js';
 import { useActiveSpeakers } from '../useActiveSpeakers.js';
+import { useCameraFit } from '../useCameraFit.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
 import { useJustRevealedSeats } from '../useJustRevealedSeats.js';
@@ -31,27 +34,34 @@ import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
 
 /**
- * Chooses who fills the (at most 2) collapsed speaker-bar tiles: the
- * currently-active speakers first (already most-recent-first), then
- * backfilled in ascending seat order so the bar never sits empty right
- * when the 5th camera turns on, before anyone's spoken yet.
+ * Chooses which seats' cameras stay visible once the table has collapsed
+ * (more than 4 cameras on a phone): the currently-active speakers first
+ * (already most-recent-first), then backfilled in ascending seat order so
+ * the view never sits empty right when the 5th camera turns on, before
+ * anyone's spoken yet. `limit` is 2 for the speaker bar; immersive mode
+ * uses the full ordering as its keep-priority — see useCameraFit.ts.
  */
+function pickSpeakerSeatIds(seats: { seatId: number }[], activeSpeakerIds: string[], limit: number): string[] {
+  const seatIds = new Set(seats.map((s) => String(s.seatId)));
+  const chosen: string[] = [];
+  for (const id of activeSpeakerIds) {
+    if (chosen.length >= limit) break;
+    if (seatIds.has(id) && !chosen.includes(id)) chosen.push(id);
+  }
+  for (const s of seats) {
+    if (chosen.length >= limit) break;
+    const id = String(s.seatId);
+    if (!chosen.includes(id)) chosen.push(id);
+  }
+  return chosen;
+}
+
 function pickSpeakerTiles(
   seats: { seatId: number; displayName: string; stream: MediaStream; isLocal: boolean }[],
   activeSpeakerIds: string[],
 ): SpeakerBarTile[] {
   const bySeatId = new Map(seats.map((s) => [String(s.seatId), s]));
-  const chosen: string[] = [];
-  for (const id of activeSpeakerIds) {
-    if (chosen.length >= 2) break;
-    if (bySeatId.has(id) && !chosen.includes(id)) chosen.push(id);
-  }
-  for (const s of seats) {
-    if (chosen.length >= 2) break;
-    const id = String(s.seatId);
-    if (!chosen.includes(id)) chosen.push(id);
-  }
-  return chosen.map((id) => {
+  return pickSpeakerSeatIds(seats, activeSpeakerIds, 2).map((id) => {
     const s = bySeatId.get(id)!;
     return { id, stream: s.stream, isLocal: s.isLocal, label: s.displayName };
   });
@@ -75,7 +85,18 @@ export function TablePage(): React.JSX.Element {
   const [buyIn, setBuyIn] = useState<number | ''>(0);
   const [seatDisplayName, setSeatDisplayName] = useState('');
   const [rebuyModal, setRebuyModal] = useState<number | null>(null);
-  const [rebuyAmount, setRebuyAmount] = useState(0);
+  const [rebuyAmount, setRebuyAmount] = useState<number | ''>(0);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  // The full-screen toggle pulses until this viewer has used it once —
+  // remembered per browser, so a returning player isn't nagged. Storage can
+  // be unavailable (private mode, blocked site data): then it just pulses.
+  const [fullScreenDiscovered, setFullScreenDiscovered] = useState(() => {
+    try {
+      return window.localStorage.getItem('pokerclause.fullScreenUsed') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [bottomTab, setBottomTab] = useState<'chat' | 'log'>('chat');
   const [addBotModal, setAddBotModal] = useState<number | null>(null);
   const [botPersona, setBotPersona] = useState(BOT_PERSONAS[0]!.id);
@@ -161,9 +182,25 @@ export function TablePage(): React.JSX.Element {
   // ("Rendered more hooks than during the previous render"), not just a
   // lint nitpick. Found by actually loading the page in a browser, not by
   // tsc/eslint — neither one catches this.
+  // Over the VISIBLE seats only — an owner-deleted seat is hidden, not
+  // renumbered (see ProjectedTableState.removedSeatIds), so the ids aren't
+  // always 0..n-1. Keyed on a string so it stays referentially stable
+  // across state updates that don't change the layout (see above).
+  const visibleSeatKey = sock.state
+    ? sock.state.seats
+        .map((s) => s.seatId)
+        .filter((id) => !sock.state!.removedSeatIds.includes(id))
+        .join(',')
+    : '';
   const positions = useMemo(
-    () => (sock.state ? seatPositions(sock.state.settings.maxSeats, sock.state.viewerSeatId ?? 0) : []),
-    [sock.state?.settings.maxSeats, sock.state?.viewerSeatId],
+    () =>
+      visibleSeatKey === ''
+        ? []
+        : seatPositionsFor(
+            visibleSeatKey.split(',').map(Number),
+            sock.state?.viewerSeatId ?? null,
+          ),
+    [visibleSeatKey, sock.state?.viewerSeatId],
   );
 
   // Same hook-ordering constraint as `positions` above — sock.state can be
@@ -194,6 +231,18 @@ export function TablePage(): React.JSX.Element {
     humanCameraSeats.map((s) => ({ id: String(s.seatId), stream: s.stream })),
     speakerBarActive,
   );
+  // In immersive mode the speaker bar is hidden; instead every seat keeps
+  // its own video except any whose tile would collide with something (see
+  // useCameraFit.ts). When a collision forces a choice, the viewer's own
+  // camera wins (so they can always see themselves), then active speakers.
+  const feltRef = useRef<HTMLDivElement>(null);
+  const immersiveCameraFitActive = speakerBarActive && immersive.active;
+  const cameraPriority = pickSpeakerSeatIds(
+    humanCameraSeats,
+    [...humanCameraSeats.filter((s) => s.isLocal).map((s) => String(s.seatId)), ...activeSpeakerIds],
+    humanCameraSeats.length,
+  );
+  const immersiveHiddenCameraSeatIds = useCameraFit(feltRef, immersiveCameraFitActive, cameraPriority, sock.state?.handId ?? null);
   // On a phone, 1-3 human cameras have enough felt space to run noticeably
   // (~20%) bigger tiles than the baseline per-seat-count sizing gives them.
   // Deliberately NOT extended to exactly 4 (the highest count that still
@@ -239,6 +288,19 @@ export function TablePage(): React.JSX.Element {
   // the next hand deals — see ProjectedTableState.revealEligibleSeatId.
   const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
   const revealLabel = mySeat && isBluffHand(mySeat.holeCards, state.board) ? 'Show Bluff' : 'Reveal Hand';
+  const canManage = user.role === 'admin' || sock.canManageTable;
+  const pendingBlinds = state.pendingSettings;
+  const pendingNotice = pendingBlinds
+    ? [
+        pendingBlinds.smallBlind !== undefined || pendingBlinds.bigBlind !== undefined
+          ? `blinds go to ${formatChips(pendingBlinds.smallBlind ?? state.settings.smallBlind)}/${formatChips(pendingBlinds.bigBlind ?? state.settings.bigBlind)}`
+          : null,
+        pendingBlinds.ante !== undefined ? `ante ${pendingBlinds.ante > 0 ? formatChips(pendingBlinds.ante) : 'off'}` : null,
+        pendingBlinds.straddleEnabled !== undefined ? `straddle ${pendingBlinds.straddleEnabled ? 'on' : 'off'}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ')
+    : null;
 
   const voiceStreamForSeat = (seat: (typeof state.seats)[number]): { stream: MediaStream; isLocal: boolean } | null => {
     if (voice.inCall && seat.seatId === state.viewerSeatId && voice.localStream) {
@@ -307,8 +369,8 @@ export function TablePage(): React.JSX.Element {
     });
   };
 
-  const openRebuyModal = (seatId: number, currentStack: number): void => {
-    setRebuyAmount(state.settings.maxBuyIn - currentStack);
+  const openRebuyModal = (seatId: number, currentStack: number, pendingChips = 0): void => {
+    setRebuyAmount(Math.max(0, state.settings.maxBuyIn - currentStack - pendingChips));
     setRebuyModal(seatId);
   };
 
@@ -346,15 +408,10 @@ export function TablePage(): React.JSX.Element {
               Leave table
             </button>
           )}
-          {user.role === 'admin' && (
-            <>
-              <button type="button" className="btn-owner-action" onClick={() => setResetConfirmOpen(true)}>
-                Reset table
-              </button>
-              <button type="button" className="btn-owner-action btn-owner-danger" onClick={() => setTerminateConfirmOpen(true)}>
-                Terminate table
-              </button>
-            </>
+          {canManage && (
+            <button type="button" className="owner-menu-toggle" aria-label="Table menu" title="Table controls" onClick={() => setOwnerMenuOpen(true)}>
+              <span aria-hidden="true">☰</span> Menu
+            </button>
           )}
           {mySeat && mySeat.status === 'sitting-out' && (
             <button type="button" onClick={() => sock.sitIn()}>
@@ -369,6 +426,7 @@ export function TablePage(): React.JSX.Element {
         </div>
       </div>
 
+      {pendingNotice && <div className="pending-settings-banner">Next hand: {pendingNotice}</div>}
       <VoicePanel voice={voice} myName={user.displayName} amSeated={!!mySeat} unseatedPeers={unseatedVoicePeers} />
       {speakerBarActive && <SpeakerBar tiles={speakerTiles} />}
 
@@ -380,7 +438,7 @@ export function TablePage(): React.JSX.Element {
         onLeave={() => sock.leaveWaitlist()}
       />
 
-      <div className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`} style={seatSizeVars(state.settings.maxSeats)}>
+      <div ref={feltRef} className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`} style={seatSizeVars(positions.length)}>
         <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} />
         {state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
@@ -403,8 +461,18 @@ export function TablePage(): React.JSX.Element {
         <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
         <button
           type="button"
-          className="immersive-toggle"
-          onClick={immersive.toggle}
+          className={`immersive-toggle${!immersive.active && !fullScreenDiscovered ? ' immersive-toggle--attention' : ''}`}
+          onClick={() => {
+            if (!fullScreenDiscovered) {
+              setFullScreenDiscovered(true);
+              try {
+                window.localStorage.setItem('pokerclause.fullScreenUsed', '1');
+              } catch {
+                // Storage unavailable — it simply pulses again next visit.
+              }
+            }
+            immersive.toggle();
+          }}
           title={immersive.active ? 'Show the rest of the page' : 'Hide the rest of the page while playing'}
         >
           {immersive.active ? '⤡ Exit full screen' : '⛶ Full screen'}
@@ -439,7 +507,7 @@ export function TablePage(): React.JSX.Element {
                   showCards={handEverDealt}
                   justRevealed={justRevealedSeats.has(seatId)}
                   voice={voiceStreamForSeat(seat)}
-                  showVideo={!speakerBarActive}
+                  showVideo={immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive}
                   // Self-serve seating/bots are admin-only on any table, OR
                   // open to a signed-in (non-guest) human on the ONE table
                   // they created (sock.canManageTable — see
@@ -454,7 +522,8 @@ export function TablePage(): React.JSX.Element {
                     (user.role === 'admin' || sock.canManageTable) && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined
                   }
                   onAssignHumanClick={user.role === 'admin' && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
-                  onRemoveBotClick={seat.isBot ? () => sock.removeBot(seatId) : undefined}
+                  // Owner-only, like every table control (the server rejects anyone else).
+                  onRemoveBotClick={seat.isBot && canManage ? () => sock.removeBot(seatId) : undefined}
                   // Hidden in full screen / immersive mode — it renders as a
                   // corner overlay on the seat's video tile, which in
                   // immersive mode is the player's whole visible camera and
@@ -463,7 +532,7 @@ export function TablePage(): React.JSX.Element {
                   // that way. See DECISIONS.md.
                   onRebuyClick={
                     user.role === 'admin' && !seat.isBot && seat.status !== 'empty' && !immersive.active
-                      ? () => openRebuyModal(seatId, seat.stack)
+                      ? () => openRebuyModal(seatId, seat.stack, seat.pendingChips)
                       : undefined
                   }
                 />
@@ -487,6 +556,7 @@ export function TablePage(): React.JSX.Element {
           legalActions={state.legalActions}
           potSize={livePotTotal(state)}
           bigBlind={state.settings.bigBlind}
+          smallBlind={state.settings.smallBlind}
           onAction={(type, amountTo) => {
             if (!state.handId) return;
             sock.submitAction(state.handId, state.actionSeq, type, amountTo);
@@ -518,6 +588,40 @@ export function TablePage(): React.JSX.Element {
         <ActionLog events={sock.recentEvents} seats={state.seats} />
       )}
 
+      {ownerMenuOpen && canManage && tableId && (
+        <OwnerMenu
+          state={state}
+          sock={sock}
+          isAdmin={user.role === 'admin'}
+          tableId={tableId}
+          onClose={() => setOwnerMenuOpen(false)}
+          onAddBot={(seatId) => {
+            setOwnerMenuOpen(false);
+            openAddBotModal(seatId);
+          }}
+          onInvite={(seatId) => {
+            setOwnerMenuOpen(false);
+            openAssignModal(seatId);
+          }}
+          onSitHere={
+            mySeat
+              ? null
+              : (seatId) => {
+                  setOwnerMenuOpen(false);
+                  openSeatModal(seatId);
+                }
+          }
+          onReset={() => {
+            setOwnerMenuOpen(false);
+            setResetConfirmOpen(true);
+          }}
+          onTerminate={() => {
+            setOwnerMenuOpen(false);
+            setTerminateConfirmOpen(true);
+          }}
+        />
+      )}
+
       {seatModal !== null && (
         <div className="modal-backdrop" onClick={() => setSeatModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -528,13 +632,7 @@ export function TablePage(): React.JSX.Element {
             </label>
             <label>
               Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
-              <input
-                type="number"
-                min={state.settings.minBuyIn}
-                max={state.settings.maxBuyIn}
-                value={buyIn}
-                onChange={(e) => setBuyIn(e.target.value === '' ? '' : Number(e.target.value))}
-              />
+              <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={buyIn} onChange={setBuyIn} />
             </label>
             <p>Your chips: {formatChips(user.chips)}</p>
             <div className="modal-actions">
@@ -566,13 +664,7 @@ export function TablePage(): React.JSX.Element {
             </label>
             <label>
               Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
-              <input
-                type="number"
-                min={state.settings.minBuyIn}
-                max={state.settings.maxBuyIn}
-                value={botBuyIn}
-                onChange={(e) => setBotBuyIn(e.target.value === '' ? '' : Number(e.target.value))}
-              />
+              <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={botBuyIn} onChange={setBotBuyIn} />
             </label>
             <div className="modal-actions">
               <button type="button" onClick={() => setAddBotModal(null)}>
@@ -591,14 +683,10 @@ export function TablePage(): React.JSX.Element {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Rebuy seat {rebuyModal}</h3>
             <p>Owner-only — debits this player&rsquo;s own chip balance, same as a normal buy-in.</p>
+            {state.phase === 'in-hand' && <p>A hand is in progress: if they&rsquo;re still in it, the chips land the moment it ends.</p>}
             <label>
-              Amount
-              <input
-                type="number"
-                min={1}
-                value={rebuyAmount}
-                onChange={(e) => setRebuyAmount(Number(e.target.value))}
-              />
+              Amount ($)
+              <MoneyInput minCents={1} cents={rebuyAmount} onChange={setRebuyAmount} />
             </label>
             <div className="modal-actions">
               <button type="button" onClick={() => setRebuyModal(null)}>
@@ -606,7 +694,9 @@ export function TablePage(): React.JSX.Element {
               </button>
               <button
                 type="button"
+                disabled={rebuyAmount === '' || rebuyAmount <= 0}
                 onClick={() => {
+                  if (rebuyAmount === '' || rebuyAmount <= 0) return;
                   sock.adminRebuy(rebuyModal, rebuyAmount);
                   setRebuyModal(null);
                 }}
@@ -637,13 +727,7 @@ export function TablePage(): React.JSX.Element {
                 </label>
                 <label>
                   Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
-                  <input
-                    type="number"
-                    min={state.settings.minBuyIn}
-                    max={state.settings.maxBuyIn}
-                    value={assignBuyIn}
-                    onChange={(e) => setAssignBuyIn(e.target.value === '' ? '' : Number(e.target.value))}
-                  />
+                  <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={assignBuyIn} onChange={setAssignBuyIn} />
                 </label>
                 {assignError && <div className="error-banner">{assignError}</div>}
                 <div className="modal-actions">

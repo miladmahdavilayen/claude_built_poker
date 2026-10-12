@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   applyAction,
   createTableState,
@@ -16,12 +16,15 @@ import {
 } from '@pokerclause/engine';
 import { cryptoSource, shuffle, type RandomSource } from '@pokerclause/rng';
 import {
+  formatMoney,
   projectEvent,
   projectStateForSeat,
+  type PendingTableSettings,
   type ProjectedGameEvent,
   type ProjectedTableState,
   type SeatMeta,
   type TableSettings,
+  type UpdateTableSettingsIntent,
   type WaitlistEntry,
 } from '@pokerclause/shared';
 import { ALL_BOT_POLICIES, projectSeatView, type BotPolicy } from '@pokerclause/sim';
@@ -76,6 +79,32 @@ export interface LiveSeat {
   botPolicyName: string | null;
   /** Owner-private label given to this seat's invite link at creation time — see createSeatAssignment. Never shown to anyone but the owner (see projection.ts's viewerIsAdmin gate). */
   ownerNickname: string | null;
+  /**
+   * Chips the owner added while this seat was still in a hand — already
+   * debited from the player's balance, held here and credited to the
+   * stack the moment that hand ends (a stack can't change under a hand in
+   * progress: all-in and side-pot math depend on it). Always included in
+   * any refund. See addChips.
+   */
+  pendingChips: number;
+  /** Owner removed this seat's occupant mid-hand ('player') or deleted the seat ('seat'): auto-folded on their turn, vacated and refunded when the hand ends. See removeSeatOccupant. */
+  pendingRemoval: 'player' | 'seat' | null;
+  /** Seated mid-hand (status 'sitting-out' meanwhile, so the engine leaves them out of the hand in progress) — switched to 'active' when that hand ends. See takeSeat. */
+  joinsNextHand: boolean;
+}
+
+/** A seat the table emptied on its own (a deferred owner removal finishing at hand end) — the caller refunds `refund` to `userId` and moves their socket to spectating. */
+export interface VacatedSeat {
+  seatId: number;
+  userId: string | null;
+  refund: number;
+}
+
+type Result = { ok: true } | { ok: false; code: string; message: string };
+
+/** Drops keys whose value is `undefined` — a parsed optional field that wasn't sent must not overwrite a real setting with `undefined`. */
+function definedOnly<T extends object>(obj: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as { [K in keyof T]?: Exclude<T[K], undefined> };
 }
 
 interface PendingActionLogEntry {
@@ -99,7 +128,14 @@ export interface LiveTableCallbacks {
   onBroadcast: (tableId: string, perSeat: Map<number | null, BroadcastPayload>, rawEvents: readonly GameEvent[]) => void;
   onChipsSettled: (userId: string, delta: number) => Promise<void>;
   now: () => number;
+  /** Seats vacated at hand end by a deferred owner removal — see VacatedSeat. Called before that hand's final broadcast. */
+  onSeatsVacated?: (tableId: string, vacated: readonly VacatedSeat[]) => void;
 }
+
+// A removed player whose turn comes up is folded after this short pause,
+// so the fold reads as an action in everyone's log/animation rather than
+// vanishing instantly.
+const FORCED_FOLD_DELAY_MS = 400;
 
 const DEFAULT_TIME_BANK_REFILL_MS = 15000;
 // Real dealer time to riffle-shuffle and set up the next hand — a new hand
@@ -147,6 +183,10 @@ export class LiveTable {
   private botMoveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly botRng: RandomSource = cryptoSource();
   private readonly botPolicies = new Map<string, BotPolicy>(SELECTABLE_BOT_POLICIES.map((p) => [p.name, p]));
+  /** Seat slots the owner deleted — see ProjectedTableState.removedSeatIds for why they're hidden rather than renumbered. */
+  private readonly removedSeatIds = new Set<number>();
+  /** Engine-config changes made mid-hand, applied when that hand ends — see updateSettings/addSeat. */
+  private pendingConfig: Partial<TableConfig> = {};
 
   constructor(
     tableId: string,
@@ -154,7 +194,7 @@ export class LiveTable {
     settings: TableSettings,
     private readonly store: Store,
     private readonly callbacks: LiveTableCallbacks,
-    readonly inviteCode: string | null = null,
+    public inviteCode: string | null = null,
     /** The user who created this table (never a guest — see the /tables route), or null for the built-in seeded public tables. Lets that one user self-serve seat themselves and add bots on THIS table only, same as the admin can on any table — see socketServer.ts's canManageTable. */
     readonly ownerId: string | null = null,
   ) {
@@ -193,7 +233,57 @@ export class LiveTable {
       sittingOutRequested: false,
       botPolicyName: null,
       ownerNickname: null,
+      pendingChips: 0,
+      pendingRemoval: null,
+      joinsNextHand: false,
     };
+  }
+
+  private get inHand(): boolean {
+    return this.state.phase === 'in-hand';
+  }
+
+  /** Whether this seat is part of the hand currently being played (dealt in — folded still counts: its chips are in the pot). */
+  private isInCurrentHand(seatId: number): boolean {
+    const status = this.state.seats[seatId]?.status;
+    return this.inHand && (status === 'active' || status === 'all-in' || status === 'folded');
+  }
+
+  /** Engine status for a seat being filled right now: dealt in from the next hand if one is in progress — see takeSeat. */
+  private newlySeatedStatus(): 'active' | 'sitting-out' {
+    return this.inHand ? 'sitting-out' : 'active';
+  }
+
+  private checkSeatUsable(seatId: number): Result {
+    const engineSeat = this.state.seats[seatId];
+    if (!engineSeat || this.removedSeatIds.has(seatId)) return { ok: false, code: 'NO_SUCH_SEAT', message: 'That seat does not exist.' };
+    if (engineSeat.status !== 'empty') return { ok: false, code: 'SEAT_TAKEN', message: 'That seat is not empty.' };
+    return { ok: true };
+  }
+
+  /** Seats a player can see/sit in — every slot minus deleted ones. */
+  get visibleSeatCount(): number {
+    return this.state.seats.length - this.removedSeatIds.size;
+  }
+
+  /** Everything a seat's occupant gets back on leaving: their stack plus any chips still pending from a mid-hand rebuy. */
+  cashOutAmount(seatId: number): number {
+    return (this.state.seats[seatId]?.stack ?? 0) + (this.seats[seatId]?.pendingChips ?? 0);
+  }
+
+  /**
+   * What a seat's occupant is owed when the table is reset or terminated:
+   * a hand in progress at that moment is void, so everything they put
+   * into it comes back too — not just what's left in front of them. Bets
+   * and blinds stay in `committedThisHand` until pots are built at hand
+   * end; the (BB) ante is tracked separately in `anteTotal`, paid by this
+   * hand's big blind (`lastBigBlindSeat` — see packages/engine/src/hand.ts).
+   */
+  voidedHandRefund(seatId: number): number {
+    const seat = this.state.seats[seatId];
+    if (!seat) return 0;
+    const contributed = this.inHand ? seat.committedThisHand + (seatId === this.state.lastBigBlindSeat ? this.state.anteTotal : 0) : 0;
+    return this.cashOutAmount(seatId) + contributed;
   }
 
   seatOfUser(userId: string): number | null {
@@ -208,11 +298,17 @@ export class LiveTable {
     buyIn: number,
     ownerNickname: string | null = null,
   ): void {
-    const engineSeat = this.state.seats[seatId];
-    if (!engineSeat || engineSeat.status !== 'empty') throw new Error('SEAT_TAKEN');
+    const usable = this.checkSeatUsable(seatId);
+    if (!usable.ok) throw new Error(usable.code);
+    // Mid-hand, a new player must NOT be 'active': the engine treats every
+    // 'active' seat as live in the current betting round (see
+    // packages/engine/src/betting.ts), so they'd be asked to act in a hand
+    // they were never dealt into. 'sitting-out' keeps them out of it; they
+    // switch to 'active' the moment this hand ends (applyHandEndChanges).
+    const status = this.newlySeatedStatus();
     const newEngineSeats = this.state.seats.map((s, i) =>
       i === seatId
-        ? { ...s, playerId: userId, stack: buyIn, status: 'active' as const }
+        ? { ...s, playerId: userId, stack: buyIn, status }
         : s,
     );
     this.state = { ...this.state, seats: newEngineSeats };
@@ -225,6 +321,7 @@ export class LiveTable {
       clientSeed: meta.clientSeed,
       isConnected: true,
       ownerNickname,
+      joinsNextHand: status === 'sitting-out',
     };
     this.removeFromWaitlist(userId);
   }
@@ -243,11 +340,10 @@ export class LiveTable {
     buyIn: number,
     ownerNickname: string | null = null,
   ): { ok: true; token: string } | { ok: false; code: string; message: string } {
-    const engineSeat = this.state.seats[seatId];
-    if (!engineSeat || engineSeat.status !== 'empty') return { ok: false, code: 'SEAT_TAKEN', message: 'That seat is not empty.' };
-    if (buyIn < this.settings.minBuyIn || buyIn > this.settings.maxBuyIn) {
-      return { ok: false, code: 'BUY_IN_OUT_OF_RANGE', message: `Buy-in must be between ${String(this.settings.minBuyIn)} and ${String(this.settings.maxBuyIn)}.` };
-    }
+    const usable = this.checkSeatUsable(seatId);
+    if (!usable.ok) return usable;
+    const range = this.checkBuyInRange(buyIn);
+    if (!range.ok) return range;
     const token = randomUUID();
     this.seatAssignments.set(token, { seatId, buyIn, ownerNickname });
     return { ok: true, token };
@@ -259,10 +355,9 @@ export class LiveTable {
   ): { ok: true; seatId: number; buyIn: number; ownerNickname: string | null } | { ok: false; code: string; message: string } {
     const assignment = this.seatAssignments.get(token);
     if (!assignment) return { ok: false, code: 'INVALID_ASSIGNMENT', message: 'This invite link is invalid or has already been used.' };
-    const engineSeat = this.state.seats[assignment.seatId];
-    if (!engineSeat || engineSeat.status !== 'empty') {
+    if (!this.checkSeatUsable(assignment.seatId).ok) {
       this.seatAssignments.delete(token);
-      return { ok: false, code: 'SEAT_TAKEN', message: 'That seat was taken before this link was used.' };
+      return { ok: false, code: 'SEAT_TAKEN', message: 'That seat was taken or removed before this link was used.' };
     }
     this.seatAssignments.delete(token);
     return { ok: true, seatId: assignment.seatId, buyIn: assignment.buyIn, ownerNickname: assignment.ownerNickname };
@@ -278,10 +373,11 @@ export class LiveTable {
   addBot(seatId: number, persona: string, buyIn: number): { ok: true } | { ok: false; code: string; message: string } {
     const policy = this.botPolicies.get(persona);
     if (!policy) return { ok: false, code: 'UNKNOWN_BOT_PERSONA', message: `Unknown bot persona: ${persona}` };
-    const engineSeat = this.state.seats[seatId];
-    if (!engineSeat || engineSeat.status !== 'empty') return { ok: false, code: 'SEAT_TAKEN', message: 'That seat is not empty.' };
+    const usable = this.checkSeatUsable(seatId);
+    if (!usable.ok) return usable;
+    const status = this.newlySeatedStatus(); // see takeSeat
     const newEngineSeats = this.state.seats.map((s, i) =>
-      i === seatId ? { ...s, playerId: `bot:${policy.name}:${String(seatId)}`, stack: buyIn, status: 'active' as const } : s,
+      i === seatId ? { ...s, playerId: `bot:${policy.name}:${String(seatId)}`, stack: buyIn, status } : s,
     );
     this.state = { ...this.state, seats: newEngineSeats };
     this.seats[seatId] = {
@@ -290,23 +386,169 @@ export class LiveTable {
       avatarSeed: `bot-${policy.name}`,
       isConnected: true,
       botPolicyName: policy.name,
+      joinsNextHand: status === 'sitting-out',
     };
     return { ok: true };
   }
 
-  removeBot(seatId: number): { ok: true } | { ok: false; code: string; message: string } {
+  /** The buy-in range check shared by every way a seat gets filled. */
+  checkBuyInRange(buyIn: number): Result {
+    if (buyIn < this.settings.minBuyIn || buyIn > this.settings.maxBuyIn) {
+      return {
+        ok: false,
+        code: 'BUY_IN_OUT_OF_RANGE',
+        message: `Buy-in must be between ${formatMoney(this.settings.minBuyIn)} and ${formatMoney(this.settings.maxBuyIn)}.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  /** Mid-hand, a bot still in the hand is folded on its turn and leaves when the hand ends — same as any owner removal (see removeSeatOccupant). */
+  removeBot(seatId: number): { ok: true; vacated: VacatedSeat | null } | { ok: false; code: string; message: string } {
     const engineSeat = this.state.seats[seatId];
     const liveSeat = this.seats[seatId];
     if (!engineSeat || !liveSeat?.botPolicyName || engineSeat.status === 'empty') {
       return { ok: false, code: 'NOT_A_BOT', message: 'That seat is not a computer player.' };
     }
-    if (this.state.phase === 'in-hand' && (engineSeat.status === 'active' || engineSeat.status === 'all-in')) {
-      return { ok: false, code: 'CANNOT_REMOVE_MID_HAND', message: 'Cannot remove a computer player mid-hand.' };
+    return this.removeSeatOccupant(seatId, false);
+  }
+
+  /**
+   * Owner-only: takes a seat's occupant (human or bot) off the table, any
+   * time. With `deleteSeat`, the seat slot itself goes too.
+   *
+   * Not in the current hand (empty seat, between hands, or sitting out):
+   * happens right now, and `vacated` carries the refund for the caller to
+   * credit. Still in the hand (even folded — those chips are in the pot
+   * and the engine's pot bookkeeping still reads the seat): marked
+   * `pendingRemoval` instead — folded automatically when their turn comes
+   * (an all-in player has no decisions left and simply plays the hand
+   * out), then vacated and refunded the moment the hand ends, through
+   * `callbacks.onSeatsVacated`. A hand in progress is never altered
+   * underneath itself.
+   */
+  removeSeatOccupant(seatId: number, deleteSeat: boolean): { ok: true; vacated: VacatedSeat | null } | { ok: false; code: string; message: string } {
+    const engineSeat = this.state.seats[seatId];
+    const liveSeat = this.seats[seatId];
+    if (!engineSeat || !liveSeat || this.removedSeatIds.has(seatId)) return { ok: false, code: 'NO_SUCH_SEAT', message: 'That seat does not exist.' };
+    if (engineSeat.status === 'empty') {
+      if (!deleteSeat) return { ok: false, code: 'SEAT_EMPTY', message: 'That seat is already empty.' };
+      this.markSeatRemoved(seatId);
+      return { ok: true, vacated: null };
     }
+    if (this.isInCurrentHand(seatId)) {
+      liveSeat.pendingRemoval = deleteSeat ? 'seat' : 'player';
+      liveSeat.sittingOutRequested = true;
+      if (this.state.betting.actingSeat === seatId) this.armClockOrBot();
+      return { ok: true, vacated: null };
+    }
+    const vacated = this.vacateSeat(seatId);
+    if (deleteSeat) this.markSeatRemoved(seatId);
+    return { ok: true, vacated };
+  }
+
+  /** Owner-only: deletes an empty seat slot, or removes its occupant and then the slot — see removeSeatOccupant. */
+  deleteSeat(seatId: number): { ok: true; vacated: VacatedSeat | null } | { ok: false; code: string; message: string } {
+    if (this.visibleSeatCount <= 2) return { ok: false, code: 'TOO_FEW_SEATS', message: 'A table needs at least 2 seats.' };
+    return this.removeSeatOccupant(seatId, true);
+  }
+
+  /**
+   * Owner-only: adds a seat — restores the lowest-numbered deleted slot if
+   * there is one (it's still an empty engine seat, so this is instant even
+   * mid-hand), otherwise appends a brand-new slot, up to 9. An appended
+   * slot is an empty engine seat, so it's safe to add mid-hand too; only
+   * the engine's `maxSeats` (which the odd-chip rule reads at showdown)
+   * waits for the hand to end.
+   */
+  addSeat(): { ok: true; seatId: number } | { ok: false; code: string; message: string } {
+    const restorable = [...this.removedSeatIds].sort((a, b) => a - b)[0];
+    if (restorable !== undefined) {
+      this.removedSeatIds.delete(restorable);
+      this.seats[restorable] = this.emptyLiveSeat(restorable);
+      return { ok: true, seatId: restorable };
+    }
+    const seatId = this.state.seats.length;
+    if (seatId >= 9) return { ok: false, code: 'MAX_SEATS', message: 'A table can have at most 9 seats.' };
+    const blank = { ...createTableState({ ...this.state.config, maxSeats: 1 }, []).seats[0]!, seatId };
+    this.state = { ...this.state, seats: [...this.state.seats, blank] };
+    this.seats.push(this.emptyLiveSeat(seatId));
+    this.settings = { ...this.settings, maxSeats: seatId + 1 };
+    this.setEngineConfig({ maxSeats: seatId + 1 });
+    return { ok: true, seatId };
+  }
+
+  private markSeatRemoved(seatId: number): void {
+    this.removedSeatIds.add(seatId);
+    for (const [token, a] of this.seatAssignments) if (a.seatId === seatId) this.seatAssignments.delete(token);
+  }
+
+  /** Empties a seat right now and returns what its occupant is owed. Only ever called when the seat isn't in a hand in progress. */
+  private vacateSeat(seatId: number): VacatedSeat {
+    const vacated: VacatedSeat = { seatId, userId: this.seats[seatId]?.userId ?? null, refund: this.cashOutAmount(seatId) };
     const newEngineSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, playerId: '', stack: 0, status: 'empty' as const } : s));
     this.state = { ...this.state, seats: newEngineSeats };
     this.seats[seatId] = this.emptyLiveSeat(seatId);
-    return { ok: true };
+    return vacated;
+  }
+
+  /** Changes the engine's config now if no hand is in progress, otherwise queues it for when the current hand ends. */
+  private setEngineConfig(patch: Partial<TableConfig>): void {
+    if (this.inHand) {
+      this.pendingConfig = { ...this.pendingConfig, ...patch };
+    } else {
+      this.state = { ...this.state, config: { ...this.state.config, ...patch } };
+    }
+  }
+
+  /** Blind/ante/straddle values the owner has set that aren't in force yet — see ProjectedTableState.pendingSettings. */
+  get pendingSettings(): PendingTableSettings | null {
+    const { smallBlind, bigBlind, ante, straddleEnabled } = this.pendingConfig;
+    const pending: PendingTableSettings = {
+      ...(smallBlind !== undefined ? { smallBlind } : {}),
+      ...(bigBlind !== undefined ? { bigBlind } : {}),
+      ...(ante !== undefined ? { ante } : {}),
+      ...(straddleEnabled !== undefined ? { straddleEnabled } : {}),
+    };
+    return Object.keys(pending).length > 0 ? pending : null;
+  }
+
+  /**
+   * Owner-only, any time. Everything except the engine's own config takes
+   * effect immediately (a new buy-in range only governs buy-ins from now
+   * on; a new action time applies from the next turn's clock). Blinds,
+   * ante and straddle are read by the engine on every street, so mid-hand
+   * they queue (`pendingSettings`) and apply the moment the hand ends.
+   * Validated against the settings as they'll be AFTER the change, so a
+   * patch can't leave the table inconsistent (e.g. SB above BB).
+   */
+  updateSettings(rawPatch: UpdateTableSettingsIntent): { ok: true; deferred: boolean } | { ok: false; code: string; message: string } {
+    const patch = definedOnly(rawPatch);
+    const target = { ...this.settings, ...this.pendingSettings, ...patch };
+    if (target.smallBlind > target.bigBlind) return { ok: false, code: 'INVALID_SETTINGS', message: 'The small blind cannot be bigger than the big blind.' };
+    if (target.minBuyIn > target.maxBuyIn) return { ok: false, code: 'INVALID_SETTINGS', message: 'The minimum buy-in cannot be above the maximum.' };
+    if (target.ante > target.bigBlind) return { ok: false, code: 'INVALID_SETTINGS', message: 'The ante cannot be bigger than the big blind.' };
+
+    const { smallBlind, bigBlind, ante, straddleEnabled, name, ...immediate } = patch;
+    if (name !== undefined) this.name = name;
+    if (immediate.isPrivate === true && !this.inviteCode) this.inviteCode = randomBytes(4).toString('hex');
+    this.settings = { ...this.settings, ...immediate };
+
+    const engineChanges: Partial<TableConfig> = {
+      ...(smallBlind !== undefined ? { smallBlind } : {}),
+      ...(bigBlind !== undefined ? { bigBlind } : {}),
+      ...(ante !== undefined ? { ante } : {}),
+      ...(straddleEnabled !== undefined ? { straddleEnabled } : {}),
+    };
+    const deferred = this.inHand && Object.keys(engineChanges).length > 0;
+    if (!deferred) this.settings = { ...this.settings, ...engineChanges };
+    this.setEngineConfig(engineChanges);
+    return { ok: true, deferred };
+  }
+
+  /** The settings as they'll be once anything pending applies — what gets persisted. */
+  get targetSettings(): TableSettings {
+    return { ...this.settings, ...this.pendingSettings };
   }
 
   joinWaitlist(userId: string, displayName: string): { ok: true } | { ok: false; code: string; message: string } {
@@ -334,7 +576,7 @@ export class LiveTable {
     if (this.state.phase === 'in-hand' && (engineSeat.status === 'active' || engineSeat.status === 'all-in')) {
       throw new Error('CANNOT_LEAVE_MID_HAND');
     }
-    const result = { userId: liveSeat.userId, stack: engineSeat.stack };
+    const result = { userId: liveSeat.userId, stack: this.cashOutAmount(seatId) };
     const newEngineSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, playerId: '', stack: 0, status: 'empty' as const } : s));
     this.state = { ...this.state, seats: newEngineSeats };
     this.seats[seatId] = this.emptyLiveSeat(seatId);
@@ -361,8 +603,13 @@ export class LiveTable {
     for (let i = 0; i < this.seats.length; i++) {
       const liveSeat = this.seats[i]!;
       const engineSeat = this.state.seats[i];
-      if (liveSeat.userId && engineSeat) refunds.push({ userId: liveSeat.userId, stack: engineSeat.stack });
+      if (liveSeat.userId && engineSeat) refunds.push({ userId: liveSeat.userId, stack: this.voidedHandRefund(i) });
     }
+    // No hand survives a reset, so anything queued for "when this hand
+    // ends" applies right now. Deleted seats stay deleted — a reset clears
+    // who's sitting, not how the table is laid out.
+    this.settings = this.targetSettings;
+    this.pendingConfig = {};
     this.state = this.freshState();
     this.seats = Array.from({ length: this.settings.maxSeats }, (_, seatId) => this.emptyLiveSeat(seatId));
     return refunds;
@@ -581,6 +828,21 @@ export class LiveTable {
     const actingSeat = this.state.betting.actingSeat;
     if (this.state.phase === 'in-hand' && actingSeat !== null) {
       const liveSeat = this.seats[actingSeat];
+      if (liveSeat?.pendingRemoval) {
+        // The owner removed this player — fold for them (always legal for
+        // an active seat; see computeLegalActions). Reuses the bot-move
+        // timer slot: every path that cancels a pending bot move (hand
+        // end, reset, dispose) must cancel this too.
+        this.clearClock();
+        this.actionDeadline = null;
+        this.clearBotMove();
+        this.botMoveTimer = setTimeout(() => {
+          this.botMoveTimer = null;
+          if (this.state.phase !== 'in-hand' || this.state.betting.actingSeat !== actingSeat) return;
+          this.applyPlayerAction(actingSeat, { seatId: actingSeat, type: 'fold' }, true);
+        }, FORCED_FOLD_DELAY_MS);
+        return;
+      }
       if (liveSeat?.botPolicyName) {
         this.clearClock();
         this.actionDeadline = null;
@@ -708,7 +970,12 @@ export class LiveTable {
       // clock, just a plain broadcast instead of a forced action.
       this.clearNextHandTimer();
       this.nextHandTimer = setTimeout(() => this.broadcastAll([]), HAND_BREAK_MS);
+      // settleHand snapshots everything it needs synchronously, before its
+      // first await — so the hand-end changes below (pending rebuys landing
+      // on stacks, removed players leaving) can never leak into this hand's
+      // own results or ledger entries.
       void this.settleHand();
+      this.applyHandEndChanges();
     } else {
       this.armClockOrBot();
     }
@@ -719,15 +986,28 @@ export class LiveTable {
 
   private async settleHand(): Promise<void> {
     if (!this.currentHandInitialState || !this.currentHandRng) return;
+    // Everything below the first `await` must come from this snapshot, not
+    // live fields: applyHandEndChanges runs right after this method yields
+    // and changes stacks/seats. See applyPlayerAction.
+    const finalState = this.state;
+    const initialState = this.currentHandInitialState;
+    const rng = this.currentHandRng;
+    const handId = this.currentHandId;
+    const actionLog = [...this.actionLog];
+    const revealedSeatIds = new Set(this.revealedSeatIds);
+    const userIdBySeat = new Map(this.seats.map((s) => [s.seatId, s.userId]));
+    const handStartedAt = this.handStartedAt;
+    this.currentHandRng = null;
+    this.currentHandInitialState = null;
     const endedAt = new Date();
-    const potTotal = this.state.pots.reduce((s, p) => s + p.amount, 0);
+    const potTotal = finalState.pots.reduce((s, p) => s + p.amount, 0);
     const rake = this.settings.rakePercent > 0 ? Math.min(Math.floor((potTotal * this.settings.rakePercent) / 100), this.settings.rakeCap || Infinity) : 0;
 
     const winningsBySeat = new Map<number, { amount: number; handName: string | null; bestFive: readonly Card[] | null }>();
     // Re-derive from state: net result per seat = final stack - (stack at hand start - committedThisHand contribution isn't tracked post-reset).
     // We instead reconstruct net result as (current stack - starting stack for the hand), using the initial snapshot.
-    for (const seat of this.state.seats) {
-      const before = this.currentHandInitialState.seats.find((s) => s.seatId === seat.seatId);
+    for (const seat of finalState.seats) {
+      const before = initialState.seats.find((s) => s.seatId === seat.seatId);
       if (!before) continue;
       const net = seat.stack - before.stack;
       if (net !== 0) winningsBySeat.set(seat.seatId, { amount: net, handName: null, bestFive: null });
@@ -735,7 +1015,7 @@ export class LiveTable {
 
     const ledgerEntries: { userId: string; amount: number }[] = [];
     for (const [seatId, w] of winningsBySeat) {
-      const userId = this.seats[seatId]?.userId;
+      const userId = userIdBySeat.get(seatId);
       if (userId) ledgerEntries.push({ userId, amount: w.amount });
     }
     if (ledgerEntries.length > 0) {
@@ -746,48 +1026,46 @@ export class LiveTable {
       ]);
     }
 
-    if (!this.currentHandId) return;
+    if (!handId) return;
     await this.store.recordHand({
-      id: this.currentHandId,
+      id: handId,
       tableId: this.tableId,
-      handNumber: this.state.handNumber,
-      buttonSeat: this.state.buttonSeat,
-      boardCards: this.state.board,
+      handNumber: finalState.handNumber,
+      buttonSeat: finalState.buttonSeat,
+      boardCards: finalState.board,
       potTotal,
       rakeTaken: rake,
-      initialState: this.currentHandInitialState,
-      seats: this.currentHandInitialState.seats
+      initialState,
+      seats: initialState.seats
         .filter((s) => s.status !== 'empty')
         .map((s) => {
-          const finalSeat = this.state.seats.find((fs) => fs.seatId === s.seatId);
+          const finalSeat = finalState.seats.find((fs) => fs.seatId === s.seatId);
           return {
             seat: s.seatId,
-            userId: this.seats[s.seatId]?.userId ?? null,
+            userId: userIdBySeat.get(s.seatId) ?? null,
             startingStack: s.stack,
             holeCards: finalSeat?.holeCards ?? [],
             netResult: (finalSeat?.stack ?? s.stack) - s.stack,
-            showedDown: this.revealedSeatIds.has(s.seatId),
+            showedDown: revealedSeatIds.has(s.seatId),
           };
         }),
-      actions: this.actionLog,
+      actions: actionLog,
       results: [], // pot-awarded detail is available in the broadcast event log; kept minimal here for time
       rngCommit: {
-        commitment: this.currentHandRng.commitment,
-        serverSeed: this.currentHandRng.serverSeed,
-        clientSeeds: this.currentHandRng.clientSeeds,
-        nonce: this.currentHandRng.nonce,
+        commitment: rng.commitment,
+        serverSeed: rng.serverSeed,
+        clientSeeds: rng.clientSeeds,
+        nonce: rng.nonce,
         deckOrder: this.currentHandDeck,
         revealedAt: endedAt,
       },
-      startedAt: this.handStartedAt ?? endedAt,
+      startedAt: handStartedAt ?? endedAt,
       endedAt,
     });
 
-    this.currentHandRng = null;
-    this.currentHandInitialState = null;
-    // Deliberately NOT nulling currentHandId here (unlike the two fields
-    // above, which guard this whole method against a double-settlement
-    // re-entry — see the early return at the top). `projectionFor()`'s
+    // currentHandRng/currentHandInitialState were nulled at the top (they
+    // guard this whole method against a double-settlement re-entry — see
+    // the early return). Deliberately NOT nulling currentHandId, though. `projectionFor()`'s
     // `handId` needs to keep identifying the just-finished hand for the
     // ENTIRE post-hand break (the "Verify hand fairness" link is gated on
     // `state.handId` being truthy) — it's overwritten with a fresh id the
@@ -807,15 +1085,81 @@ export class LiveTable {
     this.state = { ...this.state, seats: newSeats };
   }
 
-  /** Between-hand top-up: adds chips to a busted (or any) seat's stack, capped by the caller against maxBuyIn. */
-  rebuy(seatId: number, amount: number): void {
-    if (this.state.phase === 'in-hand') throw new Error('CANNOT_REBUY_MID_HAND');
-    const newSeats = this.state.seats.map((s, i) =>
-      i === seatId ? { ...s, stack: s.stack + amount, status: s.status === 'sitting-out' && s.stack + amount > 0 ? ('active' as const) : s.status } : s,
-    );
-    this.state = { ...this.state, seats: newSeats };
+  /**
+   * Owner-only rebuy/add-on, any time; the caller has already capped the
+   * amount and debited the player. A seat still in the hand in progress
+   * gets it as `pendingChips`, credited when the hand ends (its stack is
+   * part of that hand's all-in/side-pot math, so it can't change mid-hand).
+   * Any other seat gets it on its stack right now. A busted seat that was
+   * sat out is dealt back in — right away between hands, or from the next
+   * hand if one is running.
+   */
+  addChips(seatId: number, amount: number): { appliedNow: boolean } {
     const liveSeat = this.seats[seatId];
-    if (liveSeat) liveSeat.sittingOutRequested = false;
+    if (!liveSeat) return { appliedNow: false };
+    liveSeat.sittingOutRequested = false;
+    if (this.isInCurrentHand(seatId) && this.state.seats[seatId]?.status !== 'folded') {
+      liveSeat.pendingChips += amount;
+      return { appliedNow: false };
+    }
+    // A folded seat's stack takes no further part in the hand, so it can
+    // grow now. Its status stays 'folded' — the engine resets it at the
+    // next deal (see resetSeatForNewHand).
+    const newSeats = this.state.seats.map((s, i) => {
+      if (i !== seatId) return s;
+      const stack = s.stack + amount;
+      if (s.status !== 'sitting-out') return { ...s, stack };
+      if (this.inHand) {
+        liveSeat.joinsNextHand = true;
+        return { ...s, stack };
+      }
+      return { ...s, stack, status: 'active' as const };
+    });
+    this.state = { ...this.state, seats: newSeats };
+    return { appliedNow: true };
+  }
+
+  /** Room left under the max buy-in for this seat, counting chips still pending. */
+  rebuyHeadroom(seatId: number): number {
+    return Math.max(0, this.settings.maxBuyIn - this.cashOutAmount(seatId));
+  }
+
+  /**
+   * Runs the moment a hand ends: everything the owner changed mid-hand
+   * that had to wait for it — queued blinds/ante/seat-count, pending
+   * rebuys onto stacks, mid-hand joiners dealt in, removed players
+   * vacated (and handed to `onSeatsVacated` for their refund).
+   */
+  private applyHandEndChanges(): void {
+    if (Object.keys(this.pendingConfig).length > 0) {
+      this.settings = { ...this.settings, ...this.pendingConfig };
+      this.state = { ...this.state, config: { ...this.state.config, ...this.pendingConfig } };
+      this.pendingConfig = {};
+    }
+
+    const vacated: VacatedSeat[] = [];
+    for (const liveSeat of this.seats) {
+      const seatId = liveSeat.seatId;
+      if (liveSeat.pendingRemoval) {
+        const deleteSeat = liveSeat.pendingRemoval === 'seat';
+        vacated.push(this.vacateSeat(seatId));
+        if (deleteSeat) this.markSeatRemoved(seatId);
+        continue;
+      }
+      if (liveSeat.pendingChips > 0) {
+        const amount = liveSeat.pendingChips;
+        liveSeat.pendingChips = 0;
+        this.state = { ...this.state, seats: this.state.seats.map((s, i) => (i === seatId ? { ...s, stack: s.stack + amount } : s)) };
+      }
+      if (liveSeat.joinsNextHand) {
+        liveSeat.joinsNextHand = false;
+        const engineSeat = this.state.seats[seatId];
+        if (engineSeat?.status === 'sitting-out' && engineSeat.stack > 0 && !liveSeat.sittingOutRequested) {
+          this.state = { ...this.state, seats: this.state.seats.map((s, i) => (i === seatId ? { ...s, status: 'active' as const } : s)) };
+        }
+      }
+    }
+    if (vacated.length > 0) this.callbacks.onSeatsVacated?.(this.tableId, vacated);
   }
 
   seatMetaMap(): Map<number, SeatMeta> {
@@ -831,6 +1175,9 @@ export class LiveTable {
         timeBankMs: s.timeBankMsRemaining,
         isBot: s.botPolicyName !== null,
         ownerNickname: s.ownerNickname,
+        pendingChips: s.pendingChips,
+        leavingAfterHand: s.pendingRemoval !== null,
+        joiningNextHand: s.joinsNextHand,
       });
     }
     return map;
@@ -902,6 +1249,8 @@ export class LiveTable {
         revealEligibleSeatId: this.revealEligibleSeatId,
         now: this.callbacks.now(),
         rakePot: 0,
+        removedSeatIds: [...this.removedSeatIds].sort((a, b) => a - b),
+        pendingSettings: this.pendingSettings,
       },
       viewerSeatId,
       viewerIsAdmin,

@@ -262,6 +262,10 @@ export class DrizzleStore implements Store {
     await this.db.update(schema.tables).set({ status: 'closed' }).where(eq(schema.tables.id, id));
   }
 
+  async updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {
+    await this.db.update(schema.tables).set({ name: patch.name, config: patch.config, inviteCode: patch.inviteCode }).where(eq(schema.tables.id, id));
+  }
+
   async recordHand(input: RecordHandInput): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.insert(schema.hands).values({

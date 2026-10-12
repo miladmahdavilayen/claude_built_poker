@@ -46,7 +46,16 @@ export interface ProjectedSeat {
    * anti-cheat boundary as hole cards. See `projection.ts`.
    */
   ownerNickname: string | null;
+  /** Chips the owner already added (and debited) that land on this seat's stack the moment the current hand ends — 0 when nothing is pending. */
+  pendingChips: number;
+  /** The owner removed this player (or deleted this seat) mid-hand: they're auto-folded on their turn and leave, refunded, when this hand ends. */
+  leavingAfterHand: boolean;
+  /** Seated mid-hand — dealt in from the next hand. */
+  joiningNextHand: boolean;
 }
+
+/** Blind/ante/straddle changes the owner made mid-hand, applied from the next deal. */
+export type PendingTableSettings = Partial<Pick<TableSettings, 'smallBlind' | 'bigBlind' | 'ante' | 'straddleEnabled'>>;
 
 /**
  * What one viewer (a seated player or a spectator) is allowed to receive
@@ -114,4 +123,13 @@ export interface ProjectedTableState {
    * client can find its own entry by matching its own user id.
    */
   waitlist: readonly WaitlistEntry[];
+  /**
+   * Seat slots the owner deleted — not shown, not sittable. Seat ids stay
+   * stable for the table's lifetime (every in-hand structure — button,
+   * pots, acting seat — refers to them), so a deleted seat is hidden
+   * rather than renumbered. Visible seats = `seats` minus these.
+   */
+  removedSeatIds: readonly number[];
+  /** Blind/ante/straddle changes queued for the next hand, or null. `settings` always shows what's in force right now. */
+  pendingSettings: PendingTableSettings | null;
 }

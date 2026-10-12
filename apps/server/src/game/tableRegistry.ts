@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { GameEvent } from '@pokerclause/engine';
 import type { TableSettings } from '@pokerclause/shared';
 import type { Store } from '../db/store.js';
-import { LiveTable, type BroadcastPayload } from './liveTable.js';
+import { LiveTable, type BroadcastPayload, type VacatedSeat } from './liveTable.js';
 
 export interface TableSummary {
   tableId: string;
@@ -14,6 +14,7 @@ export interface TableSummary {
 }
 
 export type BroadcastHandler = (tableId: string, perSeat: Map<number | null, BroadcastPayload>, rawEvents: readonly GameEvent[]) => void;
+export type SeatsVacatedHandler = (tableId: string, vacated: readonly VacatedSeat[]) => void;
 
 /**
  * Holds every live table in-process. Single-node by design (see project
@@ -28,6 +29,7 @@ export class TableRegistry {
   constructor(
     private readonly store: Store,
     private readonly broadcastHandler: BroadcastHandler,
+    private readonly seatsVacatedHandler: SeatsVacatedHandler = () => undefined,
   ) {}
 
   async createTable(name: string, settings: TableSettings, createdBy: string | null, inviteCode: string | null): Promise<LiveTable> {
@@ -41,6 +43,7 @@ export class TableRegistry {
         onBroadcast: this.broadcastHandler,
         onChipsSettled: () => Promise.resolve(),
         now: () => Date.now(),
+        onSeatsVacated: this.seatsVacatedHandler,
       },
       inviteCode,
       createdBy,
@@ -59,7 +62,7 @@ export class TableRegistry {
       name: t.name,
       settings: t.settings,
       seatsFilled: t.seats.filter((s) => s.userId !== null).length,
-      maxSeats: t.settings.maxSeats,
+      maxSeats: t.visibleSeatCount,
       isPrivate: t.settings.isPrivate,
     }));
   }

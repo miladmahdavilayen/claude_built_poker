@@ -1423,6 +1423,13 @@ input[type='range']::-moz-range-thumb {
   display: flex;
   gap: 3px;
 }
+.seat-cards-above-video {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
 .seat-cards .card {
   width: var(--card-w, 26px);
   height: var(--card-h, 38px);
@@ -1506,6 +1513,8 @@ input[type='range']::-moz-range-thumb {
   position: absolute;
   top: -8px;
   left: -8px;
+  /* Above .seat-video, which otherwise paints over the label's inner half. */
+  z-index: 2;
   background: var(--panel-2);
   border: 1px solid var(--panel-border);
   color: var(--muted);
@@ -2199,3 +2208,256 @@ input[type='range']::-moz-range-thumb {
   }
 }
 
+
+/* ---- Owner table controls (see OwnerMenu.tsx) ---- */
+.owner-menu-toggle {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.owner-menu-toggle span {
+  font-size: 16px;
+  line-height: 1;
+}
+.owner-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  justify-content: flex-end;
+  animation: fade-in 0.12s ease;
+}
+.owner-menu {
+  width: min(420px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel);
+  border-left: 1px solid var(--panel-border);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-right: calc(16px + env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: owner-menu-slide 0.18s ease;
+}
+@keyframes owner-menu-slide {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+.owner-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.owner-menu-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.owner-menu-close {
+  background: transparent;
+  font-size: 18px;
+  padding: 4px 10px;
+  color: var(--muted);
+}
+.owner-menu-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+.owner-menu-pending,
+.pending-settings-banner {
+  font-size: 13px;
+  font-weight: 600;
+  color: #10151c;
+  background: var(--accent);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+.pending-settings-banner {
+  border-radius: 0;
+  text-align: center;
+}
+.owner-menu-section {
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.owner-menu-section h4 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.owner-menu-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.owner-menu label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+}
+.owner-menu input[type='text'],
+.owner-menu input[type='number'] {
+  width: 100%;
+  min-width: 0;
+}
+.form-row {
+  display: grid;
+  /* minmax(0, 1fr), not 1fr: a grid track's default minimum is its
+     content's natural width, so two inputs side by side would otherwise
+     push the row wider than a 320px modal. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+.form-row > label {
+  min-width: 0;
+}
+.form-row input:not([type='checkbox']) {
+  width: 100%;
+}
+.owner-menu-inline-check {
+  padding-bottom: 8px;
+  color: var(--text) !important;
+}
+.owner-menu .checkbox-label {
+  color: var(--text);
+  font-size: 13px;
+}
+.owner-menu-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.owner-menu-ok {
+  font-size: 13px;
+  color: var(--good);
+}
+.owner-menu-last-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+.owner-menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.owner-menu-seats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.owner-menu-seat {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel);
+}
+.owner-menu-seat-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+.owner-menu-seat-id {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 46px;
+}
+.owner-menu-seat-who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.owner-menu-seat-stack {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+.owner-menu-seat-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.owner-menu-seat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+}
+.owner-menu-seat-actions button {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.owner-menu-confirm-text {
+  font-size: 13px;
+  flex-basis: 100%;
+}
+.owner-menu-chips-label {
+  flex: 1 1 120px;
+}
+.seat-tag-pending {
+  background: var(--accent);
+  color: #10151c;
+  font-weight: 700;
+}
+.seat-tag-leaving {
+  background: var(--danger);
+}
+
+/* ---- Full-screen toggle: easy to find for new players ---- */
+.immersive-toggle--attention {
+  color: #10151c;
+  background: var(--accent);
+  font-weight: 700;
+  animation: immersive-attention 2s ease-in-out infinite;
+}
+.immersive-toggle--attention:hover {
+  color: #10151c;
+}
+@keyframes immersive-attention {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(242, 189, 77, 0.65);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(242, 189, 77, 0);
+    filter: brightness(1.15);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .immersive-toggle--attention {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(242, 189, 77, 0.45);
+  }
+}

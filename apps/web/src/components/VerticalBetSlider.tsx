@@ -94,7 +94,10 @@ export function VerticalBetSlider({
     const rect = track.getBoundingClientRect();
     const f = Math.min(1, Math.max(0, 1 - (clientY - rect.top) / rect.height));
     const raw = curveToValue(f, min, max);
-    const stepped = Math.round(raw / step) * step;
+    // The ends are exact: min and max (all-in) are rarely step multiples
+    // once amounts are cents, and the top of the track must always mean
+    // "everything", not the nearest step below it.
+    const stepped = f >= 1 ? max : f <= 0 ? min : Math.round(raw / step) * step;
     const next = Math.min(Math.max(stepped, min), max);
     if (next !== value) {
       tickHaptic();

@@ -11,6 +11,7 @@ import { HybridStore } from './db/hybridStore.js';
 import { MemoryStore } from './db/memoryStore.js';
 import type { Store } from './db/store.js';
 import { registerAdminRoutes } from './http/routes/admin.js';
+import { registerReportRoutes } from './http/routes/reports.js';
 import { registerAuthRoutes } from './http/routes/auth.js';
 import { registerFairnessRoutes } from './http/routes/fairness.js';
 import { registerHealthRoute } from './http/routes/health.js';
@@ -116,7 +117,8 @@ async function main(): Promise<void> {
   });
 
   await app.register(helmet, { contentSecurityPolicy: isProd });
-  await app.register(cors, { origin: corsOrigin, credentials: true });
+  // Content-Disposition is exposed so the browser can read a report download's filename (table, hand number and time).
+  await app.register(cors, { origin: corsOrigin, credentials: true, exposedHeaders: ['Content-Disposition'] });
   await app.register(cookie);
   // Configurable so the E2E suite (many short-lived tests sharing ONE
   // server process across the whole run — see playwright.config.ts) can
@@ -165,6 +167,7 @@ async function main(): Promise<void> {
   const { io, registry } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerTableRoutes(app, store, registry);
   registerAdminRoutes(app, store, registry);
+  registerReportRoutes(app, store, registry);
 
   if (process.env.SEED_DEFAULT_TABLES !== 'false') {
     await seedDefaultTables(registry, app.log);

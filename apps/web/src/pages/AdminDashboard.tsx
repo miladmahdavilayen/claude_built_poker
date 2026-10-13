@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../api.js';
-import type { AdminUserDetailDto, AdminUserDto, LedgerEntryDto } from '../api.js';
+import type { AdminUserDetailDto, AdminUserDto, GameReportSummaryDto, LedgerEntryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
+import { ReportDownloads } from '../components/ReportDownloads.js';
 import { MoneyInput } from '../components/MoneyInput.js';
 
 const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
@@ -102,6 +103,9 @@ export function AdminDashboardPage(): React.JSX.Element {
 
       {error && <div className="error-banner">{error}</div>}
 
+      {accessToken && <GameReportsPanel accessToken={accessToken} />}
+
+      <h2 className="admin-section-title">Players</h2>
       <input
         className="admin-search"
         placeholder="Search by name or email..."
@@ -413,5 +417,54 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Every game's books, newest first — live games (still being played) and
+ * finished ones, kept permanently. The same YAML/PDF downloads as the
+ * table's own owner menu; this is where a finished game's report lives
+ * once its table is gone. See apps/server/src/game/gameBook.ts.
+ */
+function GameReportsPanel({ accessToken }: { accessToken: string }): React.JSX.Element {
+  const [reports, setReports] = useState<GameReportSummaryDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = (): void => {
+    api
+      .adminListGameReports(accessToken)
+      .then((res) => setReports(res.reports))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load game reports.'));
+  };
+  useEffect(refresh, [accessToken]);
+
+  const when = (iso: string): string => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+  return (
+    <section className="admin-reports">
+      <div className="admin-reports-header">
+        <h2 className="admin-section-title">Game reports</h2>
+        <button type="button" className="btn-secondary" onClick={refresh}>
+          Refresh
+        </button>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      {reports === null && !error && <p className="profile-hint">Loading…</p>}
+      {reports?.length === 0 && <p className="profile-hint">No games played yet — a report appears here after a table&rsquo;s first hand.</p>}
+      <ul className="admin-reports-list">
+        {reports?.map((r) => (
+          <li key={r.id} className="admin-report-row" data-testid={`report-${r.id}`}>
+            <div className="admin-report-info">
+              <span className="admin-report-name">{r.tableName}</span>
+              <span className={`seat-tag ${r.status === 'live' ? 'seat-tag-pending' : ''}`}>{r.status === 'live' ? 'live' : 'final'}</span>
+              <span className="admin-report-meta">
+                {r.handsPlayed} hand{r.handsPlayed === 1 ? '' : 's'} · started {when(r.startedAt)} · {r.status === 'live' ? `updated ${when(r.updatedAt)}` : `ended ${when(r.endedAt ?? r.updatedAt)}`}
+              </span>
+            </div>
+            <ReportDownloads path={`/admin/reports/${r.id}`} accessToken={accessToken} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

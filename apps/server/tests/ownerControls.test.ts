@@ -165,6 +165,35 @@ describe('LiveTable: owner controls mid-hand', () => {
     expect(finalStackOfFirst + table.state.seats[caller]!.stack).toBe(2000);
   });
 
+  it('a player who folds with chips in the pot and leaves mid-hand never breaks the showdown (regression: the hand used to crash)', () => {
+    table.takeSeat(0, 'a', meta('Alice'), 1000);
+    table.takeSeat(1, 'b', meta('Bob'), 1000);
+    table.takeSeat(2, 'c', meta('Carol'), 1000);
+    table.startNextHand();
+    let left: { userId: string; stack: number } | null = null;
+    for (let guard = 0; table.state.phase === 'in-hand' && guard < 100; guard++) {
+      const seatId = table.state.betting.actingSeat!;
+      const seat = table.state.seats[seatId]!;
+      if (!left && seat.committedThisHand > 0 && table.state.street === 'flop') {
+        table.applyPlayerAction(seatId, { seatId, type: 'fold' });
+        left = table.leaveSeat(seatId);
+        // Free to go right away, chips in hand...
+        expect(table.seatOfUser(left!.userId)).toBeNull();
+        // ...but the seat stays folded (its chips are still in this pot) until the hand ends.
+        expect(table.state.seats[seatId]?.status).toBe('folded');
+        continue;
+      }
+      const toCall = table.state.betting.currentBet - seat.committedThisStreet;
+      table.applyPlayerAction(seatId, toCall > 0 ? { seatId, type: 'call' } : { seatId, type: 'check' });
+    }
+    expect(left).not.toBeNull();
+    expect(table.state.phase).toBe('hand-complete');
+    const leftSeat = table.state.seats.findIndex((s, i) => s.status === 'empty' && i < 3);
+    expect(leftSeat).toBeGreaterThanOrEqual(0);
+    // Every chip accounted for: what's on the table plus what the leaver took.
+    expect(table.state.seats.reduce((sum, s) => sum + s.stack, 0) + left!.stack).toBe(3000);
+  });
+
   it('deleting an empty seat hides it, blocks sitting there, and adding a seat brings the same slot back', () => {
     expect(table.deleteSeat(3)).toEqual({ ok: true, vacated: null });
     expect(table.projectionFor(null).removedSeatIds).toEqual([3]);

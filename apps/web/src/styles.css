@@ -2461,3 +2461,69 @@ input[type='range']::-moz-range-thumb {
     box-shadow: 0 0 0 3px rgba(242, 189, 77, 0.45);
   }
 }
+
+/* ---- Game reports (see ReportDownloads.tsx, AdminDashboard's GameReportsPanel) ---- */
+.report-downloads {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.report-downloads-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-downloads-message {
+  font-size: 12px;
+  word-break: break-all;
+}
+.admin-section-title {
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 18px 0 8px;
+}
+.admin-reports-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.admin-reports-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.admin-report-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+}
+.admin-report-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+.admin-report-name {
+  font-weight: 600;
+}
+.admin-report-meta {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}

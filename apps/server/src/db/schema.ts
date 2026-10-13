@@ -136,3 +136,23 @@ export const tablesRelations = relations(tables, ({ many }) => ({
   hands: many(hands),
   chatMessages: many(chatMessages),
 }));
+
+/**
+ * One game's books at one table (see src/game/gameBook.ts) — rewritten
+ * after every hand while the game is live, then kept forever once final.
+ * The report itself is readable YAML; the other columns exist to list and
+ * find reports without parsing them. No foreign key to `tables`: a report
+ * must outlive anything that might ever clean up old tables.
+ */
+export const gameReports = pgTable('game_reports', {
+  id: uuid('id').primaryKey(),
+  tableId: uuid('table_id').notNull(),
+  tableName: text('table_name').notNull(),
+  status: text('status').notNull().$type<'live' | 'final'>(),
+  handsPlayed: integer('hands_played').notNull(),
+  lastHandNumber: integer('last_hand_number'),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  reportYaml: text('report_yaml').notNull(),
+});

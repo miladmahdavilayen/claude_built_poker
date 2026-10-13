@@ -203,3 +203,45 @@ export function adminBulkDeleteUsers(userIds: string[], accessToken: string): Pr
 export function adminAdjustChips(userId: string, amount: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string }> {
   return postJson('/admin/chips', { userId, amount, reason }, accessToken);
 }
+
+export interface GameReportSummaryDto {
+  id: string;
+  tableId: string;
+  tableName: string;
+  status: 'live' | 'final';
+  handsPlayed: number;
+  lastHandNumber: number | null;
+  startedAt: string;
+  updatedAt: string;
+  endedAt: string | null;
+}
+
+/** Admin-only: every game's books, newest first. */
+export function adminListGameReports(accessToken: string): Promise<{ reports: GameReportSummaryDto[] }> {
+  return getJson('/admin/reports', accessToken);
+}
+
+/**
+ * Admin-only: downloads a game report (YAML or PDF) and saves it under the
+ * server's filename (table, game, hand number and time). `path` is either
+ * a table's current game (`/admin/tables/:id/report`) or a stored one
+ * (`/admin/reports/:id`). Returns the filename saved.
+ */
+export async function downloadGameReport(path: string, format: 'yaml' | 'pdf', accessToken: string): Promise<string> {
+  const res = await fetch(`${API_BASE}${path}?format=${format}`, { headers: authHeaders(accessToken), credentials: 'include' });
+  if (!res.ok) {
+    await parseOrThrow(res); // always throws for a non-OK response, with the server's own message
+    throw new ApiError({ code: 'DOWNLOAD_FAILED', message: 'Download failed.' });
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `game-report.${format}`;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return filename;
+}

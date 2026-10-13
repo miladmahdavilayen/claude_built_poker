@@ -8,6 +8,7 @@ import type {
   Store,
   TableRecord,
   UserRecord,
+  GameReportRecord,
 } from './store.js';
 
 interface LedgerRow extends LedgerEntryInput {
@@ -283,6 +284,30 @@ export class MemoryStore implements Store {
     const t = this.tables.get(id);
     if (t) this.tables.set(id, { ...t, status: 'closed' });
     return Promise.resolve();
+  }
+
+  private readonly gameReports = new Map<string, GameReportRecord>();
+
+  async saveGameReport(record: GameReportRecord): Promise<void> {
+    this.gameReports.set(record.id, { ...record });
+    return Promise.resolve();
+  }
+
+  async listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]> {
+    return Promise.resolve(
+      [...this.gameReports.values()]
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+        .map(({ reportYaml: _yaml, ...rest }) => rest),
+    );
+  }
+
+  async getGameReport(id: string): Promise<GameReportRecord | null> {
+    return Promise.resolve(this.gameReports.get(id) ?? null);
+  }
+
+  async latestGameReportForTable(tableId: string): Promise<GameReportRecord | null> {
+    const forTable = [...this.gameReports.values()].filter((r) => r.tableId === tableId).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    return Promise.resolve(forTable[0] ?? null);
   }
 
   async updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {

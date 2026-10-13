@@ -30,6 +30,7 @@ import {
 import { ALL_BOT_POLICIES, projectSeatView, type BotPolicy } from '@pokerclause/sim';
 import type { Store } from '../db/store.js';
 import { commitmentFor, deriveDeckForHand, generateServerSeed } from '../rng/commitReveal.js';
+import { GameBook, type PlayerKind } from './gameBook.js';
 
 /**
  * Computer players, for practice/solo play — see `addBot`/`removeBot`
@@ -187,6 +188,15 @@ export class LiveTable {
   private readonly removedSeatIds = new Set<number>();
   /** Engine-config changes made mid-hand, applied when that hand ends — see updateSettings/addSeat. */
   private pendingConfig: Partial<TableConfig> = {};
+  /** This game's books — every buy-in, rebuy, cash-out and hand result. See gameBook.ts. A reset ends the game and starts a new book. */
+  book: GameBook;
+  private gameCount = 1;
+  /** Serializes report writes so an older snapshot can never land after a newer one. */
+  private reportWrite: Promise<void> = Promise.resolve();
+  /** Chips added mid-hand straight onto a seat's stack (a folded or sitting-out seat — see addChips): not part of that hand's result. Per seat, reset every deal. */
+  private handChipAdds = new Map<number, number>();
+  /** Folded players who left mid-hand: their key and the stack they left with, so the hand's result can still be booked for them. */
+  private handLeavers = new Map<number, { key: string; stack: number }>();
 
   constructor(
     tableId: string,
@@ -203,6 +213,71 @@ export class LiveTable {
     this.settings = settings;
     this.state = this.freshState();
     this.seats = Array.from({ length: settings.maxSeats }, (_, seatId) => this.emptyLiveSeat(seatId));
+    this.book = new GameBook(tableId, name, this.gameCount, new Date(callbacks.now()));
+  }
+
+  private nowDate(): Date {
+    return new Date(this.callbacks.now());
+  }
+
+  /** Who a seat's occupant is, for the books: the engine's playerId is the stable key (a user id, or `bot:…` for a computer player). */
+  private bookIdentity(seatId: number): { key: string; name: string; kind: PlayerKind } | null {
+    const engineSeat = this.state.seats[seatId];
+    const liveSeat = this.seats[seatId];
+    if (!engineSeat || !liveSeat || engineSeat.status === 'empty' || !engineSeat.playerId) return null;
+    const kind: PlayerKind = liveSeat.botPolicyName ? 'bot' : liveSeat.isGuest ? 'guest' : 'registered';
+    return { key: engineSeat.playerId, name: liveSeat.displayName ?? 'Player', kind };
+  }
+
+  private bookCashOut(seatId: number, amount: number, note: string): void {
+    const who = this.bookIdentity(seatId);
+    // A computer player leaving with nothing isn't a money movement worth a line; a person leaving with nothing still is.
+    if (who && !(who.kind === 'bot' && amount === 0)) this.book.cashOut(who.key, amount, this.nowDate(), note);
+  }
+
+  /**
+   * Writes the current book to the store — after every hand and every
+   * money movement, so a downloaded report is never more than one event
+   * behind. A game that hasn't completed a hand yet isn't saved (nothing
+   * has been played); its buy-ins are still booked and saved with the
+   * first hand.
+   */
+  private saveReport(book: GameBook = this.book): Promise<void> {
+    if (book.handsPlayed === 0) return this.reportWrite;
+    const record = {
+      id: book.id,
+      tableId: this.tableId,
+      tableName: book.tableName,
+      status: book.isFinal ? ('final' as const) : ('live' as const),
+      handsPlayed: book.handsPlayed,
+      lastHandNumber: book.lastHand?.number ?? null,
+      startedAt: book.startedAt,
+      updatedAt: book.updatedAt,
+      endedAt: book.endedAt,
+      reportYaml: book.toYaml(this.nowDate()),
+    };
+    this.reportWrite = this.reportWrite.then(() => this.store.saveGameReport(record)).catch((err: unknown) => {
+      process.stderr.write(`Failed to save game report for table ${this.tableId}: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+    return this.reportWrite;
+  }
+
+  /**
+   * Ends this game's books — everyone still seated is cashed out in the
+   * book with exactly what they're refunded (`voidedHandRefund`, so a hand
+   * cut short is voided, not lost) — and saves the final report. Called
+   * when the table is terminated/emptied, and by a reset (which then
+   * starts a fresh book). Resolves once the final report is written.
+   */
+  closeBook(reason: string): Promise<void> {
+    const at = this.nowDate();
+    if (this.inHand) this.book.voidHand(this.state.handNumber, at, `${reason} during the hand — every chip bet in it was returned`);
+    for (let seatId = 0; seatId < this.seats.length; seatId++) {
+      if (this.state.seats[seatId]?.status === 'empty') continue;
+      this.bookCashOut(seatId, this.voidedHandRefund(seatId), reason);
+    }
+    this.book.finalize(at, reason);
+    return this.saveReport();
   }
 
   /** A clean-slate engine state for this table's settings, with every seat empty — shared by the constructor and resetTable(). */
@@ -324,6 +399,9 @@ export class LiveTable {
       joinsNextHand: status === 'sitting-out',
     };
     this.removeFromWaitlist(userId);
+    const who = this.bookIdentity(seatId);
+    if (who) this.book.buyIn(who.key, who.name, who.kind, buyIn, 'buy-in', this.nowDate(), status === 'sitting-out' ? 'seated mid-hand, dealt in from the next hand' : null);
+    void this.saveReport();
   }
 
   /**
@@ -388,6 +466,9 @@ export class LiveTable {
       botPolicyName: policy.name,
       joinsNextHand: status === 'sitting-out',
     };
+    const who = this.bookIdentity(seatId);
+    if (who) this.book.buyIn(who.key, who.name, who.kind, buyIn, 'buy-in', this.nowDate(), null);
+    void this.saveReport();
     return { ok: true };
   }
 
@@ -442,8 +523,9 @@ export class LiveTable {
       if (this.state.betting.actingSeat === seatId) this.armClockOrBot();
       return { ok: true, vacated: null };
     }
-    const vacated = this.vacateSeat(seatId);
+    const vacated = this.vacateSeat(seatId, deleteSeat ? 'removed by the owner (seat deleted)' : 'removed by the owner');
     if (deleteSeat) this.markSeatRemoved(seatId);
+    void this.saveReport();
     return { ok: true, vacated };
   }
 
@@ -484,8 +566,10 @@ export class LiveTable {
   }
 
   /** Empties a seat right now and returns what its occupant is owed. Only ever called when the seat isn't in a hand in progress. */
-  private vacateSeat(seatId: number): VacatedSeat {
+  private vacateSeat(seatId: number, note = 'removed by the owner'): VacatedSeat {
     const vacated: VacatedSeat = { seatId, userId: this.seats[seatId]?.userId ?? null, refund: this.cashOutAmount(seatId) };
+    // A player who already left mid-hand was cashed out (and booked) then — nothing more to book.
+    if (!this.handLeavers.has(seatId) || this.seats[seatId]?.userId || this.seats[seatId]?.botPolicyName) this.bookCashOut(seatId, vacated.refund, note);
     const newEngineSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, playerId: '', stack: 0, status: 'empty' as const } : s));
     this.state = { ...this.state, seats: newEngineSeats };
     this.seats[seatId] = this.emptyLiveSeat(seatId);
@@ -530,7 +614,10 @@ export class LiveTable {
     if (target.ante > target.bigBlind) return { ok: false, code: 'INVALID_SETTINGS', message: 'The ante cannot be bigger than the big blind.' };
 
     const { smallBlind, bigBlind, ante, straddleEnabled, name, ...immediate } = patch;
-    if (name !== undefined) this.name = name;
+    if (name !== undefined) {
+      this.name = name;
+      this.book.tableName = name;
+    }
     if (immediate.isPrivate === true && !this.inviteCode) this.inviteCode = randomBytes(4).toString('hex');
     this.settings = { ...this.settings, ...immediate };
 
@@ -577,6 +664,29 @@ export class LiveTable {
       throw new Error('CANNOT_LEAVE_MID_HAND');
     }
     const result = { userId: liveSeat.userId, stack: this.cashOutAmount(seatId) };
+    const who = this.bookIdentity(seatId);
+    if (who) {
+      this.book.cashOut(who.key, result.stack, this.nowDate(), 'left the table');
+      void this.saveReport();
+    }
+    if (this.isInCurrentHand(seatId)) {
+      // A folded player leaving mid-hand. They're cashed out and free to go
+      // right now, but the engine seat must stay 'folded' until the hand
+      // ends: their chips are still in this hand's pot, and pot building
+      // only excludes FOLDED contributors (packages/engine/src/pots.ts) —
+      // an 'empty' seat with chips in would be made eligible to win and
+      // crash the showdown. So: stack 0, still folded, vacated at hand end.
+      if (who) this.handLeavers.set(seatId, { key: who.key, stack: result.stack });
+      this.state = { ...this.state, seats: this.state.seats.map((s, i) => (i === seatId ? { ...s, stack: 0 } : s)) };
+      this.seats[seatId] = {
+        ...this.emptyLiveSeat(seatId),
+        displayName: liveSeat.displayName,
+        avatarSeed: liveSeat.avatarSeed,
+        isGuest: liveSeat.isGuest,
+        pendingRemoval: 'player',
+      };
+      return result;
+    }
     const newEngineSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, playerId: '', stack: 0, status: 'empty' as const } : s));
     this.state = { ...this.state, seats: newEngineSeats };
     this.seats[seatId] = this.emptyLiveSeat(seatId);
@@ -599,6 +709,11 @@ export class LiveTable {
     this.clearNextHandTimer();
     this.nextHandAt = null;
     this.seatAssignments.clear(); // any not-yet-redeemed invite links are void once the table's reset
+    // A reset ends the game: everyone is cashed out, so this game's books
+    // close here and the next buy-in starts a new one.
+    void this.closeBook('table reset by the owner');
+    this.gameCount += 1;
+    const nextBook = new GameBook(this.tableId, this.name, this.gameCount, this.nowDate());
     const refunds: { userId: string; stack: number }[] = [];
     for (let i = 0; i < this.seats.length; i++) {
       const liveSeat = this.seats[i]!;
@@ -612,6 +727,7 @@ export class LiveTable {
     this.pendingConfig = {};
     this.state = this.freshState();
     this.seats = Array.from({ length: this.settings.maxSeats }, (_, seatId) => this.emptyLiveSeat(seatId));
+    this.book = nextBook;
     return refunds;
   }
 
@@ -740,6 +856,8 @@ export class LiveTable {
     this.currentHandRng = { commitment, serverSeed, clientSeeds, nonce: handNumber };
     this.currentHandDeck = deck;
     this.currentHandInitialState = this.state;
+    this.handChipAdds = new Map();
+    this.handLeavers = new Map();
     this.actionLog = [];
     this.revealedSeatIds = new Set();
     this.handStartedAt = new Date();
@@ -974,8 +1092,12 @@ export class LiveTable {
       // first await — so the hand-end changes below (pending rebuys landing
       // on stacks, removed players leaving) can never leak into this hand's
       // own results or ledger entries.
+      const finishedHand = { initial: this.currentHandInitialState, handId: this.currentHandId, startedAt: this.handStartedAt };
       void this.settleHand();
+      if (finishedHand.initial && finishedHand.handId) this.bookHand(finishedHand.initial, finishedHand.handId, finishedHand.startedAt, result.events);
       this.applyHandEndChanges();
+      this.reconcileBook();
+      void this.saveReport();
     } else {
       this.armClockOrBot();
     }
@@ -1098,10 +1220,15 @@ export class LiveTable {
     const liveSeat = this.seats[seatId];
     if (!liveSeat) return { appliedNow: false };
     liveSeat.sittingOutRequested = false;
-    if (this.isInCurrentHand(seatId) && this.state.seats[seatId]?.status !== 'folded') {
+    const who = this.bookIdentity(seatId);
+    const inHand = this.isInCurrentHand(seatId) && this.state.seats[seatId]?.status !== 'folded';
+    if (who) this.book.buyIn(who.key, who.name, who.kind, amount, 'rebuy', this.nowDate(), inHand ? 'added mid-hand, on the stack once the hand ended' : null);
+    void this.saveReport();
+    if (inHand) {
       liveSeat.pendingChips += amount;
       return { appliedNow: false };
     }
+    if (this.inHand) this.handChipAdds.set(seatId, (this.handChipAdds.get(seatId) ?? 0) + amount);
     // A folded seat's stack takes no further part in the hand, so it can
     // grow now. Its status stays 'folded' — the engine resets it at the
     // next deal (see resetSeatForNewHand).
@@ -1125,6 +1252,70 @@ export class LiveTable {
   }
 
   /**
+   * Books a finished hand: each dealt-in player's result is what they end
+   * with minus what they started with — less any chips the owner added
+   * straight onto their stack during the hand (not a result), and using
+   * the stack a folded player left with if they left mid-hand. Results
+   * always sum to zero (no rake is taken); the book's own running counts
+   * are checked against the table right after (reconcileBook).
+   */
+  private bookHand(initial: TableState, handId: string, startedAt: Date | null, events: readonly GameEvent[]): void {
+    const final = this.state;
+    const results = new Map<string, number>();
+    for (const start of initial.seats) {
+      if (start.status === 'empty' || !start.playerId) continue;
+      const end = final.seats[start.seatId];
+      const leaver = this.handLeavers.get(start.seatId);
+      const left = leaver?.key === start.playerId;
+      const dealtIn = left || (end?.playerId === start.playerId && (end.status === 'active' || end.status === 'folded' || end.status === 'all-in'));
+      if (!dealtIn || !end) continue;
+      // A player who left mid-hand took their stack with them; the seat now shows 0.
+      const endStack = left ? leaver.stack : end.stack;
+      results.set(start.playerId, endStack - (this.handChipAdds.get(start.seatId) ?? 0) - start.stack);
+    }
+    // One line per winner per hand: a player who takes the main pot and a
+    // side pot gets their total, described by the first pot's hand.
+    const byWinner = new Map<string, { key: string; amount: number; handName: string | null }>();
+    for (const e of events) {
+      if (e.type !== 'pot-awarded') continue;
+      for (const w of e.winners) {
+        const key = final.seats[w.seatId]?.playerId;
+        if (!key) continue;
+        const prev = byWinner.get(key);
+        byWinner.set(key, { key, amount: (prev?.amount ?? 0) + w.amount, handName: prev?.handName ?? w.handName ?? null });
+      }
+    }
+    const winners = [...byWinner.values()];
+    this.book.tableName = this.name;
+    this.book.recordHand({
+      number: final.handNumber,
+      handId,
+      startedAt: startedAt ?? this.nowDate(),
+      endedAt: this.nowDate(),
+      smallBlind: initial.config.smallBlind,
+      bigBlind: initial.config.bigBlind,
+      ante: initial.config.ante,
+      board: final.board,
+      pot: final.pots.reduce((sum, p) => sum + p.amount, 0),
+      results,
+      winners,
+    });
+  }
+
+  /** Checks the book's chip count for every seated player against what the table holds for them (stack + pending). A mismatch is a bookkeeping bug — logged, and flagged in the report. */
+  private reconcileBook(): void {
+    const actual = new Map<string, number>();
+    for (let seatId = 0; seatId < this.state.seats.length; seatId++) {
+      const who = this.bookIdentity(seatId);
+      if (who) actual.set(who.key, this.cashOutAmount(seatId));
+    }
+    const mismatched = this.book.reconcile(actual);
+    if (mismatched.length > 0) {
+      process.stderr.write(`Game book for table ${this.tableId} disagrees with the table after hand #${String(this.state.handNumber)} for: ${mismatched.join(', ')}\n`);
+    }
+  }
+
+  /**
    * Runs the moment a hand ends: everything the owner changed mid-hand
    * that had to wait for it — queued blinds/ante/seat-count, pending
    * rebuys onto stacks, mid-hand joiners dealt in, removed players
@@ -1142,7 +1333,7 @@ export class LiveTable {
       const seatId = liveSeat.seatId;
       if (liveSeat.pendingRemoval) {
         const deleteSeat = liveSeat.pendingRemoval === 'seat';
-        vacated.push(this.vacateSeat(seatId));
+        vacated.push(this.vacateSeat(seatId, deleteSeat ? 'removed by the owner (seat deleted), after the hand' : 'removed by the owner, after the hand'));
         if (deleteSeat) this.markSeatRemoved(seatId);
         continue;
       }

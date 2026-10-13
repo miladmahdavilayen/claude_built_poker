@@ -1840,3 +1840,60 @@ added or deleted a seat. Each now processes an events batch exactly once.
 The e2e regression check is deliberately non-retrying: a retrying
 assertion passed even without the fix, because it simply waited out the
 replay.
+
+## Game books: accurate accounting for every game, live after every hand
+
+Every table keeps a `GameBook` (`apps/server/src/game/gameBook.ts`) for the
+game in progress. It books money the way home games do: every buy-in,
+rebuy and cash-out as it happens, each hand's result per player, and
+everyone netted at the end (cash-outs + chips still on the table −
+buy-ins). Settle-up uses the standard greedy method: the biggest loser
+pays the biggest winner the smaller amount, repeated, which takes at
+most n−1 payments. Rankings are by net result.
+
+**Why the book keeps its own chip count.** Reading stacks off the table
+would make the report trivially "right" and hide bookkeeping bugs.
+Instead each player's book count is buy-ins − cash-outs + hand results,
+and after every hand `reconcile` compares it with what the table
+actually holds (stack + pending chips). The report states how many hands
+matched, and a mismatch is logged. A randomized 40-hand test (mid-hand
+rebuys, joins, removals, leavers, a bot, blind changes) requires every
+hand to match and every cent to be accounted for; deliberately breaking
+the mid-hand-rebuy or mid-hand-leaver accounting makes it fail.
+
+**Hand results** are end stack − start stack, minus any chips the owner
+put straight onto the stack mid-hand (folded/sitting-out seats, which
+aren't part of the result), using the stack a player walked away with if
+they left mid-hand. They always sum to zero, since no rake is taken.
+
+**A real bug this found.** A player who folded with chips in the pot and
+then left mid-hand had their engine seat set to `empty`. Pot building
+only excludes `folded` contributors (`packages/engine/src/pots.ts`), so
+the empty seat became eligible to win, and the showdown crashed on a
+seat with no cards. Leaving mid-hand now cashes the player out
+immediately but keeps the seat `folded` (stack 0) until the hand ends.
+
+**Storage.** One `game_reports` row per game, rewritten after every hand
+and every money movement while live, then marked final and kept forever.
+The report itself is readable YAML (`yaml` package); the other columns
+are for listing. There is no foreign key to `tables`, so a report can't
+be lost to table cleanup. A game that never finishes a hand isn't saved.
+A reset ends the game (everyone is cashed out, and a hand cut short is
+listed as voided) and the next buy-in starts a new one. Terminating or
+emptying a table writes the final report before the table goes away.
+
+**Guests appear by display name only.** Guests are otherwise never
+persisted (see "Guests are never persisted at all"), but a game's books
+are useless without the people in them. The report text names them and
+marks them "guest"; no guest account row or id is stored.
+
+**Downloads are admin-only.** `GET /admin/tables/:id/report` serves the
+table's live book (generated fresh, so it's exact through the last
+completed hand plus any money moved since), or the most recent stored
+game if none has been played since a reset. `GET /admin/reports` lists
+all games, and `GET /admin/reports/:id` serves one. Both formats come
+from the same data: YAML as stored, and a PDF rendered with `pdfkit`.
+Filenames carry the table, game number, last hand number and time. The
+PDF's footer is drawn with the bottom margin lifted, because pdfkit
+otherwise adds a blank page for any text past the margin (the first
+version had 8 such pages).

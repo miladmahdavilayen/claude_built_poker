@@ -12,6 +12,7 @@ import type {
   Store,
   TableRecord,
   UserRecord,
+  GameReportRecord,
 } from './store.js';
 
 function toUserRecord(row: typeof schema.users.$inferSelect): UserRecord {
@@ -260,6 +261,57 @@ export class DrizzleStore implements Store {
 
   async closeTable(id: string): Promise<void> {
     await this.db.update(schema.tables).set({ status: 'closed' }).where(eq(schema.tables.id, id));
+  }
+
+  async saveGameReport(record: GameReportRecord): Promise<void> {
+    await this.db
+      .insert(schema.gameReports)
+      .values(record)
+      .onConflictDoUpdate({
+        target: schema.gameReports.id,
+        set: {
+          tableName: record.tableName,
+          status: record.status,
+          handsPlayed: record.handsPlayed,
+          lastHandNumber: record.lastHandNumber,
+          updatedAt: record.updatedAt,
+          endedAt: record.endedAt,
+          reportYaml: record.reportYaml,
+        },
+      });
+  }
+
+  async listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]> {
+    const t = schema.gameReports;
+    return this.db
+      .select({
+        id: t.id,
+        tableId: t.tableId,
+        tableName: t.tableName,
+        status: t.status,
+        handsPlayed: t.handsPlayed,
+        lastHandNumber: t.lastHandNumber,
+        startedAt: t.startedAt,
+        updatedAt: t.updatedAt,
+        endedAt: t.endedAt,
+      })
+      .from(t)
+      .orderBy(desc(t.updatedAt));
+  }
+
+  async getGameReport(id: string): Promise<GameReportRecord | null> {
+    const [row] = await this.db.select().from(schema.gameReports).where(eq(schema.gameReports.id, id)).limit(1);
+    return row ?? null;
+  }
+
+  async latestGameReportForTable(tableId: string): Promise<GameReportRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.gameReports)
+      .where(eq(schema.gameReports.tableId, tableId))
+      .orderBy(desc(schema.gameReports.updatedAt))
+      .limit(1);
+    return row ?? null;
   }
 
   async updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {

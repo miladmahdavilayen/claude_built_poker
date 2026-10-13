@@ -106,6 +106,20 @@ export interface HandRecordForVerification {
   rngCommit: RngCommitInput;
 }
 
+/** One game's books at one table (see src/game/gameBook.ts): the full report as readable YAML, plus a few columns to list/find it by. Kept forever. */
+export interface GameReportRecord {
+  id: string;
+  tableId: string;
+  tableName: string;
+  status: 'live' | 'final';
+  handsPlayed: number;
+  lastHandNumber: number | null;
+  startedAt: Date;
+  updatedAt: Date;
+  endedAt: Date | null;
+  reportYaml: string;
+}
+
 export interface ChatMessageRecord {
   id: string;
   tableId: string;
@@ -175,6 +189,13 @@ export interface Store {
   listTables(): Promise<TableRecord[]>;
   getTable(id: string): Promise<TableRecord | null>;
   closeTable(id: string): Promise<void>;
+  /** Inserts or replaces a game's report (same id = same game, rewritten after every hand). */
+  saveGameReport(record: GameReportRecord): Promise<void>;
+  /** Every game report, newest first — without the YAML body. */
+  listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]>;
+  getGameReport(id: string): Promise<GameReportRecord | null>;
+  /** The most recently updated report for a table, if any. */
+  latestGameReportForTable(tableId: string): Promise<GameReportRecord | null>;
   /** Persists an owner's mid-table changes (name, settings, privacy) — see LiveTable.updateSettings. */
   updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void>;
 

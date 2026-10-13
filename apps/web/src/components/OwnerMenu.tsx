@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatChips } from '../chips.js';
 import type { TableSocketApi } from '../useTableSocket.js';
 import { MoneyInput } from './MoneyInput.js';
+import { ReportDownloads } from './ReportDownloads.js';
 
 type SettingsForm = {
   name: string;
@@ -79,6 +80,7 @@ export function OwnerMenu({
   state,
   sock,
   isAdmin,
+  accessToken,
   tableId,
   onClose,
   onAddBot,
@@ -90,6 +92,7 @@ export function OwnerMenu({
   state: ProjectedTableState;
   sock: TableSocketApi;
   isAdmin: boolean;
+  accessToken: string | null;
   tableId: string;
   onClose: () => void;
   onAddBot: (seatId: number) => void;
@@ -131,6 +134,8 @@ export function OwnerMenu({
   };
 
   const inHand = state.phase === 'in-hand';
+  // Hands this game has finished — the report covers exactly these (a hand in progress isn't in it yet).
+  const completedHands = inHand ? state.handNumber - 1 : state.handNumber;
   const patch = diff(form, base);
   const hasChanges = typeof patch === 'string' || Object.keys(patch).length > 0;
 
@@ -413,6 +418,20 @@ export function OwnerMenu({
           </ul>
           {inHand && <p className="owner-menu-note">Players still in this hand are folded on their turn and leave when it ends; chips you add them land then too.</p>}
         </section>
+
+        {isAdmin && accessToken && (
+          <section className="owner-menu-section">
+            <h4>Game report</h4>
+            <p className="owner-menu-note">
+              Every buy-in, rebuy and cash-out, each hand&rsquo;s results, profit/loss, rankings and who pays whom — updated after every hand
+              and kept permanently.{' '}
+              {completedHands > 0
+                ? `Right now it covers ${String(completedHands)} hand${completedHands === 1 ? '' : 's'} (through hand #${String(completedHands)}).`
+                : 'This game hasn’t finished a hand yet.'}
+            </p>
+            <ReportDownloads path={`/admin/tables/${tableId}/report`} accessToken={accessToken} testIdPrefix="table-report" />
+          </section>
+        )}
 
         {isAdmin && (
           <section className="owner-menu-section">

@@ -8,6 +8,7 @@ import type {
   Store,
   TableRecord,
   UserRecord,
+  GameReportRecord,
 } from './store.js';
 
 /**
@@ -206,6 +207,25 @@ export class HybridStore implements Store {
 
   closeTable(id: string): Promise<void> {
     return this.real.closeTable(id);
+  }
+
+  // --- Game reports: always kept in the real store. Guests appear in them
+  // by display name only (no account row, no id) — see DECISIONS.md. ---
+
+  saveGameReport(record: GameReportRecord): Promise<void> {
+    return this.real.saveGameReport(record);
+  }
+
+  listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]> {
+    return this.real.listGameReports();
+  }
+
+  getGameReport(id: string): Promise<GameReportRecord | null> {
+    return this.real.getGameReport(id);
+  }
+
+  latestGameReportForTable(tableId: string): Promise<GameReportRecord | null> {
+    return this.real.latestGameReportForTable(tableId);
   }
 
   updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {

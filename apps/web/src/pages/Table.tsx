@@ -593,6 +593,7 @@ export function TablePage(): React.JSX.Element {
           state={state}
           sock={sock}
           isAdmin={user.role === 'admin'}
+          accessToken={accessToken}
           tableId={tableId}
           onClose={() => setOwnerMenuOpen(false)}
           onAddBot={(seatId) => {

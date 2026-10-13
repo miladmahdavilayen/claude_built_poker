@@ -175,6 +175,9 @@ export function attachSocketServer(
   async function closeTableWithNotice(tableId: string, reason: string): Promise<void> {
     const table = registry.get(tableId);
     if (!table) return;
+    // Book everyone's cash-out and write this game's final report before
+    // the table (and its in-memory book) goes away.
+    await table.closeBook(reason === 'All players left.' ? 'everyone left the table' : 'table terminated by the owner');
     const humanSeats = table.seats.filter((s) => s.userId !== null);
     for (const seat of humanSeats) {
       const amount = table.voidedHandRefund(seat.seatId);

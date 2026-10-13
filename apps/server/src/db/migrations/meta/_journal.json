@@ -29,6 +29,13 @@
       "when": 1791900000000,
       "tag": "0003_amounts_to_cents",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791950000000,
+      "tag": "0004_game_reports",
+      "breakpoints": true
     }
   ]
 }

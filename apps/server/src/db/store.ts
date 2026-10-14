@@ -106,7 +106,41 @@ export interface HandRecordForVerification {
   rngCommit: RngCommitInput;
 }
 
-/** One game's books at one table (see src/game/gameBook.ts): the full report as readable YAML, plus a few columns to list/find it by. Kept forever. */
+/** One player's line in a game's final standings — a row of `game_report_players`. Amounts in cents. */
+export interface GameReportPlayerRecord {
+  rank: number;
+  playerName: string;
+  /** The account's id for registered players; null for guests and computer players. */
+  userId: string | null;
+  playerType: 'registered' | 'guest' | 'bot';
+  boughtIn: number;
+  buyInCount: number;
+  cashedOut: number;
+  onTable: number;
+  net: number;
+  handsPlayed: number;
+  handsWon: number;
+}
+
+/** The numbers a game is listed and compared by, in cents (see GameBook.summary). */
+export interface GameReportSummary {
+  gameNumber: number;
+  /** The blinds of the game's most recent hand, e.g. "$1/$2". */
+  stakes: string;
+  playerCount: number;
+  totalBoughtIn: number;
+  totalCashedOut: number;
+  stillOnTable: number;
+  booksBalance: boolean;
+  players: GameReportPlayerRecord[];
+}
+
+/**
+ * One game's books at one table (see src/game/gameBook.ts): the full report
+ * as readable YAML, plus structured columns and per-player rows to list,
+ * sort and search by. Kept forever. `summary` is null only for a report
+ * saved before those columns existed and not yet backfilled.
+ */
 export interface GameReportRecord {
   id: string;
   tableId: string;
@@ -117,6 +151,7 @@ export interface GameReportRecord {
   startedAt: Date;
   updatedAt: Date;
   endedAt: Date | null;
+  summary: GameReportSummary | null;
   reportYaml: string;
 }
 
@@ -191,7 +226,7 @@ export interface Store {
   closeTable(id: string): Promise<void>;
   /** Inserts or replaces a game's report (same id = same game, rewritten after every hand). */
   saveGameReport(record: GameReportRecord): Promise<void>;
-  /** Every game report, newest first — without the YAML body. */
+  /** Every game report, most recently started first — without the YAML body. */
   listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]>;
   getGameReport(id: string): Promise<GameReportRecord | null>;
   /** The most recently updated report for a table, if any. */

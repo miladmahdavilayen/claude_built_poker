@@ -296,7 +296,7 @@ export class MemoryStore implements Store {
   async listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]> {
     return Promise.resolve(
       [...this.gameReports.values()]
-        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+        .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
         .map(({ reportYaml: _yaml, ...rest }) => rest),
     );
   }

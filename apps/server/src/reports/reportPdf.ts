@@ -243,22 +243,15 @@ export function renderReportPdf(report: GameReport): Promise<Buffer> {
     'No money has moved yet.',
   );
 
-  // ---- Hands ----
-  sectionTitle('Hand by hand', 'Each hand\'s winners and every player\'s result (players who broke even are left out).');
-  type Hand = GameReport['hands'][number];
-  table<Hand>(
-    [
-      { header: 'Hand', width: 36, align: 'center', value: (h) => `#${String(h.hand)}` },
-      { header: 'Ended (UTC)', width: 86, value: (h) => when(h.ended_at) },
-      { header: 'Blinds', width: 62, value: (h) => h.blinds },
-      { header: 'Pot', width: 52, align: 'right', value: (h) => h.pot },
-      { header: 'Board', width: 74, value: (h) => h.board },
-      { header: 'Winners', width: 102, value: (h) => h.winners.map((w) => `${w.player} ${w.won}${w.with ? ` (${w.with})` : ''}`).join('\n') },
-      { header: 'Results', width: width - 412, value: (h) => Object.entries(h.results).map(([p, r]) => `${p} ${r}`).join('\n') },
-    ],
-    report.hands,
-    'No hands completed yet.',
-  );
+  // Hand-by-hand detail stays in the YAML (the permanent record); the PDF
+  // is the readable summary: buy-ins, rankings, settlements.
+  doc.moveDown(1);
+  ensureRoom(14);
+  doc
+    .font('Helvetica-Oblique')
+    .fontSize(8.5)
+    .fillColor(MUTED)
+    .text(`Hand-by-hand results for all ${String(g.hands_played)} hands are in the YAML version of this report.`, left, doc.y, { width });
 
   // ---- Footer on every page ----
   const range = doc.bufferedPageRange();

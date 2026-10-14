@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { boolean, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 export const userRoleEnum = pgEnum('user_role', ['player', 'admin']);
 
@@ -154,5 +154,35 @@ export const gameReports = pgTable('game_reports', {
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
+  // Headline numbers (cents) — null only on a report saved before 0005 and not yet backfilled.
+  gameNumber: integer('game_number'),
+  stakes: text('stakes'),
+  playerCount: integer('player_count'),
+  totalBoughtIn: bigint('total_bought_in', { mode: 'number' }),
+  totalCashedOut: bigint('total_cashed_out', { mode: 'number' }),
+  stillOnTable: bigint('still_on_table', { mode: 'number' }),
+  booksBalance: boolean('books_balance'),
   reportYaml: text('report_yaml').notNull(),
 });
+
+/** Each game's standings, one row per player, rewritten with the report — for per-player history and search. Amounts in cents. */
+export const gameReportPlayers = pgTable(
+  'game_report_players',
+  {
+    reportId: uuid('report_id')
+      .notNull()
+      .references(() => gameReports.id, { onDelete: 'cascade' }),
+    rank: integer('rank').notNull(),
+    playerName: text('player_name').notNull(),
+    userId: text('user_id'),
+    playerType: text('player_type').notNull().$type<'registered' | 'guest' | 'bot'>(),
+    boughtIn: bigint('bought_in', { mode: 'number' }).notNull(),
+    buyInCount: integer('buy_in_count').notNull(),
+    cashedOut: bigint('cashed_out', { mode: 'number' }).notNull(),
+    onTable: bigint('on_table', { mode: 'number' }).notNull(),
+    net: bigint('net', { mode: 'number' }).notNull(),
+    handsPlayed: integer('hands_played').notNull(),
+    handsWon: integer('hands_won').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.reportId, t.rank] }), index('game_report_players_user_id_idx').on(t.userId)],
+);

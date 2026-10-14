@@ -34,6 +34,7 @@ describe('socketServer: live signaling and access control', () => {
   let httpServer: ReturnType<typeof createServer>;
   let io: Server;
   let registry: TableRegistry;
+  let closeAllTables: () => Promise<void>;
   let baseUrl: string;
   // Held by reference (not destructured) so a test can set `deps.adminUserId`
   // AFTER attachSocketServer is already running — the real app resolves this
@@ -46,7 +47,7 @@ describe('socketServer: live signaling and access control', () => {
     store = new MemoryStore();
     httpServer = createServer();
     deps = { store, corsOrigin: 'http://localhost:5173', adminUserId: '' };
-    ({ io, registry } = attachSocketServer(httpServer, deps));
+    ({ io, registry, closeAllTables } = attachSocketServer(httpServer, deps));
     await new Promise<void>((resolve) => httpServer.listen(0, resolve));
     const { port } = httpServer.address() as AddressInfo;
     baseUrl = `http://localhost:${String(port)}`;
@@ -786,6 +787,33 @@ describe('socketServer: live signaling and access control', () => {
     // He lost what he'd put in before folding; everything else — including the 50 pending — came back.
     expect((await store.findUserById(bob.userId))?.chips).toBe(1000 - bobBlind);
     expect(table.seats[1]?.userId).toBeNull();
+
+    ownerSocket.close();
+    bobSocket.close();
+  });
+
+  it('a server shutdown closes every table: chips go back to balances, players are told, and the game report is final', async () => {
+    const { owner, bob, ownerSocket, bobSocket, table } = await ownerAndPlayerSeated(100);
+    ownerSocket.emit('start-hand');
+    await waitForState<{ state: { phase: string } }>(ownerSocket, (p) => p.state.phase === 'in-hand');
+    const folder = table.state.betting.actingSeat!;
+    table.applyPlayerAction(folder, { seatId: folder, type: 'fold' });
+    expect(table.state.phase).toBe('hand-complete');
+    const stacks = table.state.seats.slice(0, 2).map((seat) => seat.stack);
+    const other = await registry.createTable('Idle Table', SETTINGS, null, null);
+
+    const bobSeesClose = waitFor<{ reason: string }>(bobSocket, 'table-closed');
+    await closeAllTables();
+    expect((await bobSeesClose).reason).toMatch(/restarting/i);
+    expect(registry.get(table.tableId)).toBeNull();
+    expect(registry.get(other.tableId)).toBeNull();
+    // Everyone's stack is back in their balance — nothing stranded on a table that no longer exists.
+    expect((await store.findUserById(owner.userId))?.chips).toBe(900 + stacks[0]!);
+    expect((await store.findUserById(bob.userId))?.chips).toBe(900 + stacks[1]!);
+    const report = await store.getGameReport(table.book.id);
+    expect(report?.status).toBe('final');
+    expect(report?.reportYaml).toContain('ended_because: server restarted for an update');
+    expect(report?.summary?.stillOnTable).toBe(0);
 
     ownerSocket.close();
     bobSocket.close();

@@ -112,6 +112,9 @@ test('admin can swipe a row left to reveal and use a per-row delete action', asy
   await seedRealAccount(page, 'SwipeTarget');
   await page.goto('/admin');
   await page.getByPlaceholder('Search by name or email...').fill('SwipeTarget');
+  // The game reports panel above loads on its own; let it settle so the row
+  // isn't pushed down between measuring it and dragging it.
+  await expect(page.locator('.admin-reports')).not.toContainText('Loading…');
 
   const rowWrap = page.locator('.admin-user-row-wrap', { has: page.locator('.admin-user-row', { hasText: 'SwipeTarget' }) });
   const row = rowWrap.locator('.admin-user-row');

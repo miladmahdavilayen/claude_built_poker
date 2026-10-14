@@ -79,7 +79,7 @@ const chatLimiter = new RateLimiter(5, 1); // 5 burst, 1/sec refill
 export function attachSocketServer(
   httpServer: HttpServer,
   deps: { store: Store; corsOrigin: string; adminUserId: string },
-): { io: Server; registry: TableRegistry } {
+): { io: Server; registry: TableRegistry; closeAllTables: () => Promise<void> } {
   const io = new Server(httpServer, {
     cors: { origin: deps.corsOrigin, credentials: true },
   });
@@ -172,12 +172,12 @@ export function attachSocketServer(
    * rule that a table with no human players left has no reason to keep
    * existing.
    */
-  async function closeTableWithNotice(tableId: string, reason: string): Promise<void> {
+  async function closeTableWithNotice(tableId: string, reason: string, bookReason?: string): Promise<void> {
     const table = registry.get(tableId);
     if (!table) return;
     // Book everyone's cash-out and write this game's final report before
     // the table (and its in-memory book) goes away.
-    await table.closeBook(reason === 'All players left.' ? 'everyone left the table' : 'table terminated by the owner');
+    await table.closeBook(bookReason ?? (reason === 'All players left.' ? 'everyone left the table' : 'table terminated by the owner'));
     const humanSeats = table.seats.filter((s) => s.userId !== null);
     for (const seat of humanSeats) {
       const amount = table.voidedHandRefund(seat.seatId);
@@ -843,5 +843,18 @@ export function attachSocketServer(
     });
   });
 
-  return { io, registry };
+  /**
+   * Live tables only exist in this process's memory, so a shutdown (every
+   * deploy restarts the server) ends them all. Closing each one exactly
+   * like the owner terminating it returns every seated player's chips to
+   * their balance and writes the game's final report — instead of
+   * stranding the chips and leaving the report "live" forever.
+   */
+  async function closeAllTables(): Promise<void> {
+    for (const { tableId } of registry.list()) {
+      await closeTableWithNotice(tableId, 'The server is restarting for an update. Your chips are back in your balance.', 'server restarted for an update');
+    }
+  }
+
+  return { io, registry, closeAllTables };
 }

@@ -21,6 +21,7 @@ import { registerUserRoutes } from './http/routes/users.js';
 import type { TableSettings } from '@pokerclause/shared';
 import type { TableRegistry } from './game/tableRegistry.js';
 import { attachSocketServer } from './socket/socketServer.js';
+import { backfillGameReportSummaries, finishInterruptedGameReports } from './reports/backfill.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
@@ -30,14 +31,15 @@ import type { FastifyBaseLogger } from 'fastify';
  * fresh on every boot, so a new self-host isn't a blank lobby.
  */
 async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger): Promise<void> {
-  // All amounts in cents (see packages/shared/src/money.ts): $1/$2 blinds, $40–$200 buy-in.
-  const microStakes: TableSettings = {
-    smallBlind: 100,
+  // All amounts in cents (see packages/shared/src/money.ts). Buy-ins run
+  // 40–100 big blinds at every stake.
+  const lowStakes: TableSettings = {
+    smallBlind: 100, // $1/$2, $80–$200 buy-in
     bigBlind: 200,
     ante: 0,
-    maxSeats: 6,
+    maxSeats: 9,
     straddleEnabled: false,
-    minBuyIn: 4_000,
+    minBuyIn: 8_000,
     maxBuyIn: 20_000,
     actionSeconds: 25,
     timeBankSeconds: 60,
@@ -48,17 +50,14 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
     isPrivate: false,
     disableChatInHand: false,
   };
-  const highStakes: TableSettings = {
-    ...microStakes,
-    smallBlind: 500,
-    bigBlind: 1_000,
-    minBuyIn: 20_000,
-    maxBuyIn: 100_000,
-    maxSeats: 9,
-  };
-  await registry.createTable('Micro Stakes 1/2', microStakes, null, null);
-  await registry.createTable('High Stakes 5/10', highStakes, null, null);
-  log.info('Seeded 2 default public tables.');
+  // $10/$20, $800–$2,000 buy-in
+  const mediumStakes: TableSettings = { ...lowStakes, smallBlind: 1_000, bigBlind: 2_000, minBuyIn: 80_000, maxBuyIn: 200_000 };
+  // $100/$200, $8,000–$20,000 buy-in
+  const highStakes: TableSettings = { ...lowStakes, smallBlind: 10_000, bigBlind: 20_000, minBuyIn: 800_000, maxBuyIn: 2_000_000 };
+  await registry.createTable('High Stakes $100/$200', highStakes, null, null);
+  await registry.createTable('Medium Stakes $10/$20', mediumStakes, null, null);
+  await registry.createTable('Low Stakes $1/$2', lowStakes, null, null);
+  log.info('Seeded 3 default public tables (high, medium, low stakes).');
 }
 
 /**
@@ -164,10 +163,13 @@ async function main(): Promise<void> {
   registerUserRoutes(app, store);
   registerTestSeedRoutes(app, store);
 
-  const { io, registry } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
+  const { io, registry, closeAllTables } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerTableRoutes(app, store, registry);
   registerAdminRoutes(app, store, registry);
   registerReportRoutes(app, store, registry);
+
+  await finishInterruptedGameReports(store, (msg) => app.log.info(msg));
+  await backfillGameReportSummaries(store, (msg) => app.log.info(msg));
 
   if (process.env.SEED_DEFAULT_TABLES !== 'false') {
     await seedDefaultTables(registry, app.log);
@@ -178,6 +180,11 @@ async function main(): Promise<void> {
 
   async function shutdown(signal: string): Promise<void> {
     app.log.info(`Received ${signal}, shutting down gracefully...`);
+    try {
+      await closeAllTables();
+    } catch (err) {
+      app.log.error(err, 'Failed to close every table cleanly on shutdown');
+    }
     await io.close();
     await app.close();
     if (process.env.DATABASE_URL) await closeDb();

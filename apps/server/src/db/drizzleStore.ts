@@ -12,8 +12,21 @@ import type {
   Store,
   TableRecord,
   UserRecord,
+  GameReportPlayerRecord,
   GameReportRecord,
 } from './store.js';
+
+type GameReportRow = Omit<typeof schema.gameReports.$inferSelect, 'reportYaml'>;
+
+/** A game_reports row (+ its game_report_players rows) as a record; summary is null on a row saved before migration 0005 and not yet backfilled. */
+function toReportRecord(row: GameReportRow, players: GameReportPlayerRecord[]): Omit<GameReportRecord, 'reportYaml'> {
+  const { gameNumber, stakes, playerCount, totalBoughtIn, totalCashedOut, stillOnTable, booksBalance, ...rest } = row;
+  const summary =
+    gameNumber === null || stakes === null || playerCount === null || totalBoughtIn === null || totalCashedOut === null || stillOnTable === null || booksBalance === null
+      ? null
+      : { gameNumber, stakes, playerCount, totalBoughtIn, totalCashedOut, stillOnTable, booksBalance, players };
+  return { ...rest, summary };
+}
 
 function toUserRecord(row: typeof schema.users.$inferSelect): UserRecord {
   return {
@@ -264,26 +277,33 @@ export class DrizzleStore implements Store {
   }
 
   async saveGameReport(record: GameReportRecord): Promise<void> {
-    await this.db
-      .insert(schema.gameReports)
-      .values(record)
-      .onConflictDoUpdate({
-        target: schema.gameReports.id,
-        set: {
-          tableName: record.tableName,
-          status: record.status,
-          handsPlayed: record.handsPlayed,
-          lastHandNumber: record.lastHandNumber,
-          updatedAt: record.updatedAt,
-          endedAt: record.endedAt,
-          reportYaml: record.reportYaml,
-        },
-      });
+    const { summary, ...rest } = record;
+    const columns = {
+      ...rest,
+      gameNumber: summary?.gameNumber ?? null,
+      stakes: summary?.stakes ?? null,
+      playerCount: summary?.playerCount ?? null,
+      totalBoughtIn: summary?.totalBoughtIn ?? null,
+      totalCashedOut: summary?.totalCashedOut ?? null,
+      stillOnTable: summary?.stillOnTable ?? null,
+      booksBalance: summary?.booksBalance ?? null,
+    };
+    // Everything but the game's identity (id, table, start time) changes as it's played.
+    const changing: Partial<typeof columns> = { ...columns };
+    delete changing.id;
+    delete changing.tableId;
+    delete changing.startedAt;
+    await this.db.transaction(async (tx) => {
+      await tx.insert(schema.gameReports).values(columns).onConflictDoUpdate({ target: schema.gameReports.id, set: changing });
+      if (!summary) return;
+      await tx.delete(schema.gameReportPlayers).where(eq(schema.gameReportPlayers.reportId, record.id));
+      if (summary.players.length > 0) await tx.insert(schema.gameReportPlayers).values(summary.players.map((p) => ({ reportId: record.id, ...p })));
+    });
   }
 
   async listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]> {
     const t = schema.gameReports;
-    return this.db
+    const rows = await this.db
       .select({
         id: t.id,
         tableId: t.tableId,
@@ -294,14 +314,29 @@ export class DrizzleStore implements Store {
         startedAt: t.startedAt,
         updatedAt: t.updatedAt,
         endedAt: t.endedAt,
+        gameNumber: t.gameNumber,
+        stakes: t.stakes,
+        playerCount: t.playerCount,
+        totalBoughtIn: t.totalBoughtIn,
+        totalCashedOut: t.totalCashedOut,
+        stillOnTable: t.stillOnTable,
+        booksBalance: t.booksBalance,
       })
       .from(t)
-      .orderBy(desc(t.updatedAt));
+      .orderBy(desc(t.startedAt));
+    const players = await this.db.select().from(schema.gameReportPlayers).orderBy(schema.gameReportPlayers.reportId, schema.gameReportPlayers.rank);
+    const byReport = new Map<string, GameReportPlayerRecord[]>();
+    for (const { reportId, ...p } of players) {
+      const list = byReport.get(reportId) ?? [];
+      list.push(p);
+      byReport.set(reportId, list);
+    }
+    return rows.map((row) => toReportRecord(row, byReport.get(row.id) ?? []));
   }
 
   async getGameReport(id: string): Promise<GameReportRecord | null> {
     const [row] = await this.db.select().from(schema.gameReports).where(eq(schema.gameReports.id, id)).limit(1);
-    return row ?? null;
+    return row ? { ...toReportRecord(row, await this.reportPlayers(row.id)), reportYaml: row.reportYaml } : null;
   }
 
   async latestGameReportForTable(tableId: string): Promise<GameReportRecord | null> {
@@ -311,7 +346,12 @@ export class DrizzleStore implements Store {
       .where(eq(schema.gameReports.tableId, tableId))
       .orderBy(desc(schema.gameReports.updatedAt))
       .limit(1);
-    return row ?? null;
+    return row ? { ...toReportRecord(row, await this.reportPlayers(row.id)), reportYaml: row.reportYaml } : null;
+  }
+
+  private async reportPlayers(reportId: string): Promise<GameReportPlayerRecord[]> {
+    const rows = await this.db.select().from(schema.gameReportPlayers).where(eq(schema.gameReportPlayers.reportId, reportId)).orderBy(schema.gameReportPlayers.rank);
+    return rows.map(({ reportId: _r, ...p }) => p);
   }
 
   async updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {

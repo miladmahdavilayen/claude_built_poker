@@ -23,4 +23,9 @@ WORKDIR /app/apps/server
 ENV NODE_ENV=production
 EXPOSE 4000
 
-CMD ["pnpm", "start"]
+# Node itself is process 1, not `pnpm start`: pnpm exits on SIGTERM
+# without waiting for the server, so a deploy's `docker compose up -d`
+# would kill it before its shutdown handler (index.ts) could close every
+# table — refund seated stacks, finalize game reports. Same command as
+# `pnpm start` (tsx), just without the wrappers in between.
+CMD ["node", "--import", "tsx", "src/index.ts"]

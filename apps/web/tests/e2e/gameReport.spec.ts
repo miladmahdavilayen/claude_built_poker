@@ -58,6 +58,19 @@ test('the owner downloads the live game report mid-hand, as YAML and PDF, and fi
   const row = dashboard.locator('.admin-report-row', { hasText: 'Report Night' });
   await expect(row).toContainText('live');
   await expect(row).toContainText('1 hand');
+  // Titled by the table's name, under the day it started, with the game's numbers and standings at a glance.
+  await expect(row.locator('.admin-report-name')).toHaveText('Report Night');
+  await expect(row).toContainText('$0.10/$0.20 blinds');
+  await expect(row).toContainText('2 players · $22.50 bought in');
+  await expect(row.locator('.admin-report-standings')).toContainText('Alice');
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  await expect(dashboard.locator('.admin-reports-group', { has: row }).locator('.admin-reports-day')).toHaveText(today);
+  // Search by table or player name narrows the list.
+  await dashboard.getByLabel('Search game reports by table or player').fill('alice');
+  await expect(row).toBeVisible();
+  await dashboard.getByLabel('Search game reports by table or player').fill('no such table');
+  await expect(row).toHaveCount(0);
+  await dashboard.getByLabel('Search game reports by table or player').fill('');
   const fromDashboard = dashboard.waitForEvent('download');
   await row.getByRole('button', { name: 'Download YAML' }).click();
   expect(await saved(await fromDashboard)).toContain('hands_played: 1');

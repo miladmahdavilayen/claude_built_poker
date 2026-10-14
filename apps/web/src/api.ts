@@ -214,9 +214,26 @@ export interface GameReportSummaryDto {
   startedAt: string;
   updatedAt: string;
   endedAt: string | null;
+  /** Headline numbers in cents and the standings; null only for a very old report the server hasn't backfilled. */
+  summary: {
+    gameNumber: number;
+    stakes: string;
+    playerCount: number;
+    totalBoughtIn: number;
+    totalCashedOut: number;
+    stillOnTable: number;
+    booksBalance: boolean;
+    players: {
+      rank: number;
+      playerName: string;
+      playerType: 'registered' | 'guest' | 'bot';
+      boughtIn: number;
+      net: number;
+    }[];
+  } | null;
 }
 
-/** Admin-only: every game's books, newest first. */
+/** Admin-only: every game's books, most recently started first. */
 export function adminListGameReports(accessToken: string): Promise<{ reports: GameReportSummaryDto[] }> {
   return getJson('/admin/reports', accessToken);
 }

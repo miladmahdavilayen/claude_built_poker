@@ -2490,15 +2490,37 @@ input[type='range']::-moz-range-thumb {
   justify-content: space-between;
   gap: 8px;
 }
+.admin-reports-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.admin-reports-search {
+  flex: 1 1 180px;
+  min-width: 0;
+}
 .admin-reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+.admin-reports-group ul {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 420px;
-  overflow-y: auto;
+}
+.admin-reports-day {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .admin-report-row {
   display: flex;
@@ -2525,5 +2547,30 @@ input[type='range']::-moz-range-thumb {
 .admin-report-meta {
   flex-basis: 100%;
   font-size: 12px;
+  color: var(--muted);
+}
+.admin-report-game {
+  font-weight: 400;
+  color: var(--muted);
+}
+.admin-report-unbalanced {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.admin-report-standings {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.admin-report-standings .net-up {
+  color: var(--good);
+}
+.admin-report-standings .net-down {
+  color: var(--danger);
+}
+.admin-report-standings .net-even {
   color: var(--muted);
 }

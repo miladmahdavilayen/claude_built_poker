@@ -9,6 +9,7 @@ import { settle, type GameReport } from '../src/game/gameBook.js';
 import { LiveTable, type VacatedSeat } from '../src/game/liveTable.js';
 import { TableRegistry } from '../src/game/tableRegistry.js';
 import { registerReportRoutes } from '../src/http/routes/reports.js';
+import { backfillGameReportSummaries, finishInterruptedGameReports, INTERRUPTED_REASON, moneyToCents, summaryFromReport } from '../src/reports/backfill.js';
 import { renderReportPdf } from '../src/reports/reportPdf.js';
 
 process.env.JWT_SECRET ??= 'test-secret-do-not-use-in-prod';
@@ -151,6 +152,12 @@ describe('Game book: accurate after every hand', () => {
     expect(saved?.status).toBe('live');
     expect(saved?.lastHandNumber).toBe(1);
     expect((parse(saved!.reportYaml) as GameReport).summary.books_balance).toBe(true);
+    // ...with the structured summary the dashboard lists by: cents, ranked, account ids for registered players only.
+    expect(saved?.summary).toMatchObject({ gameNumber: 1, stakes: '$0.10/$0.20', playerCount: 2, totalBoughtIn: 2000, totalCashedOut: 0, stillOnTable: 2000, booksBalance: true });
+    expect(saved?.summary?.players.map((p) => [p.rank, p.playerName, p.userId, p.playerType, p.net])).toEqual([
+      [1, winner === 0 ? 'Ann' : 'Ben', winner === 0 ? 'ann' : null, winner === 0 ? 'registered' : 'guest', 10],
+      [2, folder === 0 ? 'Ann' : 'Ben', folder === 0 ? 'ann' : null, folder === 0 ? 'registered' : 'guest', -10],
+    ]);
 
     // Closing the table cashes everyone out in the book and marks it final.
     await table.closeBook('table terminated by the owner');
@@ -272,6 +279,15 @@ describe('Game book: accurate after every hand', () => {
     expect(r.hands.map((h) => h.hand)).toEqual(Array.from({ length: 40 }, (_, i) => i + 1));
     expect(leaversBooked, 'the scenario really exercised mid-hand leavers').toBeGreaterThanOrEqual(3);
 
+    // The structured summary agrees with the report to the cent — and the
+    // backfill's YAML parser recovers exactly the same numbers.
+    const summary = table.book.summary();
+    expect(summary.totalBoughtIn).toBe(boughtIn + botBuyIn);
+    expect(summary.players.reduce((sum, p) => sum + p.net, 0)).toBe(0);
+    expect(summary.players.map((p) => p.playerName)).toEqual(r.standings.map((s) => s.player));
+    const fromYaml = summaryFromReport(parse(table.book.toYaml()) as GameReport);
+    expect(fromYaml).toEqual({ ...summary, players: summary.players.map((p) => ({ ...p, userId: null })) });
+
     // And it renders to a real PDF.
     const pdf = await renderReportPdf(r);
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
@@ -298,6 +314,81 @@ describe('Game book: accurate after every hand', () => {
     expect(table.book.gameNumber).toBe(2);
     table.takeSeat(0, 'ann', meta('Ann'), 700);
     expect(table.book.toReport().summary.total_bought_in).toBe('$7');
+  });
+});
+
+describe('Report summaries for reports saved before they existed', () => {
+  it('parses money back to cents', () => {
+    expect(moneyToCents('$1,250.50')).toBe(125_050);
+    expect(moneyToCents('+$0.10')).toBe(10);
+    expect(moneyToCents('-$5')).toBe(-500);
+    expect(moneyToCents('$0')).toBe(0);
+    expect(() => moneyToCents('5 dollars')).toThrow();
+  });
+
+  it('backfills a summary from the stored YAML, once', async () => {
+    vi.useFakeTimers();
+    const store = new MemoryStore();
+    const table = new LiveTable('22222222-2222-2222-2222-222222222222', 'Old Game', SETTINGS, store, {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => Date.now(),
+    });
+    table.takeSeat(0, 'ann', meta('Ann'), 1000);
+    table.takeSeat(1, 'ben', meta('Ben'), 1500);
+    vi.advanceTimersByTime(10_000);
+    table.startNextHand();
+    const folder = table.state.betting.actingSeat!;
+    table.applyPlayerAction(folder, { seatId: folder, type: 'fold' });
+    await vi.runAllTimersAsync();
+    const saved = (await store.getGameReport(table.book.id))!;
+    await store.saveGameReport({ ...saved, summary: null }); // as if saved before migration 0005
+
+    const logs: string[] = [];
+    await backfillGameReportSummaries(store, (m) => logs.push(m));
+    const [listed] = await store.listGameReports();
+    expect(listed?.summary).toMatchObject({ totalBoughtIn: 2500, playerCount: 2, booksBalance: true });
+    expect(listed?.summary?.players.reduce((sum, p) => sum + p.net, 0)).toBe(0);
+    expect(logs).toEqual(['Backfilled summaries for 1 game report(s).']);
+    await backfillGameReportSummaries(store, (m) => logs.push(m));
+    expect(logs).toHaveLength(1);
+    table.dispose();
+    vi.useRealTimers();
+  });
+
+  it('on boot, marks a game the server stopped under (still "live") final, with its numbers untouched', async () => {
+    vi.useFakeTimers();
+    const store = new MemoryStore();
+    const table = new LiveTable('33333333-3333-3333-3333-333333333333', 'Crashed Game', SETTINGS, store, {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => Date.now(),
+    });
+    table.takeSeat(0, 'ann', meta('Ann'), 1000);
+    table.takeSeat(1, 'ben', meta('Ben'), 1000);
+    vi.advanceTimersByTime(10_000);
+    table.startNextHand();
+    const folder = table.state.betting.actingSeat!;
+    table.applyPlayerAction(folder, { seatId: folder, type: 'fold' });
+    await vi.runAllTimersAsync();
+    table.dispose(); // the process "dies" here: no closeBook
+    const before = (await store.getGameReport(table.book.id))!;
+    expect(before.status).toBe('live');
+
+    const logs: string[] = [];
+    await finishInterruptedGameReports(store, (m) => logs.push(m));
+    const after = (await store.getGameReport(table.book.id))!;
+    expect(after.status).toBe('final');
+    expect(after.endedAt).toEqual(before.updatedAt);
+    expect(after.summary).toEqual(before.summary);
+    const r = parse(after.reportYaml) as GameReport;
+    expect(r.game.status).toBe('final');
+    expect(r.game.ended_because).toBe(INTERRUPTED_REASON);
+    expect(r.summary.still_on_table).toBe('$20');
+    expect(logs).toEqual(['Marked 1 interrupted game report(s) final.']);
+    await finishInterruptedGameReports(store, (m) => logs.push(m));
+    expect(logs).toHaveLength(1);
+    vi.useRealTimers();
   });
 });
 

@@ -254,6 +254,7 @@ export class LiveTable {
       startedAt: book.startedAt,
       updatedAt: book.updatedAt,
       endedAt: book.endedAt,
+      summary: book.summary(),
       reportYaml: book.toYaml(this.nowDate()),
     };
     this.reportWrite = this.reportWrite.then(() => this.store.saveGameReport(record)).catch((err: unknown) => {

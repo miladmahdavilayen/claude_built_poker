@@ -1897,3 +1897,39 @@ Filenames carry the table, game number, last hand number and time. The
 PDF's footer is drawn with the bottom margin lifted, because pdfkit
 otherwise adds a blank page for any text past the margin (the first
 version had 8 such pages).
+
+## Lobby stakes, a summary-only PDF, browsable report storage, and clean shutdowns
+
+**Default lobby tables** are now three public 9-seat tables, created fresh
+on every boot: High Stakes $100/$200, Medium Stakes $10/$20, Low Stakes
+$1/$2, each with a 40–100 big blind buy-in ($8,000–$20,000, $800–$2,000,
+$80–$200).
+
+**The PDF is the summary; the YAML is the record.** The PDF keeps game
+facts, totals, rankings with profit/loss, settle-up payments and every
+buy-in/rebuy/cash-out. It drops the hand-by-hand table, which made long
+games run to many pages. The YAML still has every hand, and the PDF says
+so.
+
+**Report storage is structured.** Migration 0005 adds headline columns to
+`game_reports` (game number, stakes, player count, totals in cents, books
+balance) plus indexes on start time and on table name + start time. It also
+adds `game_report_players`, one row per player per game (rank, name,
+account id for registered players, bought in, cashed out, on table, net,
+hands), rewritten with the report in one transaction. The dashboard lists
+games without parsing YAML: grouped by the day they started (or by table
+name), titled by table name, with time range, stakes, totals and each
+player's result, plus search by table or player. Reports saved before 0005
+get their summary backfilled from their YAML on boot.
+
+**Shutdowns close tables properly.** Live tables exist only in memory, and
+every deploy restarts the server. Before this change, a restart stranded
+every seated player's chips and left the game's report "live" forever. On
+SIGTERM the server now closes each table exactly as an owner's terminate
+does: it voids any hand in progress, refunds stacks to balances with ledger
+entries, notifies players and writes the final report ("server restarted
+for an update"). On boot, any report still marked live comes from a server
+that stopped without closing it (a crash, or a restart before this change).
+Each such report is marked final as of its last update, with a reason
+saying chips listed as on the table weren't cashed out through it. Its
+numbers are left untouched.

@@ -420,15 +420,27 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
   );
 }
 
+type ReportSort = 'newest' | 'oldest' | 'table';
+
+/** "+$40", "-$12.50", "$0" — a player's result, signed. */
+function signedMoney(cents: number): string {
+  return cents > 0 ? `+${formatChips(cents)}` : formatChips(cents);
+}
+
 /**
- * Every game's books, newest first — live games (still being played) and
- * finished ones, kept permanently. The same YAML/PDF downloads as the
- * table's own owner menu; this is where a finished game's report lives
- * once its table is gone. See apps/server/src/game/gameBook.ts.
+ * Every game's books — live games (still being played) and finished ones,
+ * kept permanently — grouped by the day they started, each titled by its
+ * table's name, with the headline numbers and standings at a glance (from
+ * the structured game_reports / game_report_players columns, no YAML
+ * parsing). The same YAML/PDF downloads as the table's own owner menu;
+ * this is where a finished game's report lives once its table is gone.
+ * See apps/server/src/game/gameBook.ts.
  */
 function GameReportsPanel({ accessToken }: { accessToken: string }): React.JSX.Element {
   const [reports, setReports] = useState<GameReportSummaryDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useState<ReportSort>('newest');
+  const [search, setSearch] = useState('');
 
   const refresh = (): void => {
     api
@@ -438,7 +450,26 @@ function GameReportsPanel({ accessToken }: { accessToken: string }): React.JSX.E
   };
   useEffect(refresh, [accessToken]);
 
-  const when = (iso: string): string => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const day = (iso: string): string => new Date(iso).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const time = (iso: string): string => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  const query = search.trim().toLowerCase();
+  const shown = (reports ?? [])
+    .filter((r) => !query || r.tableName.toLowerCase().includes(query) || r.summary?.players.some((p) => p.playerName.toLowerCase().includes(query)))
+    .sort((a, b) => {
+      const byStart = new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime();
+      if (sort === 'oldest') return -byStart;
+      if (sort === 'table') return a.tableName.localeCompare(b.tableName) || byStart;
+      return byStart;
+    });
+  // Group under a heading per start day — or per table, when sorted by table.
+  const groups: { heading: string; reports: GameReportSummaryDto[] }[] = [];
+  for (const r of shown) {
+    const heading = sort === 'table' ? r.tableName : day(r.startedAt);
+    const last = groups[groups.length - 1];
+    if (last?.heading === heading) last.reports.push(r);
+    else groups.push({ heading, reports: [r] });
+  }
 
   return (
     <section className="admin-reports">
@@ -448,23 +479,68 @@ function GameReportsPanel({ accessToken }: { accessToken: string }): React.JSX.E
           Refresh
         </button>
       </div>
+      {reports && reports.length > 0 && (
+        <div className="admin-reports-controls">
+          <input
+            type="search"
+            className="admin-reports-search"
+            placeholder="Search table or player"
+            aria-label="Search game reports by table or player"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <select aria-label="Sort game reports" value={sort} onChange={(e) => setSort(e.target.value as ReportSort)}>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="table">By table name</option>
+          </select>
+        </div>
+      )}
       {error && <div className="error-banner">{error}</div>}
       {reports === null && !error && <p className="profile-hint">Loading…</p>}
       {reports?.length === 0 && <p className="profile-hint">No games played yet — a report appears here after a table&rsquo;s first hand.</p>}
-      <ul className="admin-reports-list">
-        {reports?.map((r) => (
-          <li key={r.id} className="admin-report-row" data-testid={`report-${r.id}`}>
-            <div className="admin-report-info">
-              <span className="admin-report-name">{r.tableName}</span>
-              <span className={`seat-tag ${r.status === 'live' ? 'seat-tag-pending' : ''}`}>{r.status === 'live' ? 'live' : 'final'}</span>
-              <span className="admin-report-meta">
-                {r.handsPlayed} hand{r.handsPlayed === 1 ? '' : 's'} · started {when(r.startedAt)} · {r.status === 'live' ? `updated ${when(r.updatedAt)}` : `ended ${when(r.endedAt ?? r.updatedAt)}`}
-              </span>
-            </div>
-            <ReportDownloads path={`/admin/reports/${r.id}`} accessToken={accessToken} />
-          </li>
+      {reports && reports.length > 0 && shown.length === 0 && <p className="profile-hint">No game matches &ldquo;{search}&rdquo;.</p>}
+      <div className="admin-reports-list">
+        {groups.map((g) => (
+          <div key={g.heading} className="admin-reports-group">
+            <h3 className="admin-reports-day">{g.heading}</h3>
+            <ul>
+              {g.reports.map((r) => {
+                const s = r.summary;
+                const humans = s?.players.filter((p) => p.playerType !== 'bot') ?? [];
+                return (
+                  <li key={r.id} className="admin-report-row" data-testid={`report-${r.id}`}>
+                    <div className="admin-report-info">
+                      <span className="admin-report-name">
+                        {r.tableName}
+                        {s && s.gameNumber > 1 ? <span className="admin-report-game"> · game {s.gameNumber}</span> : null}
+                      </span>
+                      <span className={`seat-tag ${r.status === 'live' ? 'seat-tag-pending' : ''}`}>{r.status === 'live' ? 'live' : 'final'}</span>
+                      {s && !s.booksBalance && <span className="seat-tag admin-report-unbalanced">books don&rsquo;t balance</span>}
+                      <span className="admin-report-meta">
+                        {sort === 'table' ? `${day(r.startedAt)}, ` : ''}
+                        {time(r.startedAt)} – {r.status === 'live' ? `now (updated ${time(r.updatedAt)})` : time(r.endedAt ?? r.updatedAt)}
+                        {s?.stakes ? ` · ${s.stakes} blinds` : ''} · {r.handsPlayed} hand{r.handsPlayed === 1 ? '' : 's'}
+                        {s ? ` · ${String(s.playerCount)} player${s.playerCount === 1 ? '' : 's'} · ${formatChips(s.totalBoughtIn)} bought in` : ''}
+                      </span>
+                      {humans.length > 0 && (
+                        <span className="admin-report-standings">
+                          {humans.map((p) => (
+                            <span key={p.rank} className={p.net > 0 ? 'net-up' : p.net < 0 ? 'net-down' : 'net-even'}>
+                              {p.playerName} {signedMoney(p.net)}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                    <ReportDownloads path={`/admin/reports/${r.id}`} accessToken={accessToken} />
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         ))}
-      </ul>
+      </div>
     </section>
   );
 }

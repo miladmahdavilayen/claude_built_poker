@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { formatMoney } from '@pokerclause/shared';
 import { stringify } from 'yaml';
+import type { GameReportSummary } from '../db/store.js';
 
 /**
  * The bookkeeping for one game at one table — every chip that comes onto
@@ -246,6 +247,44 @@ export class GameBook {
 
   private net(p: BookPlayer): number {
     return p.cashOuts + p.chips - p.buyIns;
+  }
+
+  /**
+   * The game's headline numbers and final standings, in cents — what the
+   * store keeps in structured columns (game_reports, game_report_players)
+   * so the admin dashboard can list, sort and search games without
+   * parsing YAML. Same ranking and labels as the report's standings.
+   */
+  summary(): GameReportSummary {
+    const label = this.labels();
+    const players = [...this.players.values()];
+    const ranked = [...players].sort((a, b) => this.net(b) - this.net(a) || b.handsWon - a.handsWon || (label.get(a.key) ?? a.key).localeCompare(label.get(b.key) ?? b.key));
+    const totalBoughtIn = players.reduce((s, p) => s + p.buyIns, 0);
+    const totalCashedOut = players.reduce((s, p) => s + p.cashOuts, 0);
+    const stillOnTable = players.reduce((s, p) => s + p.chips, 0);
+    const last = this.lastHand;
+    return {
+      gameNumber: this.gameNumber,
+      stakes: last ? `${formatMoney(last.smallBlind)}/${formatMoney(last.bigBlind)}` : '',
+      playerCount: players.filter((p) => p.kind !== 'bot').length,
+      totalBoughtIn,
+      totalCashedOut,
+      stillOnTable,
+      booksBalance: players.reduce((s, p) => s + this.net(p), 0) === 0 && totalBoughtIn === totalCashedOut + stillOnTable,
+      players: ranked.map((p, i) => ({
+        rank: i + 1,
+        playerName: label.get(p.key) ?? p.key,
+        userId: p.kind === 'registered' ? p.key : null,
+        playerType: p.kind,
+        boughtIn: p.buyIns,
+        buyInCount: p.buyInCount,
+        cashedOut: p.cashOuts,
+        onTable: p.chips,
+        net: this.net(p),
+        handsPlayed: p.handsPlayed,
+        handsWon: p.handsWon,
+      })),
+    };
   }
 
   /** Everything in the report, as plain data — the YAML file is this, serialized; the PDF is rendered from it. */

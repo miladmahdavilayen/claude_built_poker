@@ -34,6 +34,9 @@ services:
       context: .
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
+    # Time for a graceful shutdown to close every live table (refund stacks,
+    # write final game reports) before Docker force-kills the server.
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy

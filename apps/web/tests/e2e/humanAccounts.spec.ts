@@ -118,6 +118,9 @@ test('admin can swipe a row left to reveal and use a per-row delete action', asy
 
   const rowWrap = page.locator('.admin-user-row-wrap', { has: page.locator('.admin-user-row', { hasText: 'SwipeTarget' }) });
   const row = rowWrap.locator('.admin-user-row');
+  // With games on record the reports panel can push the player list below
+  // the fold — and a mouse drag only lands on what's inside the viewport.
+  await row.scrollIntoViewIfNeeded();
   const beforeBox = await row.boundingBox();
   if (!beforeBox) throw new Error('Row has no bounding box.');
 

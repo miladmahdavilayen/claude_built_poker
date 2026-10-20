@@ -1933,3 +1933,17 @@ that stopped without closing it (a crash, or a restart before this change).
 Each such report is marked final as of its last update, with a reason
 saying chips listed as on the table weren't cashed out through it. Its
 numbers are left untouched.
+
+## An invite link always seats the invitee — the owner covers what they can't
+
+A brand-new Google account starts at $0 (see above), but redeeming an
+owner-generated invite still debited the buy-in from the invitee's own
+balance. For a fresh account that failed with `INSUFFICIENT_CHIPS`
+*after* the single-use token was already consumed, so the invitee was
+left unseated at a table with an empty seat and only the "Join
+waitlist" panel to click — it looked like they'd been sent to the
+waitlist. Since only the owner can give a real player chips, the
+owner's invite (and `admin-rebuy`) now covers any shortfall: the
+missing amount is granted from the house as an `admin_adjust` ledger
+pair, then the normal `buy_in` debit runs. A player who can afford the
+amount still pays it from their own balance, exactly as before.

@@ -612,6 +612,38 @@ describe('socketServer: live signaling and access control', () => {
     bobSocket.close();
   });
 
+  it('an invite link seats a brand-new $0 Google account at the full linked buy-in, the owner covering it (and a later rebuy)', async () => {
+    const admin = await makeAdminUser('Owner');
+    const newbie = await makeRegisteredUser('Newbie'); // 0 chips, like a fresh Google sign-in
+    const table = await registry.createTable('Fresh Account Table', SETTINGS, null, null);
+
+    const adminSocket = connect(admin.token);
+    const newbieSocket = connect(newbie.token);
+    await Promise.all([waitFor(adminSocket, 'connect'), waitFor(newbieSocket, 'connect')]);
+    adminSocket.emit('join-table', { tableId: table.tableId });
+    newbieSocket.emit('join-table', { tableId: table.tableId });
+    await Promise.all([waitFor(adminSocket, 'state'), waitFor(newbieSocket, 'state')]);
+
+    let sawError: { code: string } | null = null;
+    newbieSocket.on('error', (e: { code: string }) => (sawError = e));
+    await assignAndSeat(adminSocket, newbieSocket, 1, 150);
+
+    expect(sawError).toBeNull();
+    expect(table.seatOfUser(newbie.userId)).toBe(1);
+    expect(table.state.seats[1]?.stack).toBe(150);
+    expect((await store.findUserById(newbie.userId))?.chips).toBe(0);
+
+    adminSocket.emit('admin-rebuy', { seatId: 1, amount: 50 });
+    await waitForState<{ state: { seats: { seatId: number; stack: number }[] } }>(
+      newbieSocket,
+      (p) => p.state.seats.find((s) => s.seatId === 1)?.stack === 200,
+    );
+    expect(sawError).toBeNull();
+
+    adminSocket.close();
+    newbieSocket.close();
+  });
+
   it("assign-seat's nickname is visible only to the admin, never to the redeemer or a spectator", async () => {
     const admin = await makeAdminUser('Owner');
     const alice = await makeUser('Alice');

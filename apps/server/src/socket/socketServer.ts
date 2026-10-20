@@ -218,6 +218,20 @@ export function attachSocketServer(
   }
 
   /**
+   * The owner allocating chips to a player who doesn't have them — a
+   * brand-new Google account starts at $0 by design (see DECISIONS.md),
+   * so the owner's invite link or rebuy IS their money. Recorded as an
+   * 'admin_adjust' from the house, the same way the starting grant is.
+   */
+  async function grantFromOwner(userId: string, amount: number, tableId: string): Promise<void> {
+    await deps.store.adjustUserChips(userId, amount);
+    await deps.store.recordLedgerEntries([
+      { userId, isHouse: false, amount, reason: 'admin_adjust', tableId },
+      { userId: null, isHouse: true, amount: -amount, reason: 'admin_adjust', tableId },
+    ]);
+  }
+
+  /**
    * The actual chip-debit + seat-fill + room-join + broadcast, shared by
    * 'take-seat' (the owner seating themselves directly) and
    * 'redeem-seat-assignment' (a human redeeming an owner-generated
@@ -231,10 +245,12 @@ export function attachSocketServer(
     seatId: number,
     buyIn: number,
     ownerNickname: string | null = null,
+    ownerFunded = false,
   ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
     const user = await deps.store.findUserById(userId);
     if (!user) return { ok: false, code: 'USER_NOT_FOUND', message: 'User not found.' };
-    if (user.chips < buyIn) return { ok: false, code: 'INSUFFICIENT_CHIPS', message: 'Not enough chips for that buy-in.' };
+    const shortfall = ownerFunded ? Math.max(0, buyIn - user.chips) : 0;
+    if (!ownerFunded && user.chips < buyIn) return { ok: false, code: 'INSUFFICIENT_CHIPS', message: 'Not enough chips for that buy-in.' };
     try {
       table.takeSeat(
         seatId,
@@ -246,6 +262,7 @@ export function attachSocketServer(
     } catch (err) {
       return { ok: false, code: 'SEAT_TAKEN', message: err instanceof Error ? err.message : 'Seat unavailable.' };
     }
+    if (shortfall > 0) await grantFromOwner(user.id, shortfall, table.tableId);
     await deps.store.adjustUserChips(user.id, -buyIn);
     await deps.store.recordLedgerEntries([
       { userId: user.id, isHouse: false, amount: -buyIn, reason: 'buy_in', tableId: table.tableId },
@@ -437,7 +454,11 @@ export function attachSocketServer(
       const redeemed = table.redeemSeatAssignment(parsed.data.token);
       if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
       const userId = data.userId;
-      void performTakeSeat(table, socket, userId, redeemed.seatId, redeemed.buyIn, redeemed.ownerNickname).then((result) => {
+      // The owner chose this seat AND this amount — anything the invitee
+      // can't cover from their own balance is covered by the owner, so an
+      // invite always seats them (a $0 Google account used to be bounced
+      // with INSUFFICIENT_CHIPS, its single-use link already spent).
+      void performTakeSeat(table, socket, userId, redeemed.seatId, redeemed.buyIn, redeemed.ownerNickname, true).then((result) => {
         if (!result.ok) emitError(result.code, result.message);
       });
     });
@@ -741,7 +762,9 @@ export function attachSocketServer(
       const targetUserId = liveSeat.userId;
       void (async () => {
         const user = await deps.store.findUserById(targetUserId);
-        if (!user || user.chips < cappedAmount) return emitError('INSUFFICIENT_CHIPS', 'That player does not have enough chips for this rebuy.');
+        if (!user) return emitError('USER_NOT_FOUND', 'That player no longer exists.');
+        // Same as an invite: the owner covers whatever the player can't.
+        const shortfall = Math.max(0, cappedAmount - user.chips);
         // Re-checked after the await: the player may have left meanwhile.
         // The chips go onto the table synchronously, right here — never
         // after the writes below, or a player leaving during them would be
@@ -750,6 +773,7 @@ export function attachSocketServer(
         if (table.seats[seatId]?.userId !== targetUserId) return emitError('SEAT_EMPTY', 'That player is no longer seated.');
         table.addChips(seatId, cappedAmount);
         broadcastTable(table);
+        if (shortfall > 0) await grantFromOwner(user.id, shortfall, table.tableId);
         await deps.store.adjustUserChips(user.id, -cappedAmount);
         await deps.store.recordLedgerEntries([
           { userId: user.id, isHouse: false, amount: -cappedAmount, reason: 'buy_in', tableId: table.tableId },

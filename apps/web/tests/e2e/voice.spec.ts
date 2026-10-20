@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { adminLogin, createTable, guestSignup, inviteToSeat, takeSeat } from './helpers.js';
 
 test('two seated players joining voice+video see each other\'s video rendered on their seats', async ({ browser }) => {
@@ -44,12 +44,26 @@ test('two seated players joining voice+video see each other\'s video rendered on
   await ctxB.close();
 });
 
-// Regression test for the actual point of the auto-receive redesign (see
-// DECISIONS.md and useVoiceChat.ts's own doc comment): a human who never
-// clicks "Join voice" at all must still automatically RECEIVE video from
-// another seated player who does — receiving was never supposed to
-// require opting in, only sending your own media is.
-test('a player who never opens their own mic/camera still automatically receives another seated player\'s video', async ({ browser }) => {
+/** True once `locator`'s <audio> is actually playing a live remote stream with sound. */
+async function isPlayingRemoteAudio(page: Page, locator: string): Promise<boolean> {
+  return page.locator(locator).first().evaluate((el) => {
+    const audio = el as HTMLAudioElement;
+    const stream = audio.srcObject as MediaStream | null;
+    return !!stream && stream.getAudioTracks().length > 0 && !audio.paused && !audio.muted;
+  });
+}
+
+/** If the browser held back unmuted playback until a gesture, take the offered "tap to hear" path, as a real viewer would. */
+async function tapToHearIfOffered(page: Page): Promise<void> {
+  const unlock = page.getByRole('button', { name: '🔊 Tap to hear the table' });
+  if (await unlock.isVisible()) await unlock.click();
+}
+
+// Nobody has to open their own mic/camera to hear the table: every human
+// is a receive-ready peer from the moment they arrive (see
+// useVoiceChat.ts). Seeing other players' cameras, though, is for people
+// who've joined the call — a non-owner who hasn't gets sound only.
+test("a seated player who never joins the call still hears another player, but sees no video until they join", async ({ browser }) => {
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
   const pageA = await ctxA.newPage();
@@ -61,20 +75,55 @@ test('a player who never opens their own mic/camera still automatically receives
   await takeSeat(pageA, 0, 100);
   await inviteToSeat(pageA, pageB, 1, 100);
 
-  // Only A ever touches voice controls at all — B never clicks anything voice-related.
+  // Only A ever touches voice controls — B never clicks anything voice-related.
   await pageA.getByRole('button', { name: '🎥 Join with video' }).click();
 
-  // B still sees A's video on A's own seat, with zero action on B's part.
-  await expect(pageB.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 15_000 });
-  // And B's own seat shows no video (B never sent anything).
-  await expect(pageB.locator('[data-testid="seat-1"] .seat-video')).toHaveCount(0);
+  // B hears A, with zero action on B's part...
+  await expect(pageB.locator('[data-testid="seat-0"] audio')).toHaveCount(1, { timeout: 15_000 });
+  await tapToHearIfOffered(pageB);
+  await expect.poll(() => isPlayingRemoteAudio(pageB, '[data-testid="seat-0"] audio'), { timeout: 10_000 }).toBe(true);
+  // ...but sees no camera, on A's seat or anywhere else.
+  await expect(pageB.locator('.seat-video')).toHaveCount(0);
+  await expect(pageB.locator('video')).toHaveCount(0);
 
-  // A stops sending — B's copy of A's video goes away again (not just A's own).
+  // Joining the call (B's own choice) brings A's video in.
+  await pageB.getByRole('button', { name: '🎤 Join voice' }).click();
+  await expect(pageB.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 15_000 });
+
+  // A stops sending — B's copy of A's media goes away again.
   await pageA.getByRole('button', { name: 'Leave call' }).click();
   await expect(pageB.locator('[data-testid="seat-0"] .seat-video')).toHaveCount(0, { timeout: 10_000 });
 
   await ctxA.close();
   await ctxB.close();
+});
+
+// The reported bug: an invited guest was in the call, and the owner — not
+// seated, never joined the call — could neither see nor hear them.
+test('the owner, without joining the call or taking a seat, sees and hears an invited guest who is on camera', async ({ browser }) => {
+  const ctxOwner = await browser.newContext();
+  const ctxGuest = await browser.newContext();
+  const pageOwner = await ctxOwner.newPage();
+  const pageGuest = await ctxGuest.newPage();
+
+  await adminLogin(pageOwner);
+  await createTable(pageOwner, { name: 'Owner Watches Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await guestSignup(pageGuest, 'Grace');
+  await inviteToSeat(pageOwner, pageGuest, 2, 100);
+
+  await pageGuest.getByRole('button', { name: '🎥 Join with video' }).click();
+
+  // The owner never clicked a voice button and has no seat.
+  await expect(pageOwner.getByRole('button', { name: '🎥 Join with video' })).toBeVisible();
+  await expect(pageOwner.locator('[data-testid="seat-2"] .seat-video video')).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(() => pageOwner.locator('[data-testid="seat-2"] .seat-video video').evaluate((v) => (v as HTMLVideoElement).videoWidth > 0), { timeout: 10_000 })
+    .toBe(true);
+  await tapToHearIfOffered(pageOwner);
+  await expect.poll(() => isPlayingRemoteAudio(pageOwner, '[data-testid="seat-2"] audio'), { timeout: 10_000 }).toBe(true);
+
+  await ctxOwner.close();
+  await ctxGuest.close();
 });
 
 test('a spectator (no seat) using voice chat appears in the compact voice strip instead', async ({ browser }) => {

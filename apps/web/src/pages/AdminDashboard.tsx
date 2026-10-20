@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import * as api from '../api.js';
 import type { AdminUserDetailDto, AdminUserDto, GameReportSummaryDto, LedgerEntryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
+import { MAX_BALANCE_CENTS } from '@pokerclause/shared/money';
 import { formatChips } from '../chips.js';
 import { ReportDownloads } from '../components/ReportDownloads.js';
 import { MoneyInput } from '../components/MoneyInput.js';
@@ -24,8 +25,64 @@ const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
  * never persisted at all anymore (see HybridStore), so there's nothing
  * of theirs for this page to ever show or manage in the first place.
  */
+/**
+ * The owner's own balance, front and centre: add to it, or set it to an
+ * exact amount (up to MAX_BALANCE_CENTS). Same ledgered adjustments as the
+ * per-player panel below, just without having to find your own row.
+ */
+function MyBalanceCard({ balance, onChanged }: { balance: number | null; onChanged: () => void }): React.JSX.Element {
+  const { user, accessToken } = useAuth();
+  const [amount, setAmount] = useState<number | ''>('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const run = (mode: 'add' | 'set'): void => {
+    if (!user || !accessToken || amount === '') return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const request =
+      mode === 'add'
+        ? api.adminAdjustChips(user.id, amount, 'Owner top-up', accessToken)
+        : api.adminSetChips(user.id, amount, 'Owner set balance', accessToken);
+    request
+      .then((res) => {
+        setNotice(`Your balance is now ${formatChips(res.chips)}.`);
+        setAmount('');
+        onChanged();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to update your balance.'))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <section className="admin-my-balance" data-testid="admin-my-balance">
+      <div className="admin-my-balance-header">
+        <h2 className="admin-section-title">My balance</h2>
+        <span className="admin-my-balance-value">{balance === null ? '…' : formatChips(balance)}</span>
+      </div>
+      <label>
+        Amount in $
+        <MoneyInput cents={amount} onChange={setAmount} minCents={0} maxCents={MAX_BALANCE_CENTS} disabled={busy} placeholder="e.g. 5000" />
+      </label>
+      <div className="admin-my-balance-actions">
+        <button type="button" disabled={busy || amount === '' || amount <= 0} onClick={() => run('add')}>
+          Add to my balance
+        </button>
+        <button type="button" disabled={busy || amount === ''} onClick={() => run('set')}>
+          Set my balance to this
+        </button>
+      </div>
+      <p className="profile-hint">Up to {formatChips(MAX_BALANCE_CENTS)}. Every change is recorded in your activity.</p>
+      {notice && <p className="admin-my-balance-notice">{notice}</p>}
+      {error && <div className="error-banner">{error}</div>}
+    </section>
+  );
+}
+
 export function AdminDashboardPage(): React.JSX.Element {
-  const { accessToken } = useAuth();
+  const { accessToken, user: me } = useAuth();
   const [users, setUsers] = useState<AdminUserDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -102,6 +159,8 @@ export function AdminDashboardPage(): React.JSX.Element {
       </header>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <MyBalanceCard balance={users.find((u) => u.id === me?.id)?.chips ?? null} onChanged={refresh} />
 
       {accessToken && <GameReportsPanel accessToken={accessToken} />}
 
@@ -317,6 +376,20 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
       .finally(() => setBusy(false));
   };
 
+  const submitSetChips = (): void => {
+    if (!accessToken || chipAmount < 0) return;
+    setBusy(true);
+    api
+      .adminSetChips(userId, chipAmount, chipReason || 'Admin set balance', accessToken)
+      .then(() => {
+        setChipAmount(0);
+        load();
+        onChanged();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to set the balance.'))
+      .finally(() => setBusy(false));
+  };
+
   const submitDelete = (): void => {
     if (!accessToken) return;
     setBusy(true);
@@ -367,16 +440,21 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
       </button>
 
       <label>
-        Adjust balance in $ (a buy-in, rebuy, or correction — positive or negative)
+        Amount in $ — add it (negative to take away), or set the balance to exactly this
         <MoneyInput cents={chipAmount} onChange={(c) => setChipAmount(c === '' ? 0 : c)} disabled={busy} />
       </label>
       <label>
         Reason
         <input value={chipReason} onChange={(e) => setChipReason(e.target.value)} disabled={busy} />
       </label>
-      <button type="button" disabled={busy || chipAmount === 0} onClick={submitChips}>
-        Apply
-      </button>
+      <div className="admin-my-balance-actions">
+        <button type="button" disabled={busy || chipAmount === 0} onClick={submitChips}>
+          Add to balance
+        </button>
+        <button type="button" disabled={busy || chipAmount < 0} onClick={submitSetChips}>
+          Set balance to this
+        </button>
+      </div>
 
       <h4>Recent activity</h4>
       {detail.recentEntries.length === 0 && <p className="profile-hint">Nothing yet.</p>}

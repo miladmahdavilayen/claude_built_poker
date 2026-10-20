@@ -200,8 +200,13 @@ export function adminBulkDeleteUsers(userIds: string[], accessToken: string): Pr
   return postJson('/admin/users/bulk-delete', { userIds }, accessToken);
 }
 
-export function adminAdjustChips(userId: string, amount: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string }> {
+export function adminAdjustChips(userId: string, amount: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string; chips: number }> {
   return postJson('/admin/chips', { userId, amount, reason }, accessToken);
+}
+
+/** Sets a balance to an exact amount (cents) — ledgered as the difference. */
+export function adminSetChips(userId: string, balance: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string; chips: number }> {
+  return postJson('/admin/chips/set', { userId, balance, reason }, accessToken);
 }
 
 export interface GameReportSummaryDto {

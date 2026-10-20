@@ -7,6 +7,13 @@
  */
 export const CENTS_PER_DOLLAR = 100;
 
+/**
+ * The most any balance may hold: $20,000,000 in cents. Balances are a
+ * 32-bit integer column (max about $21.4M), so anything past this would
+ * fail in the database rather than in validation.
+ */
+export const MAX_BALANCE_CENTS = 2_000_000_000;
+
 /** "$1,250", "$0.10", "$2.50", "-$5" — cents only shown when there are any. */
 export function formatMoney(cents: number): string {
   const sign = cents < 0 ? '-' : '';

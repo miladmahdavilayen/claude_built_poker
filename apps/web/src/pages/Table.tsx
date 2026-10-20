@@ -207,8 +207,12 @@ export function TablePage(): React.JSX.Element {
   // null pre-connect, so this duplicates voiceStreamForSeat's (further
   // below, where `state` is guaranteed non-null) stream-resolution logic
   // in a form that tolerates that.
+  // Everyone hears the table without joining the call; seeing other
+  // players' cameras is for whoever has joined it, plus the owner, who can
+  // watch any table's cameras without having to turn on their own.
+  const canSeeVideo = voice.inCall || user?.role === 'admin';
   const humanCameraSeats: { seatId: number; displayName: string; stream: MediaStream; isLocal: boolean }[] = [];
-  for (const seat of sock.state?.seats ?? []) {
+  for (const seat of canSeeVideo ? (sock.state?.seats ?? []) : []) {
     if (seat.status === 'empty' || seat.isBot) continue;
     let stream: MediaStream | null = null;
     let isLocal = false;
@@ -427,7 +431,7 @@ export function TablePage(): React.JSX.Element {
       </div>
 
       {pendingNotice && <div className="pending-settings-banner">Next hand: {pendingNotice}</div>}
-      <VoicePanel voice={voice} myName={user.displayName} amSeated={!!mySeat} unseatedPeers={unseatedVoicePeers} />
+      <VoicePanel voice={voice} myName={user.displayName} amSeated={!!mySeat} unseatedPeers={unseatedVoicePeers} canSeeVideo={canSeeVideo} />
       {speakerBarActive && <SpeakerBar tiles={speakerTiles} />}
 
       <WaitlistPanel
@@ -507,7 +511,7 @@ export function TablePage(): React.JSX.Element {
                   showCards={handEverDealt}
                   justRevealed={justRevealedSeats.has(seatId)}
                   voice={voiceStreamForSeat(seat)}
-                  showVideo={immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive}
+                  showVideo={canSeeVideo && (immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive)}
                   // Self-serve seating/bots are admin-only on any table, OR
                   // open to a signed-in (non-guest) human on the ONE table
                   // they created (sock.canManageTable — see

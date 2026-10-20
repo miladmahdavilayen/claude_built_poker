@@ -1,3 +1,4 @@
+import { unlockMedia, useMediaBlocked } from '../mediaUnlock.js';
 import type { VoiceChatApi, VoicePeer } from '../useVoiceChat.js';
 import { StreamMedia } from './StreamMedia.js';
 
@@ -6,13 +7,28 @@ import { StreamMedia } from './StreamMedia.js';
  * `Seat.tsx`) — this panel is just the join/mute/camera/leave controls,
  * plus a small strip for anyone in the call who ISN'T seated (a
  * spectator using voice chat has no seat to render their tile on).
+ *
+ * Nobody has to join to hear the table: every human already receives
+ * whoever is sending (see useVoiceChat.ts), so the strip shows whether or
+ * not this viewer is in the call. Video is shown only when `canSeeVideo`
+ * (see Table.tsx) — audio plays either way.
  */
-function UnseatedTile({ stream, isLocal, label }: { stream: MediaStream | null; isLocal: boolean; label: string }): React.JSX.Element {
-  const hasVideo = !!stream && stream.getVideoTracks().length > 0;
+function UnseatedTile({
+  stream,
+  isLocal,
+  label,
+  canSeeVideo,
+}: {
+  stream: MediaStream | null;
+  isLocal: boolean;
+  label: string;
+  canSeeVideo: boolean;
+}): React.JSX.Element {
+  const hasVideo = !!stream && stream.getVideoTracks().length > 0 && canSeeVideo;
   return (
     <div className="voice-tile">
-      {hasVideo ? <StreamMedia stream={stream} isLocal={isLocal} /> : <div className="voice-tile-avatar">{label.slice(0, 1).toUpperCase()}</div>}
-      {stream && !hasVideo && <StreamMedia stream={stream} isLocal={isLocal} />}
+      {!hasVideo && <div className="voice-tile-avatar">{label.slice(0, 1).toUpperCase()}</div>}
+      <StreamMedia stream={stream} isLocal={isLocal} showVideo={canSeeVideo} />
       <span className="voice-tile-label">{label}</span>
     </div>
   );
@@ -23,13 +39,17 @@ export function VoicePanel({
   myName,
   amSeated,
   unseatedPeers,
+  canSeeVideo,
 }: {
   voice: VoiceChatApi;
   myName: string;
   amSeated: boolean;
   unseatedPeers: VoicePeer[];
+  canSeeVideo: boolean;
 }): React.JSX.Element | null {
+  const audioBlocked = useMediaBlocked();
   if (!voice.supported) return null;
+  const someoneSending = voice.peers.some((p) => p.stream !== null);
 
   return (
     <div className="voice-panel">
@@ -41,6 +61,7 @@ export function VoicePanel({
           <button type="button" onClick={() => voice.joinCall(true)}>
             🎥 Join with video
           </button>
+          {someoneSending && !audioBlocked && <span className="voice-listening">🔊 Listening to the table</span>}
         </div>
       ) : (
         <>
@@ -55,15 +76,20 @@ export function VoicePanel({
               Leave call
             </button>
           </div>
-          {(!amSeated || unseatedPeers.length > 0) && (
-            <div className="voice-tiles">
-              {!amSeated && <UnseatedTile stream={voice.localStream} isLocal label={`${myName} (you)`} />}
-              {unseatedPeers.map((p) => (
-                <UnseatedTile key={p.socketId} stream={p.stream} isLocal={false} label={p.displayName} />
-              ))}
-            </div>
-          )}
         </>
+      )}
+      {audioBlocked && (
+        <button type="button" className="voice-unlock" onClick={unlockMedia}>
+          🔊 Tap to hear the table
+        </button>
+      )}
+      {((voice.inCall && !amSeated) || unseatedPeers.length > 0) && (
+        <div className="voice-tiles">
+          {voice.inCall && !amSeated && <UnseatedTile stream={voice.localStream} isLocal label={`${myName} (you)`} canSeeVideo />}
+          {unseatedPeers.map((p) => (
+            <UnseatedTile key={p.socketId} stream={p.stream} isLocal={false} label={p.displayName} canSeeVideo={canSeeVideo} />
+          ))}
+        </div>
       )}
       {voice.error && <div className="error-banner">{voice.error}</div>}
     </div>

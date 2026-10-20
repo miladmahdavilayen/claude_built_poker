@@ -1979,3 +1979,31 @@ helper now starts guest sessions through `POST /auth/guest`, since no page
 offers that to an uninvited visitor anymore. The API route itself is still
 open (rate limited per IP); gating it server-side on a valid invite token
 would be the next step if guest sessions themselves need locking down.
+
+## Hearing the table without joining the call; only the owner sees cameras uninvited
+
+Receiving was always meant to need no opt-in (every human is a peer from
+arrival), yet in practice a viewer who never clicked "Join voice" saw and
+heard nothing: remote media played through an UNMUTED `<video autoplay>`,
+which browsers refuse to start before a user gesture — the "Join" click
+was silently supplying that gesture. Now video is always muted (always
+allowed to autoplay) and a remote stream's sound goes through its own
+`<audio>`, started by `playOrQueue` (mediaUnlock.ts): if the browser
+refuses, it's retried on the viewer's next tap/click/key anywhere, and the
+voice panel shows "Tap to hear the table" meanwhile. The unseated-speaker
+strip also no longer requires being in the call.
+
+Who may SEE cameras without joining: only the owner (`canSeeVideo =
+voice.inCall || role === 'admin'` in Table.tsx). Everyone else hears the
+table but sees video only once they join. voiceAutoplay.spec.ts enforces
+a strict autoplay rule itself, since the test browser treats every page as
+already interacted with.
+
+## Owner balance: add or set exactly, capped at $20,000,000
+
+The admin page leads with a "My balance" card (add an amount, or set the
+balance to an exact amount), and every account's panel gains "Set balance
+to this". Setting is ledgered as the difference, like any adjustment.
+`chips` is a 32-bit integer column (max ~$21.4M), so `MAX_BALANCE_CENTS`
+($20M) bounds both routes — before this, a large enough adjustment would
+have failed inside Postgres.

@@ -86,10 +86,15 @@ test('admin dashboard lists a real account and can adjust their balance and rena
   const balanceValue = detail.locator('.profile-stat-card', { hasText: 'Balance' }).locator('.stat-value');
   await expect(balanceValue).toHaveText('$0'); // real accounts start at 0 — see authService.ts
 
-  await detail.getByLabel(/Adjust balance/).fill('500');
+  await detail.getByLabel(/Amount in \$/).fill('500');
   await detail.getByLabel('Reason').fill('E2E test bonus');
-  await detail.getByRole('button', { name: 'Apply' }).click();
+  await detail.getByRole('button', { name: 'Add to balance' }).click();
   await expect(balanceValue).toHaveText('$500');
+
+  // Or set it to an exact amount instead of adding.
+  await detail.getByLabel(/Amount in \$/).fill('75.5');
+  await detail.getByRole('button', { name: 'Set balance to this' }).click();
+  await expect(balanceValue).toHaveText('$75.50');
 
   const nameInput = detail.getByLabel('Display name');
   await nameInput.fill('Wendy Updated');
@@ -161,4 +166,26 @@ test('admin can select multiple accounts (or select all) and delete them in one 
   await bulkButton.click();
 
   await expect(page.locator('.admin-user-row', { hasText: /^Bulk/ })).toHaveCount(0);
+});
+
+test('the owner can set their own balance to an exact amount, and add to it, from the admin page', async ({ page }) => {
+  await adminLogin(page);
+  await page.goto('/admin');
+  const card = page.getByTestId('admin-my-balance');
+  await expect(card).toBeVisible();
+
+  await card.getByLabel('Amount in $').fill('12345.67');
+  await card.getByRole('button', { name: 'Set my balance to this' }).click();
+  await expect(card.getByText('Your balance is now $12,345.67.')).toBeVisible();
+  await expect(card.locator('.admin-my-balance-value')).toHaveText('$12,345.67');
+
+  await card.getByLabel('Amount in $').fill('100');
+  await card.getByRole('button', { name: 'Add to my balance' }).click();
+  await expect(card.locator('.admin-my-balance-value')).toHaveText('$12,445.67');
+
+  // Past the $20,000,000 ceiling is refused, and nothing changes.
+  await card.getByLabel('Amount in $').fill('25000000');
+  await card.getByRole('button', { name: 'Set my balance to this' }).click();
+  await expect(card.locator('.error-banner')).toBeVisible();
+  await expect(card.locator('.admin-my-balance-value')).toHaveText('$12,445.67');
 });

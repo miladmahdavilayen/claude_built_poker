@@ -1,4 +1,4 @@
-import { AdminAdjustChipsSchema, AdminBulkDeleteUsersSchema, AdminUpdateUserSchema } from '@pokerclause/shared';
+import { AdminAdjustChipsSchema, AdminBulkDeleteUsersSchema, AdminSetChipsSchema, AdminUpdateUserSchema, formatMoney, MAX_BALANCE_CENTS } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
 import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
@@ -95,16 +95,42 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
     return { ok: true, deleted, skipped };
   });
 
+  /** Moves a balance by `delta` (ledgered against the house), refusing to leave it negative or above MAX_BALANCE_CENTS. */
+  async function changeBalance(userId: string, delta: number): Promise<{ ok: true; chips: number } | { ok: false; status: number; code: string; message: string }> {
+    const user = await store.findUserById(userId);
+    if (!user) return { ok: false, status: 404, code: 'USER_NOT_FOUND', message: 'User not found.' };
+    const next = user.chips + delta;
+    if (next < 0 || next > MAX_BALANCE_CENTS) {
+      return { ok: false, status: 400, code: 'BALANCE_OUT_OF_RANGE', message: `A balance must stay between $0 and ${formatMoney(MAX_BALANCE_CENTS)}.` };
+    }
+    if (delta === 0) return { ok: true, chips: user.chips };
+    const updated = await store.adjustUserChips(userId, delta);
+    await store.recordLedgerEntries([
+      { userId, isHouse: false, amount: delta, reason: 'admin_adjust' },
+      { userId: null, isHouse: true, amount: -delta, reason: 'admin_adjust' },
+    ]);
+    return { ok: true, chips: updated.chips };
+  }
+
   app.post('/admin/chips', { preHandler: requireAdmin }, async (req, reply) => {
     const body = AdminAdjustChipsSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid payload.' });
     const { userId, amount, reason } = body.data;
-    await store.adjustUserChips(userId, amount);
-    await store.recordLedgerEntries([
-      { userId, isHouse: false, amount, reason: 'admin_adjust' },
-      { userId: null, isHouse: true, amount: -amount, reason: 'admin_adjust' },
-    ]);
-    return { ok: true, reason };
+    const result = await changeBalance(userId, amount);
+    if (!result.ok) return reply.code(result.status).send({ code: result.code, message: result.message });
+    return { ok: true, reason, chips: result.chips };
+  });
+
+  /** Sets a balance to an exact amount — the owner's "set my balance to $X". Ledgered as the difference, like any other adjustment. */
+  app.post('/admin/chips/set', { preHandler: requireAdmin }, async (req, reply) => {
+    const body = AdminSetChipsSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: `Enter an amount between $0 and ${formatMoney(MAX_BALANCE_CENTS)}.` });
+    const { userId, balance, reason } = body.data;
+    const user = await store.findUserById(userId);
+    if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
+    const result = await changeBalance(userId, balance - user.chips);
+    if (!result.ok) return reply.code(result.status).send({ code: result.code, message: result.message });
+    return { ok: true, reason, chips: result.chips };
   });
 
   app.post('/admin/tables/:tableId/close', { preHandler: requireAdmin }, async (req) => {

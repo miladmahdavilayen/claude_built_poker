@@ -183,4 +183,51 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect(await store.findUserById(admin.id)).not.toBeNull();
     });
   });
+  describe('admin balance changes', () => {
+    async function owner(chips = 500_000): Promise<{ id: string; token: string }> {
+      const admin = await store.createAccount('owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      await store.adjustUserChips(admin.id, chips);
+      return { id: admin.id, token: issueAccessToken({ ...admin, role: 'admin' }) };
+    }
+
+    it('sets a balance to an exact amount, up or down, ledgered as the difference', async () => {
+      const me = await owner(500_000);
+      const up = await app.inject({ method: 'POST', url: '/admin/chips/set', headers: auth(me.token), payload: { userId: me.id, balance: 1_234_567, reason: 'Owner set balance' } });
+      expect(up.statusCode).toBe(200);
+      expect(up.json<{ chips: number }>().chips).toBe(1_234_567);
+      expect((await store.findUserById(me.id))?.chips).toBe(1_234_567);
+
+      const down = await app.inject({ method: 'POST', url: '/admin/chips/set', headers: auth(me.token), payload: { userId: me.id, balance: 0, reason: 'Owner set balance' } });
+      expect(down.json<{ chips: number }>().chips).toBe(0);
+      // Only the moves are ledgered (+734,567 then -1,234,567), and the books still balance against the house.
+      expect(await store.ledgerBalanceForUser(me.id)).toBe(-500_000);
+      expect((await store.ledgerConservationCheck()).balanced).toBe(true);
+    });
+
+    it('adds to a balance and returns the new total', async () => {
+      const me = await owner(1_000);
+      const res = await app.inject({ method: 'POST', url: '/admin/chips', headers: auth(me.token), payload: { userId: me.id, amount: 250_000, reason: 'Owner top-up' } });
+      expect(res.statusCode).toBe(200);
+      expect(res.json<{ chips: number }>().chips).toBe(251_000);
+    });
+
+    it('refuses anything past $20,000,000 or below $0, leaving the balance untouched', async () => {
+      const me = await owner(1_000);
+      const tooBig = await app.inject({ method: 'POST', url: '/admin/chips/set', headers: auth(me.token), payload: { userId: me.id, balance: 2_000_000_001, reason: 'x' } });
+      expect(tooBig.statusCode).toBe(400);
+      const overflowAdd = await app.inject({ method: 'POST', url: '/admin/chips', headers: auth(me.token), payload: { userId: me.id, amount: 2_000_000_000, reason: 'x' } });
+      expect(overflowAdd.json<{ code: string }>().code).toBe('BALANCE_OUT_OF_RANGE');
+      const negative = await app.inject({ method: 'POST', url: '/admin/chips', headers: auth(me.token), payload: { userId: me.id, amount: -1_001, reason: 'x' } });
+      expect(negative.json<{ code: string }>().code).toBe('BALANCE_OUT_OF_RANGE');
+      expect((await store.findUserById(me.id))?.chips).toBe(1_000);
+    });
+
+    it('is owner-only', async () => {
+      const user = await store.createGoogleAccount('g-9', 'p@gmail.com', 'Pat');
+      const res = await app.inject({ method: 'POST', url: '/admin/chips/set', headers: auth(issueAccessToken(user)), payload: { userId: user.id, balance: 9_999_999, reason: 'x' } });
+      expect(res.statusCode).toBe(403);
+      expect((await store.findUserById(user.id))?.chips).toBe(0);
+    });
+  });
 });

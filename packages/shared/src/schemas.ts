@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_BALANCE_CENTS } from './money.js';
 
 // .strict() everywhere: unknown fields are rejected, per spec.
 
@@ -204,11 +205,21 @@ export type LoginInput = z.infer<typeof LoginSchema>;
 export const AdminAdjustChipsSchema = z
   .object({
     userId: z.string().min(1),
-    amount: z.number().int(),
+    amount: z.number().int().min(-MAX_BALANCE_CENTS).max(MAX_BALANCE_CENTS),
     reason: z.string().min(1).max(200),
   })
   .strict();
 export type AdminAdjustChipsInput = z.infer<typeof AdminAdjustChipsSchema>;
+
+/** Admin dashboard: sets a balance to an exact amount. Still ledgered — as the difference from the current balance. */
+export const AdminSetChipsSchema = z
+  .object({
+    userId: z.string().min(1),
+    balance: z.number().int().min(0).max(MAX_BALANCE_CENTS),
+    reason: z.string().min(1).max(200),
+  })
+  .strict();
+export type AdminSetChipsInput = z.infer<typeof AdminSetChipsSchema>;
 
 /** Admin dashboard: edits a user's display name. Chip changes go through AdminAdjustChipsSchema instead — a delta plus a reason, not a raw overwrite, so every change stays in the ledger. */
 export const AdminUpdateUserSchema = z

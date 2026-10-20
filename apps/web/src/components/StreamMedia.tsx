@@ -1,19 +1,21 @@
 import { useEffect, useRef } from 'react';
+import { forgetMedia, playOrQueue } from '../mediaUnlock.js';
 
 /**
  * Attaches a WebRTC MediaStream to the DOM so it actually plays.
  *
- * Local video is rendered muted (so you don't hear yourself). A remote
- * stream with no video track still needs an explicit `<audio>` element —
- * without one, its audio track is never attached to anything and never
- * plays. (An earlier version of this only rendered `<video>` when a video
- * track was present, which silently meant audio-only calls carried no
- * sound at all — fixed here.)
+ * Video is always rendered muted and a remote stream's sound always goes
+ * through its own `<audio>` element. Two reasons: browsers let muted video
+ * autoplay without a user gesture, so faces appear immediately even for a
+ * viewer who never joined the call; and the audio element can be retried
+ * on the viewer's first tap if the browser blocked it (see mediaUnlock.ts),
+ * instead of an unmuted `<video>` silently refusing to play at all. Local
+ * media never gets an `<audio>` (you'd hear yourself).
  *
- * `showVideo` (default true) lets a caller force the audio-only fallback
- * even when a video track exists — used by the camera speaker-bar
- * collapse (see Table.tsx/Seat.tsx) to keep a suppressed seat's audio
- * playing without rendering its video.
+ * `showVideo` (default true) lets a caller suppress the video while the
+ * audio keeps playing — used by the camera speaker-bar collapse, and for a
+ * viewer who may hear the table but not see it (see Table.tsx's
+ * `canSeeVideo`).
  */
 export function StreamMedia({
   stream,
@@ -28,16 +30,30 @@ export function StreamMedia({
   const audioRef = useRef<HTMLAudioElement>(null);
   const hasVideo = !!stream && stream.getVideoTracks().length > 0;
   const renderVideo = hasVideo && showVideo;
+  const renderAudio = !!stream && !isLocal;
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = renderVideo ? stream : null;
+    const el = videoRef.current;
+    if (!el) return;
+    el.srcObject = renderVideo ? stream : null;
+    if (renderVideo) playOrQueue(el);
+    return () => forgetMedia(el);
   }, [stream, renderVideo]);
 
   useEffect(() => {
-    if (audioRef.current) audioRef.current.srcObject = !isLocal && !renderVideo ? stream : null;
-  }, [stream, isLocal, renderVideo]);
+    const el = audioRef.current;
+    if (!el) return;
+    el.srcObject = renderAudio ? stream : null;
+    if (renderAudio) playOrQueue(el);
+    return () => forgetMedia(el);
+  }, [stream, renderAudio]);
 
   if (!stream) return null;
-  if (renderVideo) return <video ref={videoRef} autoPlay playsInline muted={isLocal} className="seat-video-el" />;
-  return <audio ref={audioRef} autoPlay />;
+  return (
+    <>
+      {renderVideo && <video ref={videoRef} autoPlay playsInline muted className="seat-video-el" />}
+      {/* Started only by playOrQueue, never by the autoplay attribute, so a blocked start is always noticed and retried. */}
+      {renderAudio && <audio ref={audioRef} />}
+    </>
+  );
 }

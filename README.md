@@ -475,7 +475,7 @@ it's ever lost:
 - **Idle reclamation.** Oracle may stop an Always Free server whose CPU,
   network and memory all stay under 20% for 7 days. `oci-keepalive` (a
   lowest-priority systemd service on the server) keeps usage above that
-  line, and the Oracle alarm "PokerClause IDLE RISK" emails/texts the owner
+  line, and the Oracle alarm "PokerClause IDLE RISK" emails the owner
   if memory ever sits under it for 6 hours. Upgrading the Oracle account to
   Pay As You Go (Always Free resources stay free) removes idle reclamation
   entirely and is the strongest protection.

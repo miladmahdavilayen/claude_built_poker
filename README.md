@@ -465,3 +465,35 @@ player can independently verify any hand via `GET /fairness/:handId`.
 See [RULES.md](./RULES.md) for a summary of the NLH rules implemented, and
 `packages/engine/README.md` / `packages/engine/DECISIONS.md` for the full
 detail and every ambiguous-rule resolution.
+
+## Production: staying up, and recovering if it doesn't
+
+Production runs on an Oracle Cloud **Always Free** Arm server behind
+Cloudflare (www.pokerclause.com). What keeps it there, and what to do if
+it's ever lost:
+
+- **Idle reclamation.** Oracle may stop an Always Free server whose CPU,
+  network and memory all stay under 20% for 7 days. `oci-keepalive` (a
+  lowest-priority systemd service on the server) keeps usage above that
+  line, and the Oracle alarm "PokerClause IDLE RISK" emails/texts the owner
+  if memory ever sits under it for 6 hours. Upgrading the Oracle account to
+  Pay As You Go (Always Free resources stay free) removes idle reclamation
+  entirely and is the strongest protection.
+- **Outages.** The Oracle alarm "PokerClause SERVER DOWN" fires when the
+  server stops reporting; `.github/workflows/uptime.yml` checks the site
+  from outside Oracle every 15 minutes and GitHub emails on failure.
+- **Data.** Nightly Postgres dumps: 14 days on the server, plus an
+  age-encrypted copy pushed to the private repo
+  `pokerclause-backups` (60 days). The decryption key is kept only by the
+  owner, never on the server. Oracle also snapshots the whole boot disk
+  weekly (2 kept, plus a baseline).
+
+**Restoring onto any fresh server** (Oracle or elsewhere):
+
+1. Install Docker, clone this repo to `/opt/pokerclause`, restore `.env`.
+2. `docker compose up -d postgres`, then decrypt the newest backup and load it:
+   `age -d -i pokerclause-backup.agekey X.dump.age > X.dump` and
+   `docker compose exec -T postgres pg_restore -U $POSTGRES_USER -d $POSTGRES_DB --clean --if-exists --no-owner < X.dump`
+3. `docker compose run --rm server pnpm db:migrate && docker compose up -d`.
+4. Point the Cloudflare DNS records at the new IP and update the
+   `DEPLOY_HOST` secret.

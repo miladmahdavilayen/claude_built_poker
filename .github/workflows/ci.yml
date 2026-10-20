@@ -58,7 +58,9 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
-          username: root
+          # 'ubuntu' on the Oracle server (root SSH is disabled there); set
+          # via the DEPLOY_USER secret so the host can change without an edit.
+          username: ${{ secrets.DEPLOY_USER || 'root' }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
@@ -75,6 +77,9 @@ jobs:
             docker compose run --rm server pnpm db:migrate
             docker compose up -d
             docker image prune -f
+            # Build layers pile up on every deploy (24 GB on the old host
+            # before anyone noticed); keep only the last week's for speed.
+            docker builder prune -f --filter until=168h
             # Fail the job loudly if the server didn't actually come back up
             # healthy — a broken deploy should turn this run red, not look
             # identical to a working one in the Actions UI.

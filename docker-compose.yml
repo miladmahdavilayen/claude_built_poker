@@ -54,6 +54,11 @@ services:
       # default (admin@pokerclause.local / admin12345) — fine for local dev,
       # a real security gap on any deployment reachable by anyone else. See
       # .env.example.
+      # Set on a real deployment behind a reverse proxy (see README's
+      # deployment section) so per-IP rate limits see the visitor's real
+      # address instead of the proxy's. Leave unset when nothing sits in
+      # front of the server, or anyone could spoof their IP via the header.
+      TRUST_PROXY: ${TRUST_PROXY:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports:

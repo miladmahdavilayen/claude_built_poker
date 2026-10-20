@@ -10,6 +10,17 @@ function publicUser(user: { id: string; email: string | null; displayName: strin
   return { id: user.id, email: user.email, displayName: user.displayName, isGuest: user.isGuest, role: user.role, chips: user.chips, avatarSeed: user.avatarSeed };
 }
 
+/**
+ * Per-IP limits far tighter than the global one, on the routes an attacker
+ * would actually hammer: password guessing on /auth/login (the owner's
+ * account is the only password account, so a real owner never needs more
+ * than a handful of tries), and mass account creation on the sign-up
+ * routes. Env-overridable only so the E2E suite (one shared server, many
+ * sign-ups from localhost) can lift them — see playwright.config.ts.
+ */
+const LOGIN_RATE_LIMIT = { max: Number(process.env.AUTH_LOGIN_LIMIT ?? 5), timeWindow: '15 minutes' };
+const SIGNUP_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_LIMIT ?? 20), timeWindow: '1 hour' };
+
 export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -23,7 +34,7 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
     });
   }
 
-  app.post('/auth/guest', async (req, reply) => {
+  app.post('/auth/guest', { config: { rateLimit: SIGNUP_RATE_LIMIT } }, async (req, reply) => {
     const body = GuestSignupSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid guest signup payload.' });
     const result = await signUpGuest(store, body.data.displayName);
@@ -36,7 +47,7 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
   // stays wired up, but is only ever reachable by the admin/owner
   // account, via a small, deliberately unadvertised trigger on the login
   // page — see Login.tsx. See DECISIONS.md.
-  app.post('/auth/login', async (req, reply) => {
+  app.post('/auth/login', { config: { rateLimit: LOGIN_RATE_LIMIT } }, async (req, reply) => {
     const body = LoginSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid login payload.' });
     try {
@@ -51,7 +62,7 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
 
   app.get('/auth/google/available', () => ({ available: isGoogleSignInConfigured() }));
 
-  app.post('/auth/google', async (req, reply) => {
+  app.post('/auth/google', { config: { rateLimit: SIGNUP_RATE_LIMIT } }, async (req, reply) => {
     if (!isGoogleSignInConfigured()) {
       return reply.code(501).send({ code: 'GOOGLE_NOT_CONFIGURED', message: 'Google sign-in is not configured on this server.' });
     }
@@ -69,7 +80,7 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
     }
   });
 
-  app.post('/auth/upgrade/google', { preHandler: requireAuth }, async (req, reply) => {
+  app.post('/auth/upgrade/google', { preHandler: requireAuth, config: { rateLimit: SIGNUP_RATE_LIMIT } }, async (req, reply) => {
     if (!isGoogleSignInConfigured()) {
       return reply.code(501).send({ code: 'GOOGLE_NOT_CONFIGURED', message: 'Google sign-in is not configured on this server.' });
     }

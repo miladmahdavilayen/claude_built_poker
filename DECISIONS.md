@@ -1947,3 +1947,21 @@ owner's invite (and `admin-rebuy`) now covers any shortfall: the
 missing amount is granted from the house as an `admin_adjust` ledger
 pair, then the normal `buy_in` debit runs. A player who can afford the
 amount still pays it from their own balance, exactly as before.
+
+## Production behind Cloudflare: real client IPs, tighter abuse limits
+
+Production moved to an Oracle Cloud free-tier Arm server behind Cloudflare
+(proxied DNS, WAF, Bot Fight Mode) and Caddy. Behind a proxy every request
+reaches Fastify from the proxy's address, so the existing per-IP rate
+limit treated ALL visitors as one — one abuser could exhaust it for
+everyone. `TRUST_PROXY` (unset by default, so local dev and tests trust
+nothing) tells Fastify which proxy hops to believe; Caddy only accepts
+CF-Connecting-IP from Cloudflare's published ranges and forwards exactly
+one X-Forwarded-For value, which socket connections use too.
+
+On top of the global limit: `/auth/login` allows 5 tries per IP per 15
+minutes (the owner's is the only password account), sign-up routes 20
+per IP per hour, and each IP may hold at most 30 sockets open with
+messages capped at 100 KB. All are env-overridable only so the E2E suite
+can lift them. These must never be deployed without `TRUST_PROXY` set
+behind a proxy — every player would share one IP's budget.

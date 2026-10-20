@@ -76,12 +76,52 @@ function evictSeatToSpectator(io: Server, tableId: string, seatId: number): void
 const actionLimiter = new RateLimiter(10, 5); // 10 burst, 5/sec refill
 const chatLimiter = new RateLimiter(5, 1); // 5 burst, 1/sec refill
 
+/**
+ * The visitor's address. Behind the production proxy (TRUST_PROXY set —
+ * see index.ts) the socket's own peer is the proxy, so the real client is
+ * the last X-Forwarded-For entry: the one our own proxy wrote, which a
+ * client can't forge (anything it sends itself lands further left).
+ */
+function clientIp(socket: Socket): string {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (process.env.TRUST_PROXY && typeof forwarded === 'string' && forwarded.length > 0) {
+    const hops = forwarded.split(',');
+    return (hops[hops.length - 1] ?? '').trim() || socket.handshake.address;
+  }
+  return socket.handshake.address;
+}
+
 export function attachSocketServer(
   httpServer: HttpServer,
   deps: { store: Store; corsOrigin: string; adminUserId: string },
 ): { io: Server; registry: TableRegistry; closeAllTables: () => Promise<void> } {
   const io = new Server(httpServer, {
     cors: { origin: deps.corsOrigin, credentials: true },
+    // Nothing a client sends (actions, chat, WebRTC SDP/ICE) comes close
+    // to this; the 1 MB default just hands a flood more room to work with.
+    maxHttpBufferSize: 100_000,
+  });
+
+  // Caps how many sockets one address can hold open at once, so a single
+  // bot can't exhaust the server by opening connections in a loop. The
+  // per-socket action/chat limiters above can't see this: each new socket
+  // gets a fresh bucket.
+  const maxSocketsPerIp = Number(process.env.SOCKET_CONNECTIONS_PER_IP ?? 30);
+  const socketsPerIp = new Map<string, number>();
+  io.use((socket, next) => {
+    const ip = clientIp(socket);
+    const open = socketsPerIp.get(ip) ?? 0;
+    if (open >= maxSocketsPerIp) {
+      next(new Error('TOO_MANY_CONNECTIONS'));
+      return;
+    }
+    socketsPerIp.set(ip, open + 1);
+    socket.once('disconnect', () => {
+      const left = (socketsPerIp.get(ip) ?? 1) - 1;
+      if (left <= 0) socketsPerIp.delete(ip);
+      else socketsPerIp.set(ip, left);
+    });
+    next();
   });
 
   const registry = new TableRegistry(deps.store, (tableId, perSeat, rawEvents) => {

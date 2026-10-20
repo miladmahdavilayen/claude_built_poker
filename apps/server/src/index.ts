@@ -103,6 +103,19 @@ async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise
   return result.user.id;
 }
 
+/**
+ * Behind a reverse proxy (Caddy, itself behind Cloudflare in production)
+ * every request reaches Fastify from the proxy's address, so without this
+ * `req.ip` — the key every per-IP rate limit uses — is the same for all
+ * visitors, and one abuser exhausts the limit for everyone. Unset (local
+ * dev, tests) means "trust nothing", Fastify's default. Otherwise it's
+ * the proxy addresses to trust, e.g. `loopback,uniquelocal` for a proxy on
+ * the same host reaching the container over Docker's bridge network.
+ */
+function parseTrustProxy(raw: string): boolean | string {
+  return raw === 'true' ? true : raw;
+}
+
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 4000);
   const host = process.env.HOST ?? '0.0.0.0';
@@ -110,6 +123,7 @@ async function main(): Promise<void> {
 
   const isProd = process.env.NODE_ENV === 'production';
   const app = Fastify({
+    ...(process.env.TRUST_PROXY ? { trustProxy: parseTrustProxy(process.env.TRUST_PROXY) } : {}),
     logger: isProd
       ? { level: process.env.LOG_LEVEL ?? 'info' }
       : { level: process.env.LOG_LEVEL ?? 'info', transport: { target: 'pino-pretty' } },

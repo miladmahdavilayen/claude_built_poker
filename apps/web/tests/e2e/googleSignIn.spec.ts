@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { guestSignup } from './helpers.js';
 
 // This sandbox has no real Google Cloud OAuth Client ID to test the actual
 // "click the button, sign in with a real Google account" flow with — that
@@ -17,17 +18,13 @@ test('with no Google configuration, the server reports it unavailable, the sign-
   const availability = await request.get('http://localhost:4210/auth/google/available');
   expect(await availability.json()).toEqual({ available: false });
 
+  // The login page never shows a Google button now (invite-only: an
+  // uninvited visitor only gets the invitation-link prompt), and guest play
+  // — the way an invited player gets in — is unaffected.
   await page.goto('/');
-  // The guest form is the default (and, with no Google configured, only
-  // real) way in — no "Log in"/"Register" tabs exist anymore either (see
-  // Login.tsx; email/password login still works, but only via the small
-  // unadvertised admin trigger, not shown here).
-  await expect(page.getByLabel('Display name')).toBeVisible();
-  // No Google button container should be rendered at all.
-  await expect(page.locator('.google-signin-row div')).toHaveCount(0);
+  await expect(page.locator('.google-signin-row')).toHaveCount(0);
+  await expect(page.getByLabel('Invitation link')).toBeVisible();
 
-  await page.getByLabel('Display name').fill('NoGoogleGuest');
-  await page.getByRole('button', { name: 'Play now' }).click();
-  await expect(page).toHaveURL(/\/lobby/);
+  await guestSignup(page, 'NoGoogleGuest');
   await expect(page.getByText('NoGoogleGuest')).toBeVisible();
 });

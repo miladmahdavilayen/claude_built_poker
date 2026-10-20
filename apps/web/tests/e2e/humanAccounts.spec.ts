@@ -38,12 +38,19 @@ test('a signed-in human can create their own table, sit themselves down, and add
   await expect(page.locator('[data-testid="seat-1"]').getByText('🤖 bot')).toBeVisible();
 });
 
-test('the login page offers only Google and guest — no self-registration — with a small hidden admin-login trigger', async ({ page }) => {
+test('an uninvited visitor is only asked for an invitation link — no guest form, no self-registration — with a small hidden admin-login trigger', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByLabel('Display name')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Play now' })).toBeVisible();
+  await expect(page.getByLabel('Invitation link')).toBeVisible();
+  await expect(page.getByText('invite-only')).toBeVisible();
+  await expect(page.getByLabel('Display name')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Play now' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Register', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Log in', exact: true })).toHaveCount(0);
+
+  // Anything that isn't an invite link is turned away with a hint.
+  await page.getByLabel('Invitation link').fill('https://example.com/not-an-invite');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText("doesn't look like an invitation link")).toBeVisible();
 
   await page.locator('.admin-login-trigger').click();
   await expect(page.getByLabel('Email')).toBeVisible();

@@ -1,9 +1,16 @@
 import { expect, type Page } from '@playwright/test';
 
+/**
+ * Starts a guest session through the real API rather than the login page:
+ * the site is invite-only, so the page itself only offers "Play now" to a
+ * visitor who arrived through an invite link (see Login.tsx). The refresh
+ * cookie lands in this page's browser context, so loading the app signs
+ * it in exactly as a real guest would be.
+ */
 export async function guestSignup(page: Page, name: string): Promise<void> {
-  await page.goto('/');
-  await page.getByLabel('Display name').fill(name);
-  await page.getByRole('button', { name: 'Play now' }).click();
+  const res = await page.request.post('http://localhost:4210/auth/guest', { data: { displayName: name } });
+  expect(res.ok()).toBe(true);
+  await page.goto('/lobby');
   await expect(page).toHaveURL(/\/lobby/);
 }
 

@@ -1965,3 +1965,17 @@ per IP per hour, and each IP may hold at most 30 sockets open with
 messages capped at 100 KB. All are env-overridable only so the E2E suite
 can lift them. These must never be deployed without `TRUST_PROXY` set
 behind a proxy — every player would share one IP's budget.
+
+## Invite-only front door
+
+The login page no longer offers anyone a guest session. Only a visitor who
+arrived through an owner-generated invite link (`location.state.from`
+matching `/table/:id?assign=`) sees "Display name" → "Play now"; everyone
+else sees an "Invitation link" prompt, and pasting the link there simply
+navigates to it, landing back on the guest form with the invite attached.
+The Google button is gone from this page (production never configured
+it). The owner's gear in the corner is unchanged. The E2E `guestSignup`
+helper now starts guest sessions through `POST /auth/guest`, since no page
+offers that to an uninvited visitor anymore. The API route itself is still
+open (rate limited per IP); gating it server-side on a valid invite token
+would be the next step if guest sessions themselves need locking down.

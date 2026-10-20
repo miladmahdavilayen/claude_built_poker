@@ -186,6 +186,13 @@ input[type='range']::-moz-range-thumb {
   margin-bottom: 16px;
   min-height: 1px;
 }
+.invite-only-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: center;
+}
 .auth-card form {
   display: flex;
   flex-direction: column;

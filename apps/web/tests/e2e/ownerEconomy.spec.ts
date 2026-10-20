@@ -91,6 +91,38 @@ test('a fresh visitor (not yet signed in) opening an invite link lands directly 
   await ctxVisitor.close();
 });
 
+// The site is invite-only: a visitor landing on the home page gets no guest
+// form, only an "Invitation link" prompt. Pasting the link they were sent
+// there must lead to the same place opening it directly would.
+test('an uninvited visitor who pastes their invitation link on the home page gets the guest form and is seated', async ({ browser }) => {
+  const ctxOwner = await browser.newContext();
+  const ctxVisitor = await browser.newContext();
+  const pageOwner = await ctxOwner.newPage();
+  const pageVisitor = await ctxVisitor.newPage();
+
+  await adminLogin(pageOwner);
+  await createTable(pageOwner, { name: 'Pasted Invite Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  const tableUrl = pageOwner.url();
+  await pageOwner.locator('[data-testid="seat-2"]').getByText('+ Assign human').click();
+  await pageOwner.getByLabel(/Buy-in/).fill('90');
+  await pageOwner.getByRole('button', { name: 'Generate link' }).click();
+  const link = await pageOwner.locator('.assign-link-input').inputValue();
+  await pageOwner.getByRole('button', { name: 'Done' }).click();
+
+  await pageVisitor.goto('/');
+  await expect(pageVisitor.getByLabel('Display name')).toHaveCount(0);
+  await pageVisitor.getByLabel('Invitation link').fill(link);
+  await pageVisitor.getByRole('button', { name: 'Continue' }).click();
+
+  await pageVisitor.getByLabel('Display name').fill('Pasted Link Guest');
+  await pageVisitor.getByRole('button', { name: 'Play now' }).click();
+  await expect(pageVisitor).toHaveURL(tableUrl);
+  await expect(pageVisitor.locator('[data-testid="seat-2"] .seat-stack')).toHaveText('$90');
+
+  await ctxOwner.close();
+  await ctxVisitor.close();
+});
+
 // Regression test: the owner can privately label an invite link (see
 // DECISIONS.md) — the label shows up next to the redeemer's own chosen
 // name, in parentheses, but ONLY on the owner's own view. This is

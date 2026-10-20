@@ -1,37 +1,50 @@
-import { useCallback, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext.js';
-import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
 // An owner-generated seat invite (`/table/:id?assign=:token`) sends an
 // unauthenticated visitor here via RedirectToLogin in App.tsx, which stashes
-// the original destination in location.state.from. Invited human players
-// should only ever see "Play as guest" — not Google or the admin login — so
-// they can't wander off into an unrelated account instead of taking the seat
-// they were invited to.
+// the original destination in location.state.from.
 const INVITE_FROM_PATTERN = /^\/table\/[^/]+\?.*\bassign=/;
 
 /**
- * A human player has exactly two ways in: Google, or a guest session — no
- * public self-registration exists anymore (see DECISIONS.md). The
- * email/password form still works, but ONLY for the admin/owner account,
- * and is deliberately never shown as a real option: a small, easy-to-miss
- * trigger tucked in the bottom-right corner is the only way to reach it,
- * so a regular visitor never even notices it's there.
+ * Turns whatever an invited player pasted (the full link, with or without
+ * the domain, from this or an older address) into the in-app path to open,
+ * or null if it isn't an invite link at all.
+ */
+function invitePathFrom(input: string): string | null {
+  try {
+    const url = new URL(input.trim(), window.location.origin);
+    const path = `${url.pathname}${url.search}`;
+    return INVITE_FROM_PATTERN.test(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The site is invite-only. Only a visitor who arrived through an
+ * owner-generated invite link gets the guest form ("Display name" → "Play
+ * now"); anyone else is asked for their invitation link and can't create
+ * a guest session from here. The owner's email/password form is reached
+ * only through the small, deliberately unadvertised gear in the
+ * bottom-right corner. See DECISIONS.md.
  */
 export function LoginPage(): React.JSX.Element {
-  const { signupGuest, login, loginWithGoogle } = useAuth();
+  const { signupGuest, login } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const from = (location.state as { from?: string } | null)?.from;
   const isInvitedPlayer = typeof from === 'string' && INVITE_FROM_PATTERN.test(from);
-  // No navigation happens here on success — once `user` becomes truthy,
-  // App.tsx's own /login route (LoginRoute) re-evaluates and redirects
-  // itself, honoring wherever this visitor was originally headed (e.g.
-  // an owner-generated invite link). Navigating from here too used to
-  // race that route-level redirect — see LoginRoute's doc comment in
-  // App.tsx for why that's a real bug, not just redundant code.
-  const [mode, setMode] = useState<'guest' | 'admin-login'>('guest');
+  // No navigation happens here on a successful sign-in — once `user`
+  // becomes truthy, App.tsx's own /login route (LoginRoute) re-evaluates
+  // and redirects itself, honoring wherever this visitor was originally
+  // headed (e.g. an owner-generated invite link). Navigating from here too
+  // used to race that route-level redirect — see LoginRoute's doc comment
+  // in App.tsx for why that's a real bug, not just redundant code.
+  const [mode, setMode] = useState<'visitor' | 'admin-login'>('visitor');
   const [displayName, setDisplayName] = useState('');
+  const [inviteLink, setInviteLink] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -40,9 +53,20 @@ export function LoginPage(): React.JSX.Element {
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
+    if (mode === 'visitor' && !isInvitedPlayer) {
+      const path = invitePathFrom(inviteLink);
+      if (!path) {
+        setError("That doesn't look like an invitation link. Ask the table owner to send you one.");
+        return;
+      }
+      // Opening the invite while signed out lands right back here, this
+      // time with the invite as location.state.from — see RedirectToLogin.
+      void navigate(path);
+      return;
+    }
     setBusy(true);
     try {
-      if (mode === 'guest') await signupGuest(displayName || 'Guest');
+      if (mode === 'visitor') await signupGuest(displayName || 'Guest');
       else await login(email, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
@@ -51,35 +75,13 @@ export function LoginPage(): React.JSX.Element {
     }
   };
 
-  const handleGoogleCredential = useCallback(
-    (idToken: string) => {
-      setError(null);
-      setBusy(true);
-      loginWithGoogle(idToken)
-        .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Google sign-in failed.'))
-        .finally(() => setBusy(false));
-    },
-    [loginWithGoogle],
-  );
-
   return (
     <div className="page-centered">
       <div className="auth-card">
         <h1>pokerclause</h1>
 
-        {!isInvitedPlayer && mode === 'guest' && (
-          <div className="google-signin-row">
-            <GoogleSignInButton onCredential={handleGoogleCredential} />
-          </div>
-        )}
-
         <form onSubmit={(e) => void submit(e)}>
-          {mode === 'guest' ? (
-            <label>
-              Display name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
-            </label>
-          ) : (
+          {mode === 'admin-login' ? (
             <>
               <label>
                 Email
@@ -90,20 +92,39 @@ export function LoginPage(): React.JSX.Element {
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
               </label>
             </>
+          ) : isInvitedPlayer ? (
+            <label>
+              Display name
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
+            </label>
+          ) : (
+            <>
+              <p className="invite-only-note">PokerClause is invite-only. Paste the invitation link the table owner sent you.</p>
+              <label>
+                Invitation link
+                <input
+                  value={inviteLink}
+                  onChange={(e) => setInviteLink(e.target.value)}
+                  placeholder="https://www.pokerclause.com/table/…"
+                  autoComplete="off"
+                  required
+                />
+              </label>
+            </>
           )}
           {error && <div className="error-banner">{error}</div>}
           <button type="submit" disabled={busy}>
-            {mode === 'guest' ? 'Play now' : 'Log in'}
+            {mode === 'admin-login' ? 'Log in' : isInvitedPlayer ? 'Play now' : 'Continue'}
           </button>
           {mode === 'admin-login' && (
-            <button type="button" className="btn-ghost" onClick={() => setMode('guest')}>
+            <button type="button" className="btn-ghost" onClick={() => setMode('visitor')}>
               &larr; Back
             </button>
           )}
         </form>
       </div>
 
-      {!isInvitedPlayer && mode === 'guest' && (
+      {!isInvitedPlayer && mode === 'visitor' && (
         <button
           type="button"
           className="admin-login-trigger"

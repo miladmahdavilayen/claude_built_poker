@@ -17,6 +17,9 @@ export function SwipeToDelete({ label, onDelete, children }: { label: string; on
   const [drag, setDrag] = useState<number | null>(null);
   const start = useRef<{ x: number; y: number; base: number; dragging: boolean } | null>(null);
   const justDragged = useRef(false);
+  // The live drag offset. State lags a render behind fast pointer moves, so
+  // the release decision reads this, never a possibly-stale `drag`.
+  const liveOffset = useRef(0);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     start.current = { x: e.clientX, y: e.clientY, base: open ? -REVEAL_PX : 0, dragging: false };
@@ -30,7 +33,8 @@ export function SwipeToDelete({ label, onDelete, children }: { label: string; on
       s.dragging = true;
       e.currentTarget.setPointerCapture(e.pointerId);
     }
-    setDrag(Math.min(0, Math.max(s.base + dx, -REVEAL_PX)));
+    liveOffset.current = Math.min(0, Math.max(s.base + dx, -REVEAL_PX));
+    setDrag(liveOffset.current);
   };
   const onPointerUp = (): void => {
     const s = start.current;
@@ -38,7 +42,7 @@ export function SwipeToDelete({ label, onDelete, children }: { label: string; on
     if (!s?.dragging) return;
     justDragged.current = true;
     setTimeout(() => (justDragged.current = false), 0);
-    setOpen((drag ?? 0) <= -OPEN_THRESHOLD_PX);
+    setOpen(liveOffset.current <= -OPEN_THRESHOLD_PX);
     setDrag(null);
   };
 

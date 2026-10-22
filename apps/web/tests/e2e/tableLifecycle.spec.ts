@@ -203,6 +203,10 @@ test('the owner swipes a table card left in the lobby and deletes it after confi
   await owner.goto('/lobby');
   const card = owner.locator('.swipe-delete', { hasText: 'Swipe Me Away' });
   await expect(card).toBeVisible();
+  // Swipe like a slow phone would: on a throttled CPU, React renders lag
+  // behind fast pointer moves — which once made a full swipe snap shut.
+  const cdp = await owner.context().newCDPSession(owner);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
   // Swipe it left with the mouse (the lobby may be long — bring the card into view first).
   const swipeLeft = async (): Promise<void> => {
     await card.scrollIntoViewIfNeeded();
@@ -218,6 +222,9 @@ test('the owner swipes a table card left in the lobby and deletes it after confi
   // Confirmation first; cancelling keeps it.
   await expect(owner.getByText('Delete “Swipe Me Away”?')).toBeVisible();
   await owner.getByRole('button', { name: 'Cancel' }).click();
+  // Wait for the dialog to be gone — otherwise, on a slow machine, the next
+  // swipe lands on its backdrop instead of the card.
+  await expect(owner.getByText('Delete “Swipe Me Away”?')).toBeHidden();
   await expect(owner.locator('.table-card', { hasText: 'Swipe Me Away' })).toBeVisible();
 
   await swipeLeft();

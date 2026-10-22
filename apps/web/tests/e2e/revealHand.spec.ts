@@ -5,7 +5,7 @@ import { adminLogin, createTable, guestSignup, inviteToSeat, startHand, takeSeat
 // components/RevealHandButton.tsx and LiveTable.revealHand): whoever wins
 // a hand purely because the other player folded — never having to show
 // anything — gets a one-shot "Reveal Hand"/"Show Bluff" button, and using
-// it broadcasts their real cards to every viewer and tacks 5 more real
+// it broadcasts their real cards to every viewer and tacks 1.5 more real
 // seconds onto the shuffle break (on top of this suite's own shortened
 // HAND_BREAK_MS — see playwright.config.ts).
 test('the fold-win winner can voluntarily reveal their cards, and it extends the shuffle break', async ({ browser }) => {
@@ -66,17 +66,19 @@ test('the fold-win winner can voluntarily reveal their cards, and it extends the
 
   // Clicking it flips the winner's hole cards face-up for EVERYONE watching, not just the winner, and consumes the one-shot option.
   await revealBtn.click();
+  const revealedAt = Date.now();
   await expect(revealBtn).toHaveCount(0);
   for (const page of [pageA, pageB]) {
     await expect(page.locator(`[data-testid="seat-${String(winnerSeatId)}"] .seat-cards .card`)).toHaveCount(2, { timeout: 3000 });
   }
 
-  // The break must stay well past this suite's own shortened 1200ms
-  // HAND_BREAK_MS (see playwright.config.ts) thanks to the extra 5s the
-  // reveal tacks on, but still come back eventually.
+  // The reveal leaves at least 1.5s of break from the click (whatever was
+  // left of this suite's shortened 1200ms HAND_BREAK_MS — see
+  // playwright.config.ts — plus 1.5s), so 1s after the click the next
+  // hand still can't start, but it does come back eventually.
   const playHandBtn = pageA.getByRole('button', { name: 'Play Hand' });
-  await pageA.waitForTimeout(3000);
-  await expect(playHandBtn).toHaveCount(0);
+  await pageA.waitForTimeout(Math.max(0, revealedAt + 1000 - Date.now()));
+  expect(await playHandBtn.count()).toBe(0);
   await expect(playHandBtn).toBeVisible({ timeout: 6000 });
 
   await ctxA.close();

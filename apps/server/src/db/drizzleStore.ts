@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.js';
 import type {
@@ -15,6 +15,7 @@ import type {
   GameReportPlayerRecord,
   GameReportRecord,
   GoogleAccountInput,
+  SignupKeyRecord,
 } from './store.js';
 
 type GameReportRow = Omit<typeof schema.gameReports.$inferSelect, 'reportYaml'>;
@@ -44,8 +45,30 @@ function toUserRecord(row: typeof schema.users.$inferSelect): UserRecord {
     avatarUrl: row.avatarUrl,
     createdAt: row.createdAt,
     lastLoginAt: row.lastLoginAt,
+    waiver:
+      row.waiverVersion !== null && row.waiverInitials !== null && row.waiverAcceptedAt !== null
+        ? { version: row.waiverVersion, initials: row.waiverInitials, acceptedAt: row.waiverAcceptedAt }
+        : null,
   };
 }
+
+function toSignupKeyRecord(row: typeof schema.signupKeys.$inferSelect): SignupKeyRecord {
+  return {
+    id: row.id,
+    hint: row.hint,
+    label: row.label,
+    email: row.email,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    usedAt: row.usedAt,
+    usedBy: row.usedBy,
+    revokedAt: row.revokedAt,
+  };
+}
+
+/** A key that can still be used: not used, not revoked, not expired. */
+const usableSignupKey = () =>
+  and(isNull(schema.signupKeys.usedAt), isNull(schema.signupKeys.revokedAt), gt(schema.signupKeys.expiresAt, new Date()));
 
 function toTableRecord(row: typeof schema.tables.$inferSelect): TableRecord {
   return {
@@ -125,6 +148,61 @@ export class DrizzleStore implements Store {
 
   async recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord> {
     const [row] = await this.db.update(schema.users).set({ avatarUrl, lastLoginAt: new Date() }).where(eq(schema.users.id, userId)).returning();
+    if (!row) throw new Error('USER_NOT_FOUND');
+    return toUserRecord(row);
+  }
+
+  async createSignupKey(input: { keyHash: string; hint: string; label: string; email: string | null; emailKey: string | null; createdBy: string; expiresAt: Date }): Promise<SignupKeyRecord> {
+    const [row] = await this.db.insert(schema.signupKeys).values(input).returning();
+    return toSignupKeyRecord(row!);
+  }
+
+  async listSignupKeys(): Promise<SignupKeyRecord[]> {
+    const rows = await this.db.select().from(schema.signupKeys).orderBy(desc(schema.signupKeys.createdAt));
+    return rows.map(toSignupKeyRecord);
+  }
+
+  async findUsableSignupKey(keyHash: string): Promise<SignupKeyRecord | null> {
+    const [row] = await this.db.select().from(schema.signupKeys).where(and(eq(schema.signupKeys.keyHash, keyHash), usableSignupKey())).limit(1);
+    return row ? toSignupKeyRecord(row) : null;
+  }
+
+  async consumeSignupKey(keyHash: string, emailKey: string): Promise<string | null> {
+    // One UPDATE … WHERE usable: Postgres row locking means two
+    // registrations racing for the same key can't both match.
+    const [row] = await this.db
+      .update(schema.signupKeys)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(schema.signupKeys.keyHash, keyHash),
+          usableSignupKey(),
+          or(isNull(schema.signupKeys.emailKey), eq(schema.signupKeys.emailKey, emailKey)),
+        ),
+      )
+      .returning({ id: schema.signupKeys.id });
+    return row?.id ?? null;
+  }
+
+  async attachSignupKeyUser(id: string, userId: string): Promise<void> {
+    await this.db.update(schema.signupKeys).set({ usedBy: userId }).where(eq(schema.signupKeys.id, id));
+  }
+
+  async revokeSignupKey(id: string): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.signupKeys)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(schema.signupKeys.id, id), isNull(schema.signupKeys.usedAt), isNull(schema.signupKeys.revokedAt)))
+      .returning({ id: schema.signupKeys.id });
+    return rows.length > 0;
+  }
+
+  async acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {
+    const [row] = await this.db
+      .update(schema.users)
+      .set({ waiverVersion: version, waiverInitials: initials, waiverAcceptedAt: new Date() })
+      .where(eq(schema.users.id, userId))
+      .returning();
     if (!row) throw new Error('USER_NOT_FOUND');
     return toUserRecord(row);
   }

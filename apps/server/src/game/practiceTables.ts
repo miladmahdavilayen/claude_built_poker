@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 import { formatMoney, PRACTICE_STAKES, type CreatePracticeTableInput, type TableSettings } from '@pokerclause/shared';
+import { needsWaiver } from '../auth/waiver.js';
 import type { Store, UserRecord } from '../db/store.js';
 import type { LiveTable } from './liveTable.js';
 import { SELECTABLE_BOT_POLICIES } from './liveTable.js';
@@ -22,6 +23,7 @@ const opening = new Set<string>();
  */
 export async function openPracticeTable(store: Store, registry: TableRegistry, user: UserRecord, input: CreatePracticeTableInput): Promise<OpenPracticeTableResult> {
   if (user.isGuest) return { ok: false, status: 403, code: 'GUEST_CANNOT_CREATE_TABLE', message: 'Sign in with Google to play.' };
+  if (needsWaiver(user)) return { ok: false, status: 403, code: 'WAIVER_REQUIRED', message: 'Please agree to the friendly-game waiver first.' };
   const existing = registry.practiceTableOf(user.id);
   if (existing) {
     return { ok: false, status: 409, code: 'PRACTICE_TABLE_OPEN', message: 'You already have a table open.', tableId: existing.tableId };

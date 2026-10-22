@@ -7,6 +7,7 @@ import { LobbyPage } from './pages/Lobby.js';
 import { LoginPage } from './pages/Login.js';
 import { ProfilePage } from './pages/Profile.js';
 import { TablePage } from './pages/Table.js';
+import { WaiverPage } from './pages/Waiver.js';
 import { unlockAudio } from './sound.js';
 
 export function App(): React.JSX.Element {
@@ -32,8 +33,20 @@ export function App(): React.JSX.Element {
 
   if (loading) return <div className="page-centered">Loading...</div>;
 
+  // A Google player agrees to the friendly-game waiver before anything
+  // else — the server refuses to open them a table until they have, too.
+  if (user?.needsWaiver) {
+    return (
+      <Routes>
+        <Route path="/waiver" element={<WaiverPage />} />
+        <Route path="*" element={<Navigate to="/waiver" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
+      <Route path="/waiver" element={<Navigate to="/" replace />} />
       <Route path="/" element={<Navigate to={user ? '/lobby' : '/login'} replace />} />
       <Route path="/login" element={<LoginRoute user={user} />} />
       <Route path="/lobby" element={user ? <LobbyPage /> : <RedirectToLogin />} />

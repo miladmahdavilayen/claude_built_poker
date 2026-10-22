@@ -19,6 +19,10 @@ export const users = pgTable('users', {
   avatarUrl: text('avatar_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  /** The friendly-game waiver: which version this player agreed to, when, and the initials they typed. Null until they agree. */
+  waiverVersion: integer('waiver_version'),
+  waiverInitials: text('waiver_initials'),
+  waiverAcceptedAt: timestamp('waiver_accepted_at', { withTimezone: true }),
 });
 
 /**
@@ -33,6 +37,34 @@ export const welcomeBonusClaims = pgTable('welcome_bonus_claims', {
   amount: integer('amount').notNull(),
   claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One-time access keys the owner generates for a new player to register
+ * with (see auth/signupKeys.ts). Only a SHA-256 hash of the key is kept —
+ * the key itself is shown to the owner once, at generation. A key works
+ * once: `used_at` is set the moment it registers an account.
+ */
+export const signupKeys = pgTable(
+  'signup_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    keyHash: text('key_hash').notNull().unique(),
+    /** The key's last 4 characters, so the owner can tell keys apart without the key itself. */
+    hint: text('hint').notNull(),
+    /** Who it's for, in the owner's words. */
+    label: text('label').notNull(),
+    /** Optional: only this Google email may use it (as typed, and normalized — see normalizeEmailKey). */
+    email: text('email'),
+    emailKey: text('email_key'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    usedBy: uuid('used_by').references(() => users.id, { onDelete: 'set null' }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [index('signup_keys_created_at_idx').on(t.createdAt)],
+);
 
 export const sessions = pgTable('sessions', {
   tokenHash: text('token_hash').primaryKey(),

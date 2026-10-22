@@ -1,6 +1,7 @@
 import type { Store, UserRecord } from '../db/store.js';
 import type { GoogleProfile } from './googleAuth.js';
 import { hashPassword, verifyPassword } from './passwords.js';
+import { hashSignupKey, normalizeSignupKey } from './signupKeys.js';
 import { issueAccessToken, issueRefreshToken } from './session.js';
 
 export interface AuthResult {
@@ -72,9 +73,18 @@ export function normalizeEmailKey(email: string): string {
 }
 
 /**
+ * Who may register a new account: someone with an owner-generated access
+ * key (see signupKeys.ts), or — only for the test-only routes — anyone.
+ */
+export type RegistrationGate = { signupKey: string | undefined } | 'open';
+
+/**
  * Logs in an existing Google-linked account, or registers a new one —
  * Google accounts have no password, and there's no separate "register"
  * step: a valid, freshly-verified Google identity is the registration.
+ * Registering consumes an owner-generated access key (one key, one
+ * account — and only the key's Google email, if it's locked to one);
+ * signing back into an existing account never needs one.
  *
  * A new account needs a verified email, and gets the WELCOME_BONUS — but
  * only the first time that email (or that Google account) ever registers.
@@ -82,20 +92,32 @@ export function normalizeEmailKey(email: string): string {
  * deleting an account and signing up again starts the new one at $0. See
  * DECISIONS.md.
  */
-export async function loginOrRegisterWithGoogle(store: Store, profile: GoogleProfile): Promise<AuthResult> {
+export async function loginOrRegisterWithGoogle(store: Store, profile: GoogleProfile, gate: RegistrationGate): Promise<AuthResult> {
   const existing = await store.findUserByGoogleId(profile.googleId);
   if (existing) return buildAuthResult(store, await store.recordGoogleLogin(existing.id, profile.avatarUrl));
+  if (gate !== 'open' && !gate.signupKey) {
+    throw new AuthError('SIGNUP_KEY_REQUIRED', 'This Google account isn’t registered yet. Enter your access key to sign up.');
+  }
   if (!profile.email || !profile.emailVerified) {
     throw new AuthError('EMAIL_NOT_VERIFIED', 'Your Google account needs a verified email address to sign up.');
   }
   const emailTaken = await store.findUserByEmail(profile.email);
   if (emailTaken) throw new AuthError('EMAIL_TAKEN', 'An account with this email already exists.');
+  // Consumed only once everything else checks out, so a refused sign-up
+  // doesn't burn the player's key.
+  let keyId: string | null = null;
+  if (gate !== 'open') {
+    const normalized = normalizeSignupKey(gate.signupKey!);
+    keyId = normalized ? await store.consumeSignupKey(hashSignupKey(normalized), normalizeEmailKey(profile.email)) : null;
+    if (!keyId) throw new AuthError('INVALID_SIGNUP_KEY', 'That access key isn’t valid for this Google account — it may have expired or already been used.');
+  }
   const created = await store.createGoogleAccount({
     googleId: profile.googleId,
     email: profile.email,
     displayName: profile.displayName,
     avatarUrl: profile.avatarUrl,
   });
+  if (keyId) await store.attachSignupKeyUser(keyId, created.id);
   const firstTime = await store.claimWelcomeBonus(normalizeEmailKey(profile.email), profile.googleId, WELCOME_BONUS);
   if (!firstTime) return buildAuthResult(store, created);
   const funded = await store.adjustUserChips(created.id, WELCOME_BONUS);

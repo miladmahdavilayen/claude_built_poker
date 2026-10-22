@@ -81,10 +81,13 @@ JWT_SECRET=dev-secret-change-me PORT=4000 pnpm --filter @pokerclause/server dev
 VITE_API_URL=http://localhost:4000 pnpm --filter @pokerclause/web dev
 ```
 
-Open http://localhost:5173. The front page is a single **Sign in with
-Google** button (see "Sign in with Google" below for setup); every player
-registers that way and plays at their own table against computer players
-(see "Human player accounts"). The owner logs in through the small gear in
+Open http://localhost:5173. The landing page offers two ways in: paste an
+**invitation** link or code from the owner (seats you at that table as a
+guest), or enter a one-time **access key** the owner generated for them
+(admin dashboard → "Access keys") to sign up with Google — see "Sign in
+with Google" below for setup.
+Google players play at their own table against computer players (see
+"Human player accounts"), and returning players just sign in with Google. The owner logs in through the small gear in
 the bottom-right corner (`admin@pokerclause.local` / `admin12345`) and
 keeps every owner control. To try the player flow locally without a Google
 OAuth client, run the server with `ALLOW_TEST_SEEDING=true` and the client
@@ -355,12 +358,14 @@ DNS setup, by encoding the IP in the hostname itself (e.g.
 
 ## Sign in with Google
 
-Google is how players register and sign in — the front page is just the
-Google button (see "Human player accounts" above). The only other ways in
-are an owner's invite link (which seats a guest at a real table) and the
-owner's own email/password login, reached via the small gear in the corner
-of the login page. Until you configure Google, the button doesn't render
-and the front page says sign-in isn't available:
+Google is how players register and sign in (see "Human player accounts"
+above). Registering needs a one-time access key the owner generates per
+player in the admin dashboard ("Access keys"); signing back in never
+does. The other ways in are an owner's invitation (which
+seats a guest at a real table) and the owner's own email/password login,
+reached via the small gear in the corner of the landing page. Until you
+configure Google, its button doesn't render and the page says sign-in
+isn't available:
 
 1. In the [Google Cloud Console credentials page](https://console.cloud.google.com/apis/credentials),
    create an **OAuth client ID** of type **Web application**.

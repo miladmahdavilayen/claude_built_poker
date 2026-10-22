@@ -10,6 +10,7 @@ import type {
   UserRecord,
   GameReportRecord,
   GoogleAccountInput,
+  SignupKeyRecord,
 } from './store.js';
 
 interface LedgerRow extends LedgerEntryInput {
@@ -48,6 +49,7 @@ export class MemoryStore implements Store {
       avatarUrl: null,
       createdAt: new Date(),
       lastLoginAt: null,
+      waiver: null,
     };
     this.users.set(user.id, user);
     return Promise.resolve(user);
@@ -69,6 +71,7 @@ export class MemoryStore implements Store {
       avatarUrl: null,
       createdAt: new Date(),
       lastLoginAt: null,
+      waiver: null,
     };
     this.users.set(user.id, user);
     this.usersByEmail.set(email, user.id);
@@ -107,6 +110,7 @@ export class MemoryStore implements Store {
       avatarUrl: input.avatarUrl,
       createdAt: now,
       lastLoginAt: now,
+      waiver: null,
     };
     this.users.set(user.id, user);
     this.usersByGoogleId.set(input.googleId, user.id);
@@ -118,6 +122,71 @@ export class MemoryStore implements Store {
     const user = this.users.get(userId);
     if (!user) throw new Error('USER_NOT_FOUND');
     const updated: UserRecord = { ...user, avatarUrl, lastLoginAt: new Date() };
+    this.users.set(userId, updated);
+    return Promise.resolve(updated);
+  }
+
+  private readonly signupKeys = new Map<string, SignupKeyRecord & { keyHash: string; emailKey: string | null }>();
+
+  private isUsable(k: { usedAt: Date | null; revokedAt: Date | null; expiresAt: Date }): boolean {
+    return !k.usedAt && !k.revokedAt && k.expiresAt.getTime() > Date.now();
+  }
+
+  private static publicKey({ keyHash: _h, emailKey: _e, ...rest }: SignupKeyRecord & { keyHash: string; emailKey: string | null }): SignupKeyRecord {
+    return { ...rest };
+  }
+
+  async createSignupKey(input: { keyHash: string; hint: string; label: string; email: string | null; emailKey: string | null; createdBy: string; expiresAt: Date }): Promise<SignupKeyRecord> {
+    const record = {
+      id: randomUUID(),
+      keyHash: input.keyHash,
+      hint: input.hint,
+      label: input.label,
+      email: input.email,
+      emailKey: input.emailKey,
+      createdAt: new Date(),
+      expiresAt: input.expiresAt,
+      usedAt: null,
+      usedBy: null,
+      revokedAt: null,
+    };
+    this.signupKeys.set(record.id, record);
+    return Promise.resolve(MemoryStore.publicKey(record));
+  }
+
+  async listSignupKeys(): Promise<SignupKeyRecord[]> {
+    return Promise.resolve([...this.signupKeys.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).map((k) => MemoryStore.publicKey(k)));
+  }
+
+  async findUsableSignupKey(keyHash: string): Promise<SignupKeyRecord | null> {
+    const k = [...this.signupKeys.values()].find((r) => r.keyHash === keyHash);
+    return Promise.resolve(k && this.isUsable(k) ? MemoryStore.publicKey(k) : null);
+  }
+
+  async consumeSignupKey(keyHash: string, emailKey: string): Promise<string | null> {
+    const k = [...this.signupKeys.values()].find((r) => r.keyHash === keyHash);
+    if (!k || !this.isUsable(k) || (k.emailKey !== null && k.emailKey !== emailKey)) return Promise.resolve(null);
+    k.usedAt = new Date();
+    return Promise.resolve(k.id);
+  }
+
+  async attachSignupKeyUser(id: string, userId: string): Promise<void> {
+    const k = this.signupKeys.get(id);
+    if (k) k.usedBy = userId;
+    return Promise.resolve();
+  }
+
+  async revokeSignupKey(id: string): Promise<boolean> {
+    const k = this.signupKeys.get(id);
+    if (!k || k.usedAt || k.revokedAt) return Promise.resolve(false);
+    k.revokedAt = new Date();
+    return Promise.resolve(true);
+  }
+
+  async acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('USER_NOT_FOUND');
+    const updated: UserRecord = { ...user, waiver: { version, initials, acceptedAt: new Date() } };
     this.users.set(userId, updated);
     return Promise.resolve(updated);
   }
@@ -154,6 +223,7 @@ export class MemoryStore implements Store {
       avatarUrl: null,
       createdAt: new Date(),
       lastLoginAt: null,
+      waiver: null,
     };
     this.users.set(user.id, user);
     this.usersByGoogleId.set(input.googleId, user.id);
@@ -215,6 +285,9 @@ export class MemoryStore implements Store {
     if (user.email) this.usersByEmail.delete(user.email);
     if (user.googleId) this.usersByGoogleId.delete(user.googleId);
     this.users.delete(userId);
+    for (const k of this.signupKeys.values()) {
+      if (k.usedBy === userId) k.usedBy = null;
+    }
     for (const [hash, s] of [...this.sessions]) {
       if (s.userId === userId) this.sessions.delete(hash);
     }

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addBot, adminLogin, createTable, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
+import { addBot, adminLogin, createAccessKey, createTable, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
 
 // This sandbox has no real Google Cloud OAuth Client ID to drive an actual
 // "sign in with Google" click-through with (see googleSignIn.spec.ts's own
@@ -33,14 +33,30 @@ test('the admin can create a table, sit themselves down, and add a bot, all self
   await expect(page.locator('[data-testid="seat-1"]').getByText('🤖 bot')).toBeVisible();
 });
 
-test('the front page is Google sign-in only — no guest form, no invite prompt, no self-registration — with a small hidden admin-login trigger', async ({ page }) => {
+test('the landing page offers an invitation or an access key — the key gates Google sign-up — with a small hidden admin-login trigger', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.welcome-card')).toBeVisible();
-  await expect(page.getByLabel('Invitation link')).toHaveCount(0);
+  await expect(page.getByLabel('Invitation link or code')).toBeVisible();
+  await expect(page.getByLabel('Access key')).toBeVisible();
+  await expect(page.locator('.google-signin-row')).toHaveCount(0);
   await expect(page.getByLabel('Display name')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Play now' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Register', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Log in', exact: true })).toHaveCount(0);
+
+  await page.getByLabel('Invitation link or code').fill('not an invite');
+  await page.getByRole('button', { name: 'Join table' }).click();
+  await expect(page.getByText("doesn't look like an invitation")).toBeVisible();
+  await page.getByLabel('Invitation link or code').fill('00000000-0000-4000-8000-000000000000');
+  await page.getByRole('button', { name: 'Join table' }).click();
+  await expect(page.getByText('invalid or has already been used')).toBeVisible();
+
+  await page.getByLabel('Access key').fill('wrong key');
+  await page.getByRole('button', { name: 'Continue to sign up' }).click();
+  await expect(page.getByText('That access key isn’t valid')).toBeVisible();
+  await page.getByLabel('Access key').fill(await createAccessKey('Landing test'));
+  await page.getByRole('button', { name: 'Continue to sign up' }).click();
+  await expect(page.getByText('Create your account with Google')).toBeVisible();
+  await page.getByRole('button', { name: '← Back' }).click();
 
   await page.locator('.admin-login-trigger').click();
   await expect(page.getByLabel('Email')).toBeVisible();
@@ -99,6 +115,8 @@ test('a Google player: $1,000 welcome bonus, a bots-only table of the size they 
   await page.getByLabel(/Type/).fill('delete my account');
   await page.getByRole('button', { name: 'Permanently delete' }).click();
   await expect(page).toHaveURL(/\/login/);
+  // Account gone: this browser no longer greets them as a member.
+  await expect(page.getByLabel('Access key')).toBeVisible();
 
   // Same person, same email (Gmail ignores dots and case) — no second bonus.
   await googlePlayerLogin(page, email.replace('e2e.', 'E2E'), 'Polly Again');
@@ -227,4 +245,113 @@ test('the owner can set their own balance to an exact amount, and add to it, fro
   await card.getByRole('button', { name: 'Set my balance to this' }).click();
   await expect(card.locator('.error-banner')).toBeVisible();
   await expect(card.locator('.admin-my-balance-value')).toHaveText('$12,445.67');
+});
+
+test('a returning player who logged out is greeted with Google sign-in, not the access key', async ({ page }) => {
+  await googlePlayerLogin(page, `e2e.returning.${String(Date.now())}@gmail.com`, 'Ronnie');
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByText('Welcome back')).toBeVisible();
+  await expect(page.getByLabel('Access key')).toHaveCount(0);
+  await page.getByRole('button', { name: 'New here, or invited to a table?' }).click();
+  await expect(page.getByLabel('Access key')).toBeVisible();
+});
+
+test('a new Google player must agree to the friendly-game waiver with their initials before playing — once', async ({ page, browser }) => {
+  const email = `e2e.waiver.${String(Date.now())}@gmail.com`;
+  const res = await page.request.post('http://localhost:4210/test-only/google-login', { data: { email, displayName: 'Wanda Waiver' } });
+  expect(res.ok()).toBe(true);
+  // Every page leads to the waiver until they agree.
+  for (const path of ['/lobby', '/profile', '/table/anything']) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/waiver/);
+  }
+  await expect(page.getByText('Friendly game agreement')).toBeVisible();
+  await expect(page.getByText('play money only')).toBeVisible();
+  await expect(page.getByText('give up any right to sue')).toBeVisible();
+  const agree = page.getByRole('button', { name: 'I agree' });
+  await expect(agree).toBeDisabled();
+  await page.getByLabel(/Your initials/).fill('w.w');
+  await expect(agree).toBeDisabled();
+  await page.getByLabel(/Your initials/).fill('ww');
+  await expect(page.getByLabel(/Your initials/)).toHaveValue('WW');
+  await agree.click();
+  await expect(page.locator('.practice-card')).toBeVisible();
+
+  // Agreed for good: a reload goes straight to the lobby.
+  await page.reload();
+  await expect(page.locator('.practice-card')).toBeVisible();
+
+  // And the owner can see it on the account.
+  const ownerPage = await (await browser.newContext()).newPage();
+  await adminLogin(ownerPage);
+  await ownerPage.goto('/admin');
+  await ownerPage.getByPlaceholder('Search by name or email...').fill('Wanda Waiver');
+  await ownerPage.locator('.admin-user-row', { hasText: 'Wanda Waiver' }).click();
+  await expect(ownerPage.locator('.admin-user-detail')).toContainText('Agreed (WW)');
+  await ownerPage.context().close();
+});
+
+test('declining the waiver logs the player out', async ({ page }) => {
+  const res = await page.request.post('http://localhost:4210/test-only/google-login', {
+    data: { email: `e2e.decline.${String(Date.now())}@gmail.com`, displayName: 'Dee Cline' },
+  });
+  expect(res.ok()).toBe(true);
+  await page.goto('/lobby');
+  await page.getByRole('button', { name: /I don’t agree/ }).click();
+  await expect(page.getByText('Welcome back')).toBeVisible();
+});
+
+test('the owner generates a one-time access key; it registers exactly one new player, and then shows as used', async ({ page, browser }) => {
+  await adminLogin(page);
+  await page.goto('/admin');
+  const panel = page.getByTestId('admin-access-keys');
+  await panel.getByLabel('Who it’s for').fill('Kim from work');
+  await panel.getByRole('button', { name: 'Generate key' }).click();
+  const key = (await page.getByTestId('fresh-access-key').locator('.admin-key-value').textContent())!.trim();
+  expect(key).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){3}$/);
+  const row = panel.locator('.admin-key-row', { hasText: 'Kim from work' });
+  await expect(row).toContainText('Active');
+  await expect(row).toContainText(`…${key.slice(-4)}`);
+
+  // A new visitor: the key gets them to Google sign-up…
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto('/');
+  await visitor.getByLabel('Access key').fill(key.toLowerCase());
+  await visitor.getByRole('button', { name: 'Continue to sign up' }).click();
+  await expect(visitor.getByText('Create your account with Google')).toBeVisible();
+  // …and registering with it (standing in for Google's button) uses it up.
+  const email = `e2e.kim.${String(Date.now())}@gmail.com`;
+  const signup = await visitor.request.post('http://localhost:4210/test-only/google-login', { data: { email, displayName: 'Kim', signupKey: key } });
+  expect(signup.ok()).toBe(true);
+
+  await page.reload();
+  await expect(page.getByTestId('admin-access-keys').locator('.admin-key-row', { hasText: 'Kim from work' })).toContainText('Used');
+  await expect(page.getByTestId('admin-access-keys').locator('.admin-key-row', { hasText: 'Kim from work' })).toContainText('registered Kim');
+
+  // Spent: nobody else gets in with it.
+  const second = await (await browser.newContext()).newPage();
+  await second.goto('/');
+  await second.getByLabel('Access key').fill(key);
+  await second.getByRole('button', { name: 'Continue to sign up' }).click();
+  await expect(second.getByText('That access key isn’t valid')).toBeVisible();
+  const reuse = await second.request.post('http://localhost:4210/test-only/google-login', { data: { email: `other.${email}`, displayName: 'Other', signupKey: key } });
+  expect(reuse.status()).toBe(403);
+});
+
+test('a revoked access key stops working straight away', async ({ page, browser }) => {
+  await adminLogin(page);
+  await page.goto('/admin');
+  const panel = page.getByTestId('admin-access-keys');
+  await panel.getByLabel('Who it’s for').fill('Revoke me');
+  await panel.getByRole('button', { name: 'Generate key' }).click();
+  const key = (await page.getByTestId('fresh-access-key').locator('.admin-key-value').textContent())!.trim();
+  const row = panel.locator('.admin-key-row', { hasText: 'Revoke me' });
+  await row.getByRole('button', { name: 'Revoke' }).click();
+  await expect(row).toContainText('Revoked');
+
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto('/');
+  await visitor.getByLabel('Access key').fill(key);
+  await visitor.getByRole('button', { name: 'Continue to sign up' }).click();
+  await expect(visitor.getByText('That access key isn’t valid')).toBeVisible();
 });

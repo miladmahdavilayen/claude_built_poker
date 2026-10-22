@@ -1,4 +1,15 @@
-import { AdminAdjustChipsSchema, AdminBulkDeleteUsersSchema, AdminSetChipsSchema, AdminUpdateUserSchema, formatMoney, MAX_BALANCE_CENTS } from '@pokerclause/shared';
+import {
+  AdminAdjustChipsSchema,
+  AdminBulkDeleteUsersSchema,
+  AdminSetChipsSchema,
+  AdminUpdateUserSchema,
+  CreateSignupKeySchema,
+  formatMoney,
+  MAX_BALANCE_CENTS,
+} from '@pokerclause/shared';
+import { normalizeEmailKey } from '../../auth/authService.js';
+import { generateSignupKey, hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
+import type { SignupKeyRecord } from '../../db/store.js';
 import type { FastifyInstance } from 'fastify';
 import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
@@ -22,6 +33,7 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
         hasGoogle: u.googleId !== null,
         createdAt: u.createdAt.toISOString(),
         lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+        waiver: u.waiver ? { version: u.waiver.version, initials: u.waiver.initials, acceptedAt: u.waiver.acceptedAt.toISOString() } : null,
       })),
     };
   });
@@ -45,6 +57,7 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
       hasGoogle: user.googleId !== null,
       createdAt: user.createdAt.toISOString(),
       lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+      waiver: user.waiver ? { version: user.waiver.version, initials: user.waiver.initials, acceptedAt: user.waiver.acceptedAt.toISOString() } : null,
       netPlayResult,
       recentEntries: recentEntries.map((e) => ({
         id: e.id,
@@ -140,6 +153,57 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
   app.post('/admin/tables/:tableId/close', { preHandler: requireAdmin }, async (req) => {
     const { tableId } = req.params as { tableId: string };
     await registry.close(tableId);
+    return { ok: true };
+  });
+
+  // --- Access keys: one per new player (see auth/signupKeys.ts). ---
+
+  function keyStatus(k: SignupKeyRecord): 'active' | 'used' | 'revoked' | 'expired' {
+    if (k.usedAt) return 'used';
+    if (k.revokedAt) return 'revoked';
+    return k.expiresAt.getTime() <= Date.now() ? 'expired' : 'active';
+  }
+
+  app.get('/admin/signup-keys', { preHandler: requireAdmin }, async () => {
+    const [keys, users] = await Promise.all([store.listSignupKeys(), store.listUsers()]);
+    const names = new Map(users.map((u) => [u.id, u.displayName]));
+    return {
+      keys: keys.map((k) => ({
+        id: k.id,
+        hint: k.hint,
+        label: k.label,
+        email: k.email,
+        status: keyStatus(k),
+        createdAt: k.createdAt.toISOString(),
+        expiresAt: k.expiresAt.toISOString(),
+        usedAt: k.usedAt?.toISOString() ?? null,
+        usedByName: k.usedBy ? (names.get(k.usedBy) ?? null) : null,
+      })),
+    };
+  });
+
+  /** The key itself is returned here, once — only its hash is stored, so it can't be shown again. */
+  app.post('/admin/signup-keys', { preHandler: requireAdmin }, async (req, reply) => {
+    const body = CreateSignupKeySchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Give the key a name (who it’s for) and, optionally, their Google email.' });
+    const key = generateSignupKey();
+    const normalized = normalizeSignupKey(key)!;
+    const record = await store.createSignupKey({
+      keyHash: hashSignupKey(normalized),
+      hint: normalized.slice(-4),
+      label: body.data.label,
+      email: body.data.email?.toLowerCase() ?? null,
+      emailKey: body.data.email ? normalizeEmailKey(body.data.email) : null,
+      createdBy: req.userId!,
+      expiresAt: new Date(Date.now() + body.data.expiresInDays * 24 * 60 * 60 * 1000),
+    });
+    reply.code(201);
+    return { key, id: record.id, expiresAt: record.expiresAt.toISOString() };
+  });
+
+  app.delete('/admin/signup-keys/:id', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!(await store.revokeSignupKey(id))) return reply.code(404).send({ code: 'KEY_NOT_ACTIVE', message: 'That key was already used or revoked.' });
     return { ok: true };
   });
 

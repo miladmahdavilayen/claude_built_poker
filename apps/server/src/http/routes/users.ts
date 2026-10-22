@@ -1,7 +1,9 @@
+import { AcceptWaiverSchema, WAIVER_VERSION } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
 import { REFRESH_COOKIE_NAME } from '../../auth/session.js';
 import type { Store } from '../../db/store.js';
 import { requireAuth } from '../middleware.js';
+import { publicUser } from './auth.js';
 
 /**
  * Self-service routes for a signed-in human's OWN account — what they
@@ -21,6 +23,19 @@ export function registerUserRoutes(app: FastifyInstance, store: Store, closePrac
       createdAt: user.createdAt.toISOString(),
       lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     };
+  });
+
+  // The friendly-game waiver (see apps/web's Waiver page), agreed to by
+  // typing initials. Stored with the version agreed to, so a reworded
+  // waiver (a WAIVER_VERSION bump) asks everyone again.
+  app.post('/users/me/waiver', { preHandler: requireAuth }, async (req, reply) => {
+    const body = AcceptWaiverSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ code: 'INVALID_INITIALS', message: 'Type your initials — letters only.' });
+    const user = await store.findUserById(req.userId!);
+    if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
+    if (user.isGuest) return reply.code(400).send({ code: 'GUEST_ACCOUNT', message: 'Guests aren’t asked to agree to the waiver.' });
+    const updated = await store.acceptWaiver(user.id, WAIVER_VERSION, body.data.initials.toUpperCase());
+    return { user: publicUser(updated) };
   });
 
   // Guests already lose everything the moment they leave/reset/close a

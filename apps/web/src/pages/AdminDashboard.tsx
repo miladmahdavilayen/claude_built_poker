@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../api.js';
-import type { AdminUserDetailDto, AdminUserDto, GameReportSummaryDto, LedgerEntryDto } from '../api.js';
+import type { AdminUserDetailDto, AdminUserDto, GameReportSummaryDto, LedgerEntryDto, SignupKeyDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { MAX_BALANCE_CENTS } from '@pokerclause/shared/money';
 import { formatChips } from '../chips.js';
@@ -162,6 +162,8 @@ export function AdminDashboardPage(): React.JSX.Element {
       {error && <div className="error-banner">{error}</div>}
 
       <MyBalanceCard balance={users.find((u) => u.id === me?.id)?.chips ?? null} onChanged={refresh} />
+
+      {accessToken && <AccessKeysPanel accessToken={accessToken} />}
 
       {accessToken && <GameReportsPanel accessToken={accessToken} />}
 
@@ -423,6 +425,14 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
           <span className="stat-label">Balance</span>
           <span className="stat-value">{formatChips(detail.chips)}</span>
         </div>
+        {detail.hasGoogle && (
+          <div className="profile-stat-card">
+            <span className="stat-label">Waiver</span>
+            <span className="stat-value">
+              {detail.waiver ? `Agreed (${detail.waiver.initials}) · ${new Date(detail.waiver.acceptedAt).toLocaleDateString()}` : 'Not agreed yet'}
+            </span>
+          </div>
+        )}
         <div className="profile-stat-card">
           <span className="stat-label">Net from playing</span>
           <span className={`stat-value ${detail.netPlayResult >= 0 ? 'profile-stat-positive' : 'profile-stat-negative'}`}>
@@ -502,6 +512,152 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
 type ReportSort = 'newest' | 'oldest' | 'table';
 
 /** "+$40", "-$12.50", "$0" — a player's result, signed. */
+const KEY_STATUS_LABEL: Record<SignupKeyDto['status'], string> = {
+  active: 'Active',
+  used: 'Used',
+  revoked: 'Revoked',
+  expired: 'Expired',
+};
+
+/**
+ * One-time access keys for new players (see apps/server's signupKeys.ts):
+ * generate one per person, send it to them, and it registers exactly one
+ * Google account — optionally only theirs, if you give their email. The
+ * key is shown here once, right after generating it; only its last four
+ * characters are kept for telling keys apart.
+ */
+function AccessKeysPanel({ accessToken }: { accessToken: string }): React.JSX.Element {
+  const [keys, setKeys] = useState<SignupKeyDto[]>([]);
+  const [label, setLabel] = useState('');
+  const [email, setEmail] = useState('');
+  const [days, setDays] = useState(7);
+  const [fresh, setFresh] = useState<{ key: string; label: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState<'key' | 'message' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = (): void => {
+    api
+      .adminListSignupKeys(accessToken)
+      .then((res) => setKeys(res.keys))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load access keys.'));
+  };
+  useEffect(refresh, [accessToken]);
+
+  const generate = (e: React.FormEvent): void => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setCopied(null);
+    api
+      .adminCreateSignupKey({ label: label.trim(), expiresInDays: days, ...(email.trim() ? { email: email.trim() } : {}) }, accessToken)
+      .then((res) => {
+        setFresh({ key: res.key, label: label.trim(), expiresAt: res.expiresAt });
+        setLabel('');
+        setEmail('');
+        refresh();
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to generate a key.'))
+      .finally(() => setBusy(false));
+  };
+
+  const revoke = (id: string): void => {
+    api
+      .adminRevokeSignupKey(id, accessToken)
+      .then(refresh)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to revoke the key.'));
+  };
+
+  const copy = (what: 'key' | 'message', text: string): void => {
+    void navigator.clipboard.writeText(text).then(() => setCopied(what));
+  };
+
+  const message = fresh
+    ? `You're invited to PokerClause! Go to ${window.location.origin}, choose "Have an access key?", and enter this key, then sign up with Google:
+
+${fresh.key}
+
+It works once and expires ${new Date(fresh.expiresAt).toLocaleDateString()}.`
+    : '';
+
+  return (
+    <section className="admin-keys" data-testid="admin-access-keys">
+      <h2 className="admin-section-title">Access keys</h2>
+      <p className="profile-hint">One key per new player. Each works once, to register one Google account, and expires if unused.</p>
+      <form className="admin-keys-form" onSubmit={generate}>
+        <label>
+          Who it&rsquo;s for
+          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={60} placeholder="e.g. Dave from work" required />
+        </label>
+        <label>
+          Their Google email (optional)
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Only this email can use the key" />
+        </label>
+        <label>
+          Expires in
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {[1, 3, 7, 14, 30].map((d) => (
+              <option key={d} value={d}>
+                {d} {d === 1 ? 'day' : 'days'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="btn-primary" disabled={busy || !label.trim()}>
+          {busy ? 'Generating…' : 'Generate key'}
+        </button>
+      </form>
+      {error && <div className="error-banner">{error}</div>}
+
+      {fresh && (
+        <div className="admin-key-fresh" data-testid="fresh-access-key">
+          <span className="stat-label">Key for {fresh.label} — copy it now, it won&rsquo;t be shown again</span>
+          <code className="admin-key-value">{fresh.key}</code>
+          <div className="admin-my-balance-actions">
+            <button type="button" onClick={() => copy('key', fresh.key)}>
+              {copied === 'key' ? 'Copied ✓' : 'Copy key'}
+            </button>
+            <button type="button" onClick={() => copy('message', message)}>
+              {copied === 'message' ? 'Copied ✓' : 'Copy invite message'}
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => setFresh(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {keys.length > 0 && (
+        <ul className="admin-key-list">
+          {keys.map((k) => (
+            <li key={k.id} className="admin-key-row" data-testid={`access-key-${k.id}`}>
+              <div className="admin-key-info">
+                <span className="admin-key-label">
+                  {k.label} <span className="admin-key-hint">…{k.hint}</span>
+                </span>
+                <span className="admin-report-meta">
+                  {k.email ? `${k.email} · ` : ''}
+                  {k.status === 'used'
+                    ? `registered ${k.usedByName ?? '(deleted account)'} · ${new Date(k.usedAt!).toLocaleDateString()}`
+                    : k.status === 'revoked'
+                      ? 'revoked — never used'
+                      : `${k.status === 'active' ? 'expires' : 'expired'} ${new Date(k.expiresAt).toLocaleDateString()}`}
+                </span>
+              </div>
+              <span className={`admin-key-status admin-key-status-${k.status}`}>{KEY_STATUS_LABEL[k.status]}</span>
+              {k.status === 'active' && (
+                <button type="button" className="btn-owner-danger btn-owner-action" onClick={() => revoke(k.id)}>
+                  Revoke
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function signedMoney(cents: number): string {
   return cents > 0 ? `+${formatChips(cents)}` : formatChips(cents);
 }

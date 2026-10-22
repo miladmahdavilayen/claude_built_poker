@@ -11,6 +11,7 @@ import type {
   UserRecord,
   GameReportRecord,
   GoogleAccountInput,
+  SignupKeyRecord,
 } from './store.js';
 
 /**
@@ -62,6 +63,36 @@ export class HybridStore implements Store {
 
   recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord> {
     return this.real.recordGoogleLogin(userId, avatarUrl); // guests never sign in with Google
+  }
+
+  // --- Access keys: owner-only, always persisted ---
+
+  createSignupKey(input: { keyHash: string; hint: string; label: string; email: string | null; emailKey: string | null; createdBy: string; expiresAt: Date }): Promise<SignupKeyRecord> {
+    return this.real.createSignupKey(input);
+  }
+
+  listSignupKeys(): Promise<SignupKeyRecord[]> {
+    return this.real.listSignupKeys();
+  }
+
+  findUsableSignupKey(keyHash: string): Promise<SignupKeyRecord | null> {
+    return this.real.findUsableSignupKey(keyHash);
+  }
+
+  consumeSignupKey(keyHash: string, emailKey: string): Promise<string | null> {
+    return this.real.consumeSignupKey(keyHash, emailKey);
+  }
+
+  attachSignupKeyUser(id: string, userId: string): Promise<void> {
+    return this.real.attachSignupKeyUser(id, userId);
+  }
+
+  revokeSignupKey(id: string): Promise<boolean> {
+    return this.real.revokeSignupKey(id);
+  }
+
+  acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {
+    return this.real.acceptWaiver(userId, version, initials); // only Google players are asked
   }
 
   claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean> {

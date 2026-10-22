@@ -72,6 +72,14 @@ export class TableRegistry {
     }));
   }
 
+  /** The table an unused invite code belongs to, if any — see GET /invites/:token. */
+  tableForInvite(token: string): LiveTable | null {
+    for (const t of this.tables.values()) {
+      if (t.hasSeatAssignment(token)) return t;
+    }
+    return null;
+  }
+
   /** The practice table this user owns, if one is open — a player has at most one at a time. */
   practiceTableOf(userId: string): LiveTable | null {
     for (const t of this.tables.values()) {

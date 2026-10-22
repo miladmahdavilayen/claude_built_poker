@@ -47,6 +47,9 @@ export default defineConfig({
         RATE_LIMIT_MAX: '100000',
         AUTH_LOGIN_LIMIT: '100000',
         AUTH_SIGNUP_LIMIT: '100000',
+        AUTH_SIGNUP_KEY_LIMIT: '100000',
+        INVITE_LOOKUP_LIMIT: '100000',
+        AUTH_FAILURE_LIMIT: '100000',
         SOCKET_CONNECTIONS_PER_IP: '100000',
         // Production's real post-hand shuffle break is 5s — several tests
         // start more than one hand, and genuinely waiting 5s per hand

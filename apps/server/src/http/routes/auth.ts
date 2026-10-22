@@ -1,7 +1,10 @@
-import { GoogleSignInSchema, GuestSignupSchema, LoginSchema } from '@pokerclause/shared';
+import { GoogleSignInSchema, GuestSignupSchema, LoginSchema, SignupKeySchema } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
 import { AuthError, login, loginOrRegisterWithGoogle, signUpGuest } from '../../auth/authService.js';
 import { isGoogleSignInConfigured, verifyGoogleIdToken } from '../../auth/googleAuth.js';
+import { hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
+import { inviteLockout, lockedOutReply, signupKeyLockout } from '../../security/lockouts.js';
+import { needsWaiver } from '../../auth/waiver.js';
 import { REFRESH_COOKIE_MAX_AGE_SECONDS, REFRESH_COOKIE_NAME, revokeRefreshToken, rotateRefreshToken } from '../../auth/session.js';
 import type { Store, UserRecord } from '../../db/store.js';
 import { requireAuth } from '../middleware.js';
@@ -18,6 +21,7 @@ export function publicUser(user: UserRecord) {
     avatarUrl: user.avatarUrl,
     hasGoogle: user.googleId !== null,
     createdAt: user.createdAt.toISOString(),
+    needsWaiver: needsWaiver(user),
   };
 }
 
@@ -31,8 +35,15 @@ export function publicUser(user: UserRecord) {
  */
 const LOGIN_RATE_LIMIT = { max: Number(process.env.AUTH_LOGIN_LIMIT ?? 5), timeWindow: '15 minutes' };
 const SIGNUP_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_LIMIT ?? 20), timeWindow: '1 hour' };
+/** Guessing the access key: a real visitor types it once or twice. */
+const SIGNUP_KEY_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_KEY_LIMIT ?? 10), timeWindow: '15 minutes' };
 
-export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
+/**
+ * `isOpenInvite` answers whether an invite token belongs to a live table
+ * (see TableRegistry.tableForInvite): a guest session only exists to
+ * redeem one, so none is created without it.
+ */
+export function registerAuthRoutes(app: FastifyInstance, store: Store, isOpenInvite: (token: string) => boolean): void {
   const isProd = process.env.NODE_ENV === 'production';
 
   function setRefreshCookie(reply: { setCookie: (name: string, value: string, opts: Record<string, unknown>) => void }, token: string): void {
@@ -45,9 +56,18 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
     });
   }
 
+  // A guest session only ever exists to redeem an owner's invite, so it
+  // takes one: anyone (or anything) without a live invite can't mint
+  // sessions at all. The invite itself is redeemed later, at the table.
   app.post('/auth/guest', { config: { rateLimit: SIGNUP_RATE_LIMIT } }, async (req, reply) => {
+    const wait = inviteLockout.retryAfterMs(req.ip);
+    if (wait > 0) return reply.code(429).send(lockedOutReply(wait));
     const body = GuestSignupSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid guest signup payload.' });
+    if (!isOpenInvite(body.data.inviteToken)) {
+      inviteLockout.recordFailure(req.ip);
+      return reply.code(403).send({ code: 'INVALID_ASSIGNMENT', message: 'This invitation is invalid or has already been used.' });
+    }
     const result = await signUpGuest(store, body.data.displayName);
     setRefreshCookie(reply, result.refreshToken);
     return { user: publicUser(result.user), accessToken: result.accessToken };
@@ -73,20 +93,43 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store): void {
 
   app.get('/auth/google/available', () => ({ available: isGoogleSignInConfigured() }));
 
+  // Checks an access key before the landing page shows Google's button —
+  // without using it up (registration does that). Wrong guesses count
+  // toward a per-IP lockout on top of the request limit.
+  app.post('/auth/signup-key', { config: { rateLimit: SIGNUP_KEY_RATE_LIMIT } }, async (req, reply) => {
+    const wait = signupKeyLockout.retryAfterMs(req.ip);
+    if (wait > 0) return reply.code(429).send(lockedOutReply(wait));
+    const body = SignupKeySchema.safeParse(req.body);
+    const normalized = body.success ? normalizeSignupKey(body.data.key) : null;
+    const key = normalized ? await store.findUsableSignupKey(hashSignupKey(normalized)) : null;
+    if (!key) {
+      signupKeyLockout.recordFailure(req.ip);
+      return reply.code(403).send({ code: 'INVALID_SIGNUP_KEY', message: 'That access key isn’t valid, or it has expired or already been used.' });
+    }
+    return { ok: true };
+  });
+
   app.post('/auth/google', { config: { rateLimit: SIGNUP_RATE_LIMIT } }, async (req, reply) => {
     if (!isGoogleSignInConfigured()) {
       return reply.code(501).send({ code: 'GOOGLE_NOT_CONFIGURED', message: 'Google sign-in is not configured on this server.' });
     }
     const body = GoogleSignInSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid Google sign-in payload.' });
+    if (body.data.signupKey) {
+      const wait = signupKeyLockout.retryAfterMs(req.ip);
+      if (wait > 0) return reply.code(429).send(lockedOutReply(wait));
+    }
     const profile = await verifyGoogleIdToken(body.data.idToken);
     if (!profile) return reply.code(401).send({ code: 'INVALID_GOOGLE_TOKEN', message: 'Could not verify Google sign-in.' });
     try {
-      const result = await loginOrRegisterWithGoogle(store, profile);
+      const result = await loginOrRegisterWithGoogle(store, profile, { signupKey: body.data.signupKey });
       setRefreshCookie(reply, result.refreshToken);
       return { user: publicUser(result.user), accessToken: result.accessToken };
     } catch (err) {
-      if (err instanceof AuthError) return reply.code(err.code === 'EMAIL_NOT_VERIFIED' ? 403 : 409).send({ code: err.code, message: err.message });
+      if (err instanceof AuthError) {
+        if (err.code === 'INVALID_SIGNUP_KEY') signupKeyLockout.recordFailure(req.ip);
+        return reply.code(err.code === 'EMAIL_TAKEN' ? 409 : 403).send({ code: err.code, message: err.message });
+      }
       throw err;
     }
   });

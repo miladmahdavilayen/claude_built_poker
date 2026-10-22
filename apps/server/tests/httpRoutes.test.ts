@@ -1,11 +1,13 @@
 import cookie from '@fastify/cookie';
-import type { TableSettings } from '@pokerclause/shared';
+import { WAIVER_VERSION, type TableSettings } from '@pokerclause/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { issueAccessToken } from '../src/auth/session.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
 import { TableRegistry } from '../src/game/tableRegistry.js';
 import { registerAdminRoutes } from '../src/http/routes/admin.js';
+import { registerAuthRoutes } from '../src/http/routes/auth.js';
+import { inviteLockout, signupKeyLockout } from '../src/security/lockouts.js';
 import { registerTableRoutes } from '../src/http/routes/tables.js';
 import { registerUserRoutes } from '../src/http/routes/users.js';
 
@@ -53,6 +55,9 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       if (table) await registry.close(table.tableId);
     };
     registerUserRoutes(app, store, closePracticeTableOf);
+    registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null);
+    signupKeyLockout.reset();
+    inviteLockout.reset();
     registerAdminRoutes(app, store, registry, closePracticeTableOf);
   });
 
@@ -110,9 +115,41 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     async function googlePlayer(chips: number): Promise<{ id: string; token: string }> {
       players += 1;
       const created = await store.createGoogleAccount({ googleId: `g-player-${String(players)}`, email: `player${String(players)}@gmail.com`, displayName: 'Pat', avatarUrl: null });
+      await store.acceptWaiver(created.id, WAIVER_VERSION, 'PP');
       const user = await store.adjustUserChips(created.id, chips);
       return { id: user.id, token: issueAccessToken(user) };
     }
+
+    it('a Google player can’t open a table until they agree to the waiver with their initials', async () => {
+      const created = await store.createGoogleAccount({ googleId: 'g-w', email: 'w@gmail.com', displayName: 'Wade Wilson', avatarUrl: null });
+      await store.adjustUserChips(created.id, 100_000);
+      const token = issueAccessToken(created);
+      const open = () => app.inject({ method: 'POST', url: '/tables/practice', headers: auth(token), payload: { bots: 1, stakes: 'low', buyIn: 5_000 } });
+      const me = async () => (await app.inject({ method: 'GET', url: '/auth/me', headers: auth(token) })).json<{ user: { needsWaiver: boolean } }>().user;
+
+      expect((await me()).needsWaiver).toBe(true);
+      expect((await open()).json<{ code: string }>().code).toBe('WAIVER_REQUIRED');
+
+      for (const initials of ['', 'J.D', '12', 'TOOLONG']) {
+        const bad = await app.inject({ method: 'POST', url: '/users/me/waiver', headers: auth(token), payload: { initials } });
+        expect(bad.statusCode).toBe(400);
+      }
+      const ok = await app.inject({ method: 'POST', url: '/users/me/waiver', headers: auth(token), payload: { initials: ' ww ' } });
+      expect(ok.json<{ user: { needsWaiver: boolean } }>().user.needsWaiver).toBe(false);
+      expect((await store.findUserById(created.id))!.waiver).toMatchObject({ version: WAIVER_VERSION, initials: 'WW' });
+      expect((await me()).needsWaiver).toBe(false);
+      expect((await open()).statusCode).toBe(201);
+    });
+
+    it('the owner and guests are never asked for the waiver', async () => {
+      const admin = await store.createAccount('boss@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const guest = await store.createGuestUser('Gina');
+      for (const u of [{ ...admin, role: 'admin' as const }, guest]) {
+        const res = await app.inject({ method: 'GET', url: '/auth/me', headers: auth(issueAccessToken(u)) });
+        expect(res.json<{ user: { needsWaiver: boolean } }>().user.needsWaiver).toBe(false);
+      }
+    });
 
     it('seats the player plus the bots they picked, at most 5 seats, and debits the buy-in from their balance', async () => {
       const player = await googlePlayer(100_000);
@@ -209,6 +246,81 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const res = await app.inject({ method: 'DELETE', url: '/users/me', headers: auth(issueAccessToken(user)) });
       expect(res.statusCode).toBe(200);
       expect(await store.findUserById(user.id)).toBeNull();
+    });
+  });
+
+  describe('landing page: access keys and invitations', () => {
+    async function adminToken(): Promise<string> {
+      const admin = await store.createAccount(`owner${String(Date.now())}@x.com`, 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      return issueAccessToken({ ...admin, role: 'admin' });
+    }
+
+    it('the owner generates a one-time key (shown once, stored only as a hash), lists it, and can revoke it', async () => {
+      const token = await adminToken();
+      const created = await app.inject({ method: 'POST', url: '/admin/signup-keys', headers: auth(token), payload: { label: 'Dave', email: 'Dave@Gmail.com', expiresInDays: 3 } });
+      expect(created.statusCode).toBe(201);
+      const { key, id } = created.json<{ key: string; id: string }>();
+      expect(key).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){3}$/);
+
+      const listed = (await app.inject({ method: 'GET', url: '/admin/signup-keys', headers: auth(token) })).json<{ keys: Record<string, unknown>[] }>().keys;
+      expect(listed).toHaveLength(1);
+      expect(listed[0]).toMatchObject({ id, label: 'Dave', email: 'dave@gmail.com', status: 'active', hint: key.slice(-4) });
+      expect(JSON.stringify(listed)).not.toContain(key.replaceAll('-', ''));
+
+      const check = (k: string) => app.inject({ method: 'POST', url: '/auth/signup-key', payload: { key: k } });
+      expect((await check(key)).statusCode).toBe(200);
+      expect((await check(key)).statusCode).toBe(200); // checking doesn't use it up
+
+      expect((await app.inject({ method: 'DELETE', url: `/admin/signup-keys/${id}`, headers: auth(token) })).statusCode).toBe(200);
+      expect((await check(key)).json<{ code: string }>().code).toBe('INVALID_SIGNUP_KEY');
+      const after = (await app.inject({ method: 'GET', url: '/admin/signup-keys', headers: auth(token) })).json<{ keys: { status: string }[] }>().keys;
+      expect(after[0]!.status).toBe('revoked');
+    });
+
+    it('only the owner can generate or list keys', async () => {
+      const player = await store.createGoogleAccount({ googleId: 'g-np', email: 'np@gmail.com', displayName: 'Nope', avatarUrl: null });
+      expect((await app.inject({ method: 'POST', url: '/admin/signup-keys', headers: auth(issueAccessToken(player)), payload: { label: 'x' } })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'GET', url: '/admin/signup-keys' })).statusCode).toBe(403);
+    });
+
+    it('five wrong keys from one address lock it out — even the right key — for a while', async () => {
+      const token = await adminToken();
+      const { key } = (await app.inject({ method: 'POST', url: '/admin/signup-keys', headers: auth(token), payload: { label: 'Eve' } })).json<{ key: string }>();
+      const check = (k: string) => app.inject({ method: 'POST', url: '/auth/signup-key', payload: { key: k } });
+      for (let i = 0; i < 5; i++) expect((await check('AAAAA-AAAAA-AAAAA-AAAAA')).statusCode).toBe(403);
+      const locked = await check(key);
+      expect(locked.statusCode).toBe(429);
+      expect(locked.json<{ code: string }>().code).toBe('TOO_MANY_ATTEMPTS');
+      expect((await check('x'.repeat(65))).statusCode).toBe(429);
+    });
+
+    it('a guest session needs a live invite — no invite, no session', async () => {
+      const table = await registry.createTable('Real', { ...SETTINGS_FOR_LIST }, null, null);
+      const created = table.createSeatAssignment(1, 10_000);
+      if (!created.ok) throw new Error('unreachable');
+      const guest = (inviteToken: string) => app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Gus', inviteToken } });
+      expect((await app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Gus' } })).statusCode).toBe(400);
+      expect((await guest('00000000-0000-4000-8000-000000000000')).json<{ code: string }>().code).toBe('INVALID_ASSIGNMENT');
+      const ok = await guest(created.token);
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json<{ user: { isGuest: boolean } }>().user.isGuest).toBe(true);
+    });
+
+    it('GET /invites/:token finds the table an unused invite belongs to, and nothing once it is used', async () => {
+      const table = await registry.createTable('Real', { ...SETTINGS_FOR_LIST }, null, null);
+      const created = table.createSeatAssignment(1, 10_000);
+      if (!created.ok) throw new Error('unreachable');
+      const found = await app.inject({ method: 'GET', url: `/invites/${created.token}` });
+      expect(found.json()).toEqual({ tableId: table.tableId });
+      table.redeemSeatAssignment(created.token);
+      expect((await app.inject({ method: 'GET', url: `/invites/${created.token}` })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', url: '/invites/not-a-token' })).statusCode).toBe(404);
+    });
+
+    it('ten invite codes that match nothing lock the address out', async () => {
+      for (let i = 0; i < 10; i++) expect((await app.inject({ method: 'GET', url: `/invites/miss-${String(i)}` })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', url: '/invites/miss-again' })).statusCode).toBe(429);
     });
   });
 

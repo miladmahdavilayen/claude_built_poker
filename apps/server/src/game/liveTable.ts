@@ -430,6 +430,11 @@ export class LiveTable {
     return { ok: true, token };
   }
 
+  /** Whether this table has an unused invite with this token — for looking up which table a pasted invite code belongs to. */
+  hasSeatAssignment(token: string): boolean {
+    return this.seatAssignments.has(token);
+  }
+
   /** Validates and consumes a seat-assignment token — the caller (socketServer.ts) still does the actual takeSeat + chip-ledger work, exactly like a normal take-seat, just sourcing seatId/buyIn/ownerNickname from here instead of the client's own say-so. */
   redeemSeatAssignment(
     token: string,

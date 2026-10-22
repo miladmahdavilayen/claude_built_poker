@@ -201,6 +201,81 @@ input[type='range']::-moz-range-thumb {
   font-size: 13px;
   color: var(--muted);
 }
+/* The friendly-game waiver: a quick read, then initials. */
+.waiver-card {
+  width: 440px;
+}
+.waiver-card h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  text-align: center;
+}
+.waiver-lead {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.waiver-terms {
+  margin: 0 0 20px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.waiver-terms strong {
+  color: var(--text);
+}
+.waiver-initials {
+  font-size: 20px;
+  letter-spacing: 0.2em;
+  text-align: center;
+  min-height: 48px;
+}
+.waiver-card .btn-primary {
+  min-height: 48px;
+}
+
+/* Landing page: the two ways in (an invitation, or an access key). */
+.landing-option {
+  text-align: left;
+}
+.landing-option h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.landing-option button {
+  min-height: 44px;
+}
+.landing-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.landing-divider::before,
+.landing-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--panel-border);
+}
+.landing-link {
+  margin: 16px auto 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 14px;
+  padding: 8px;
+}
+.landing-link:hover {
+  text-decoration: underline;
+}
+
 .dev-google-stub {
   margin-top: 8px;
   padding: 12px;
@@ -2725,6 +2800,107 @@ input[type='range']::-moz-range-thumb {
   background: var(--accent);
   color: #0b1a10;
   font-weight: 600;
+}
+
+/* Admin: one-time access keys for new players. */
+.admin-keys {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+.admin-keys .admin-section-title {
+  margin-top: 0;
+}
+.admin-keys-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+.admin-keys-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.admin-keys-form input,
+.admin-keys-form select,
+.admin-keys-form button {
+  min-height: 40px;
+}
+.admin-key-fresh {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(224, 167, 48, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.admin-key-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.admin-key-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admin-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.admin-key-info {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.admin-key-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.admin-key-hint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 400;
+  color: var(--muted);
+}
+.admin-key-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+}
+.admin-key-status-active {
+  border-color: var(--good);
+  color: var(--good);
+}
+.admin-key-status-used {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.access-key-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
 }
 
 .admin-my-balance {

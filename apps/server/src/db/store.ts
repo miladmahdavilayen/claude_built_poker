@@ -17,6 +17,8 @@ export interface UserRecord {
   createdAt: Date;
   /** Last Google sign-in. Null for an account that has never signed in with Google. */
   lastLoginAt: Date | null;
+  /** The friendly-game waiver this player agreed to (see WAIVER_VERSION) — all three null until they agree. */
+  waiver: { version: number; initials: string; acceptedAt: Date } | null;
 }
 
 /** What a verified Google sign-in tells us about a new account — see googleAuth.ts. */
@@ -25,6 +27,19 @@ export interface GoogleAccountInput {
   email: string;
   displayName: string;
   avatarUrl: string | null;
+}
+
+/** An owner-generated, one-time access key (never the key itself — see auth/signupKeys.ts). */
+export interface SignupKeyRecord {
+  id: string;
+  hint: string;
+  label: string;
+  email: string | null;
+  createdAt: Date;
+  expiresAt: Date;
+  usedAt: Date | null;
+  usedBy: string | null;
+  revokedAt: Date | null;
 }
 
 export type LedgerReason = 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus';
@@ -199,6 +214,23 @@ export interface Store {
    * one has ever claimed it before — even on an account deleted since.
    */
   claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean>;
+  createSignupKey(input: { keyHash: string; hint: string; label: string; email: string | null; emailKey: string | null; createdBy: string; expiresAt: Date }): Promise<SignupKeyRecord>;
+  /** Newest first. */
+  listSignupKeys(): Promise<SignupKeyRecord[]>;
+  /** The key with this hash, if it can still be used (not used, revoked or expired). */
+  findUsableSignupKey(keyHash: string): Promise<SignupKeyRecord | null>;
+  /**
+   * Atomically marks a usable key as used, if it's locked to no email or to
+   * this one. Returns its id, or null (nothing changed) if it can't be
+   * used — so two registrations racing for one key can't both win.
+   */
+  consumeSignupKey(keyHash: string, emailKey: string): Promise<string | null>;
+  /** Records which account a consumed key registered. */
+  attachSignupKeyUser(id: string, userId: string): Promise<void>;
+  /** Revokes a key that hasn't been used. Returns false if there was nothing to revoke. */
+  revokeSignupKey(id: string): Promise<boolean>;
+  /** Records that this player agreed to the friendly-game waiver: which version, with what initials, now. */
+  acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord>;
   /** Links a Google identity onto an EXISTING guest account, converting it in place. */
   linkGoogleToGuest(userId: string, googleId: string, email: string | null): Promise<UserRecord>;
   /**

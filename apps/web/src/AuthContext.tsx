@@ -6,21 +6,50 @@ interface AuthState {
   user: PublicUser | null;
   accessToken: string | null;
   loading: boolean;
-  signupGuest: (displayName: string) => Promise<void>;
+  /** Starts a guest session for redeeming this invite (the `assign` token). */
+  signupGuest: (displayName: string, inviteToken: string) => Promise<void>;
   /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
   login: (email: string, password: string) => Promise<void>;
-  loginWithGoogle: (idToken: string) => Promise<void>;
+  /** `signupKey` (the owner's access key) is needed only to register a new account. */
+  loginWithGoogle: (idToken: string, signupKey?: string) => Promise<void>;
   /** Local development only — see api.devGoogleSignIn. */
-  loginWithDevGoogle: (email: string, displayName: string) => Promise<void>;
+  loginWithDevGoogle: (email: string, displayName: string, signupKey?: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Permanently deletes the signed-in (non-guest, non-admin) user's own account. Clears local session state on success — the caller still owns navigating away. */
   deleteAccount: () => Promise<void>;
   reloadUser: () => Promise<void>;
+  /** Agrees to the friendly-game waiver with these initials — see pages/Waiver.tsx. */
+  acceptWaiver: (initials: string) => Promise<void>;
   /** Optimistically reflects a display-name change already sent to (and applied by) the server — e.g. the owner renaming themselves right before sitting down via 'take-seat'. No round trip of its own; the server is the actual source of truth. */
   setDisplayName: (displayName: string) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+
+/**
+ * Set in this browser once someone has signed in with Google here, and
+ * cleared only when they delete their account — so after logging out (or
+ * their 30-day session lapsing) the landing page greets them with
+ * "Sign in with Google" instead of asking for an access key again.
+ */
+const MEMBER_KEY = 'pokerclause.googleMember';
+
+export function isKnownMember(): boolean {
+  try {
+    return localStorage.getItem(MEMBER_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function rememberMember(known: boolean): void {
+  try {
+    if (known) localStorage.setItem(MEMBER_KEY, '1');
+    else localStorage.removeItem(MEMBER_KEY);
+  } catch {
+    // Storage blocked (private mode etc.) — the landing page just won't remember.
+  }
+}
 
 // The refresh token is single-use and rotates on every call. React's
 // StrictMode deliberately double-invokes effects in development, which
@@ -49,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
         if (ignore) return;
         setUser(res.user);
         setAccessToken(res.accessToken);
+        if (res.user.hasGoogle) rememberMember(true);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -59,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     };
   }, []);
 
-  const signupGuest = useCallback(async (displayName: string) => {
-    const res = await api.signupGuest(displayName);
+  const signupGuest = useCallback(async (displayName: string, inviteToken: string) => {
+    const res = await api.signupGuest(displayName, inviteToken);
     setUser(res.user);
     setAccessToken(res.accessToken);
   }, []);
@@ -71,14 +101,16 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setAccessToken(res.accessToken);
   }, []);
 
-  const loginWithGoogle = useCallback(async (idToken: string) => {
-    const res = await api.googleSignIn(idToken);
+  const loginWithGoogle = useCallback(async (idToken: string, signupKey?: string) => {
+    const res = await api.googleSignIn(idToken, signupKey);
+    rememberMember(true);
     setUser(res.user);
     setAccessToken(res.accessToken);
   }, []);
 
-  const loginWithDevGoogle = useCallback(async (email: string, displayName: string) => {
-    const res = await api.devGoogleSignIn(email, displayName);
+  const loginWithDevGoogle = useCallback(async (email: string, displayName: string, signupKey?: string) => {
+    const res = await api.devGoogleSignIn(email, displayName, signupKey);
+    rememberMember(true);
     setUser(res.user);
     setAccessToken(res.accessToken);
   }, []);
@@ -99,17 +131,27 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
   const deleteAccount = useCallback(async () => {
     if (!accessToken) throw new Error('Not signed in.');
     await api.deleteMyAccount(accessToken);
+    rememberMember(false);
     setUser(null);
     setAccessToken(null);
   }, [accessToken]);
+
+  const acceptWaiver = useCallback(
+    async (initials: string) => {
+      if (!accessToken) throw new Error('Not signed in.');
+      const res = await api.acceptWaiver(initials, accessToken);
+      setUser(res.user);
+    },
+    [accessToken],
+  );
 
   const setDisplayName = useCallback((displayName: string) => {
     setUser((current) => (current ? { ...current, displayName } : current));
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ user, accessToken, loading, signupGuest, login, loginWithGoogle, loginWithDevGoogle, reloadUser, logout, deleteAccount, setDisplayName }),
-    [user, accessToken, loading, signupGuest, login, loginWithGoogle, loginWithDevGoogle, reloadUser, logout, deleteAccount, setDisplayName],
+    () => ({ user, accessToken, loading, signupGuest, login, loginWithGoogle, loginWithDevGoogle, reloadUser, acceptWaiver, logout, deleteAccount, setDisplayName }),
+    [user, accessToken, loading, signupGuest, login, loginWithGoogle, loginWithDevGoogle, reloadUser, acceptWaiver, logout, deleteAccount, setDisplayName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

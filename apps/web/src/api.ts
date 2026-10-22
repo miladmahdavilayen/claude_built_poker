@@ -12,6 +12,8 @@ export interface PublicUser {
   avatarUrl: string | null;
   hasGoogle: boolean;
   createdAt: string;
+  /** A Google player who hasn't agreed to the friendly-game waiver yet — see pages/Waiver.tsx. */
+  needsWaiver: boolean;
 }
 
 /** A signed-in player who isn't the admin plays only at their own practice table, against computer players. */
@@ -80,8 +82,9 @@ function deleteJson<T>(path: string, accessToken: string): Promise<T> {
   );
 }
 
-export function signupGuest(displayName: string): Promise<AuthResponse> {
-  return postJson('/auth/guest', { displayName });
+/** A guest session exists only to redeem an owner's invite, so it takes the invite's token. */
+export function signupGuest(displayName: string, inviteToken: string): Promise<AuthResponse> {
+  return postJson('/auth/guest', { displayName, inviteToken });
 }
 
 /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
@@ -89,8 +92,19 @@ export function login(email: string, password: string): Promise<AuthResponse> {
   return postJson('/auth/login', { email, password });
 }
 
-export function googleSignIn(idToken: string): Promise<AuthResponse> {
-  return postJson('/auth/google', { idToken });
+/** `signupKey` is an owner-generated access key — needed only to register a new account (which uses it up), never to sign back in. */
+export function googleSignIn(idToken: string, signupKey?: string): Promise<AuthResponse> {
+  return postJson('/auth/google', signupKey ? { idToken, signupKey } : { idToken });
+}
+
+/** Checks an owner-generated access key before the landing page offers Google sign-up (doesn't use it up). */
+export function checkSignupKey(key: string): Promise<{ ok: true }> {
+  return postJson('/auth/signup-key', { key });
+}
+
+/** Which table an owner's invite code (the `assign` token from an invite link) is for. */
+export function lookupInvite(token: string): Promise<{ tableId: string }> {
+  return fetch(`${API_BASE}/invites/${encodeURIComponent(token)}`).then((res) => parseOrThrow<{ tableId: string }>(res));
 }
 
 /**
@@ -99,8 +113,8 @@ export function googleSignIn(idToken: string): Promise<AuthResponse> {
  * ALLOW_TEST_SEEDING=true — see apps/server's testSeed.ts. Lets the
  * player flow be tried without a Google OAuth client.
  */
-export function devGoogleSignIn(email: string, displayName: string): Promise<AuthResponse> {
-  return postJson('/test-only/google-login', { email, displayName });
+export function devGoogleSignIn(email: string, displayName: string, signupKey?: string): Promise<AuthResponse> {
+  return postJson('/test-only/google-login', signupKey ? { email, displayName, signupKey } : { email, displayName });
 }
 
 export function googleSignInAvailable(): Promise<boolean> {
@@ -112,6 +126,10 @@ export function googleSignInAvailable(): Promise<boolean> {
 
 export function refresh(): Promise<AuthResponse> {
   return fetch(`${API_BASE}/auth/refresh`, { method: 'POST', credentials: 'include' }).then((res) => parseOrThrow<AuthResponse>(res));
+}
+
+export function acceptWaiver(initials: string, accessToken: string): Promise<{ user: PublicUser }> {
+  return postJson('/users/me/waiver', { initials }, accessToken);
 }
 
 export function getMe(accessToken: string): Promise<{ user: PublicUser }> {
@@ -210,6 +228,7 @@ export interface AdminUserDto {
   chips: number;
   hasGoogle: boolean;
   createdAt: string;
+  waiver: { version: number; initials: string; acceptedAt: string } | null;
 }
 
 export interface AdminUserDetailDto extends AdminUserDto {
@@ -245,6 +264,35 @@ export function adminAdjustChips(userId: string, amount: number, reason: string,
 /** Sets a balance to an exact amount (cents) — ledgered as the difference. */
 export function adminSetChips(userId: string, balance: number, reason: string, accessToken: string): Promise<{ ok: true; reason: string; chips: number }> {
   return postJson('/admin/chips/set', { userId, balance, reason }, accessToken);
+}
+
+export interface SignupKeyDto {
+  id: string;
+  /** The key's last 4 characters — the key itself is only ever shown once, when generated. */
+  hint: string;
+  label: string;
+  email: string | null;
+  status: 'active' | 'used' | 'revoked' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+  usedByName: string | null;
+}
+
+export function adminListSignupKeys(accessToken: string): Promise<{ keys: SignupKeyDto[] }> {
+  return getJson('/admin/signup-keys', accessToken);
+}
+
+/** Returns the new key itself — the only time it's ever available. */
+export function adminCreateSignupKey(
+  input: { label: string; email?: string; expiresInDays: number },
+  accessToken: string,
+): Promise<{ key: string; id: string; expiresAt: string }> {
+  return postJson('/admin/signup-keys', input, accessToken);
+}
+
+export function adminRevokeSignupKey(id: string, accessToken: string): Promise<{ ok: true }> {
+  return deleteJson(`/admin/signup-keys/${encodeURIComponent(id)}`, accessToken);
 }
 
 export interface GameReportSummaryDto {

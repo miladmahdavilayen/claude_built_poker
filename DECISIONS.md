@@ -2063,3 +2063,88 @@ void the hand and refund what was bet, an easy way out of any losing hand.
 email and sets the session cookie; `VITE_DEV_GOOGLE_STUB=true` in a Vite
 dev server shows a stand-in form for it on the login page. Neither exists
 in a production build.
+
+## Landing page: an invitation, or the owner's access key
+
+Supersedes the "Front door" part of the section above. The landing page
+offers two ways in:
+
+- **An invitation** — the owner's invite link, or just its code (the
+  `assign` token, a random UUID). A link is opened as-is; a bare code is
+  looked up with `GET /invites/:token` (which table holds that unused
+  invite) and opened as `/table/:id?assign=:code`. Either way the visitor,
+  being signed out, lands back on the guest form with the invite as `from`,
+  exactly as opening the link directly always did.
+- **The access key** (`SIGNUP_KEY`) → Sign up with Google. The page checks
+  the key with `POST /auth/signup-key` (10 tries per 15 min per IP) before
+  showing Google's button, then sends it again with the Google token; the
+  server registers a new account only if it matches
+  (`loginOrRegisterWithGoogle`'s `allowRegistration`). Signing back into an
+  existing account never needs it. Unset `SIGNUP_KEY` = registration
+  closed. Compared as SHA-256 digests with `timingSafeEqual`, trimmed, case
+  sensitive. It lives in the server's env, not the repo — rotating it is an
+  `.env` edit and a restart.
+
+Returning players: the 30-day rotating session cookie signs them straight
+in. If they've logged out, `localStorage` remembers this browser has a
+Google account (`pokerclause.googleMember`, cleared on account deletion),
+so the landing page opens on "Welcome back — Sign in with Google";
+"Already have an account? Sign in" reaches the same step from anywhere. A
+new Google account trying that path without the key is told to enter it.
+
+## The friendly-game waiver
+
+Every Google player agrees to a short waiver (pages/Waiver.tsx) by typing
+their initials before they can do anything else: play money only, no one
+including the owner profits, provided as is, played at their own risk with
+any right to sue given up to the extent the law allows, and the owner may
+change or remove the app or account. It's deliberately four lines — read
+in seconds. The owner and invited guests never see it.
+
+Stored on the account (migration 0007: `waiver_version`, `waiver_initials`,
+`waiver_accepted_at`), shown to the owner in the admin dashboard, and
+enforced on both sides: App.tsx routes every page to /waiver while
+`needsWaiver` is true, and POST /tables/practice refuses with
+`WAIVER_REQUIRED`. Rewording it means bumping `WAIVER_VERSION`
+(packages/shared), which asks everyone to agree again. Accounts that
+existed before this are asked on their next visit.
+
+The text is plain-language intent, written without a lawyer; how much a
+click-through waiver holds up varies by jurisdiction.
+
+## Per-player access keys, and hardening the front door
+
+Supersedes the shared `SIGNUP_KEY` from "Landing page: an invitation, or
+the owner's access key" above — a shared key leaks the first time one
+person forwards it. There is no shared key any more.
+
+**Access keys.** The owner generates one per new player in the admin
+dashboard ("Access keys"): who it's for, optionally their Google email, and
+an expiry (1–30 days, default 7). A key is 20 Crockford-base32 characters
+(100 bits from the CSPRNG), shown as XXXXX-XXXXX-XXXXX-XXXXX exactly once,
+at generation; `signup_keys` (migration 0008) keeps only its SHA-256, its
+last four characters to tell keys apart, and its state. Typing is
+forgiving (case, dashes, spaces, O/I/L). Registering consumes the key in
+one `UPDATE … WHERE usable … RETURNING` — single use even under a race —
+and only after every other check passes, so a refused sign-up (email
+already taken) doesn't burn it. An email-locked key works only for that
+Google email (normalized like the welcome bonus). Keys can be revoked
+until used; the list shows active / used (and by whom) / revoked /
+expired. `POST /auth/signup-key` checks a key without using it.
+
+**Front-door limits**, per client IP (`TRUST_PROXY` gives the real one
+behind Cloudflare and Caddy), on top of the global 100 requests/minute:
+
+| Endpoint | Request limit | Failure lockout |
+|---|---|---|
+| `POST /auth/signup-key` | 10 / 15 min | 5 wrong keys / 15 min → 15 min |
+| `POST /auth/google` | 20 / hour | wrong keys count toward the same lockout |
+| `GET /invites/:token` | 20 / min | 10 misses / 15 min → 15 min |
+| `POST /auth/guest` | 20 / hour | invalid invites count toward the invite lockout |
+| `POST /auth/login` (owner) | 5 / 15 min | — |
+
+`FailureLockout` is in-memory and bounded (10,000 clients, oldest evicted).
+A guest session now requires a live invite token: before, anyone could
+mint unlimited in-memory guest sessions. Request bodies are capped at
+64 KB (was Fastify's 1 MB). The existing socket-per-IP cap, chat/action
+rate limits and Cloudflare's bot protection stay as they were.

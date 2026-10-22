@@ -182,6 +182,8 @@ export type SeatTargetIntent = z.infer<typeof SeatTargetSchema>;
 export const GuestSignupSchema = z
   .object({
     displayName: z.string().min(1).max(24),
+    /** The owner's invite this guest session is for (the `assign` token) — no guest session exists without one. */
+    inviteToken: z.string().uuid(),
   })
   .strict();
 export type GuestSignupInput = z.infer<typeof GuestSignupSchema>;
@@ -190,9 +192,46 @@ export const GoogleSignInSchema = z
   .object({
     /** The raw ID token (JWT) from Google's client-side Sign In With Google library — verified server-side, never trusted as-is. */
     idToken: z.string().min(1),
+    /** An owner-generated access key — required only when this Google account isn't registered yet. See apps/server's signupKeys.ts. */
+    signupKey: z.string().max(64).optional(),
   })
   .strict();
 export type GoogleSignInInput = z.infer<typeof GoogleSignInSchema>;
+
+/** Checks an access key before the landing page offers Google sign-up — the real check (and use) happens on registration itself. */
+export const SignupKeySchema = z
+  .object({
+    key: z.string().min(1).max(64),
+  })
+  .strict();
+
+/** Owner-only: a new one-time access key for one new player. */
+export const CreateSignupKeySchema = z
+  .object({
+    /** Who it's for, e.g. "Dave from work". */
+    label: z.string().trim().min(1).max(60),
+    /** Optional: only this Google email may register with it. */
+    email: z.string().trim().email().max(254).optional(),
+    expiresInDays: z.number().int().min(1).max(30).default(7),
+  })
+  .strict();
+
+/**
+ * The friendly-game waiver every Google player agrees to before playing
+ * (see apps/web's Waiver page for the text). Bump the version whenever the
+ * text changes and everyone is asked to agree again.
+ */
+export const WAIVER_VERSION = 1;
+
+export const AcceptWaiverSchema = z
+  .object({
+    /** Letters only — e.g. "JD", or "J" for a one-name player. */
+    initials: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z]{1,5}$/),
+  })
+  .strict();
 
 export const LoginSchema = z
   .object({

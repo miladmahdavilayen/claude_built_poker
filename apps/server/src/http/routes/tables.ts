@@ -3,6 +3,7 @@ import { CreatePracticeTableSchema, CreateTableSchema, type TableSettings } from
 import type { FastifyInstance } from 'fastify';
 import type { Store } from '../../db/store.js';
 import { openPracticeTable } from '../../game/practiceTables.js';
+import { inviteLockout, lockedOutReply } from '../../security/lockouts.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
 import { attachAuthIfPresent, requireAdmin, requireAuth } from '../middleware.js';
 
@@ -32,6 +33,22 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
     const visible = table && (!table.isPractice || req.userRole === 'admin' || req.userId === table.ownerId);
     if (!visible) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
     return { tableId: table.tableId, name: table.name, settings: table.settings };
+  });
+
+  // The landing page's "invitation code" box: an owner's invite link is
+  // /table/:id?assign=<token>, and the token alone is enough to find the
+  // table. Tokens are random UUIDs (122 bits), so guessing one is hopeless
+  // anyway; misses still count toward a per-IP lockout, on top of the rate limit.
+  app.get('/invites/:token', { config: { rateLimit: { max: Number(process.env.INVITE_LOOKUP_LIMIT ?? 20), timeWindow: '1 minute' } } }, (req, reply) => {
+    const wait = inviteLockout.retryAfterMs(req.ip);
+    if (wait > 0) return reply.code(429).send(lockedOutReply(wait));
+    const { token } = req.params as { token: string };
+    const table = token.length <= 64 ? registry.tableForInvite(token) : null;
+    if (!table) {
+      inviteLockout.recordFailure(req.ip);
+      return reply.code(404).send({ code: 'INVALID_ASSIGNMENT', message: 'This invitation is invalid or has already been used.' });
+    }
+    return { tableId: table.tableId };
   });
 
   app.post('/tables/practice', { preHandler: requireAuth }, async (req, reply) => {

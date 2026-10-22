@@ -91,6 +91,39 @@ test('a fresh visitor (not yet signed in) opening an invite link lands directly 
   await ctxVisitor.close();
 });
 
+// The landing page's invitation box takes the full invite link or just its
+// code (the `assign` token), and either one leads to the same place opening
+// the link directly would: the guest form, then the seat.
+for (const form of ['link', 'code'] as const) {
+  test(`a visitor who pastes their invitation ${form} on the landing page gets the guest form and is seated`, async ({ browser }) => {
+    const ctxOwner = await browser.newContext();
+    const ctxVisitor = await browser.newContext();
+    const pageOwner = await ctxOwner.newPage();
+    const pageVisitor = await ctxVisitor.newPage();
+
+    await adminLogin(pageOwner);
+    await createTable(pageOwner, { name: `Pasted Invite ${form}`, smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+    const tableUrl = pageOwner.url();
+    await pageOwner.locator('[data-testid="seat-2"]').getByText('+ Assign human').click();
+    await pageOwner.getByLabel(/Buy-in/).fill('90');
+    await pageOwner.getByRole('button', { name: 'Generate link' }).click();
+    const link = await pageOwner.locator('.assign-link-input').inputValue();
+    await pageOwner.getByRole('button', { name: 'Done' }).click();
+
+    await pageVisitor.goto('/');
+    await pageVisitor.getByLabel('Invitation link or code').fill(form === 'link' ? link : new URL(link).searchParams.get('assign')!);
+    await pageVisitor.getByRole('button', { name: 'Join table' }).click();
+
+    await pageVisitor.getByLabel('Display name').fill(`Pasted ${form} Guest`);
+    await pageVisitor.getByRole('button', { name: 'Play now' }).click();
+    await expect(pageVisitor).toHaveURL(tableUrl);
+    await expect(pageVisitor.locator('[data-testid="seat-2"] .seat-stack')).toHaveText('$90');
+
+    await ctxOwner.close();
+    await ctxVisitor.close();
+  });
+}
+
 // Regression test: the owner can privately label an invite link (see
 // DECISIONS.md) — the label shows up next to the redeemer's own chosen
 // name, in parentheses, but ONLY on the owner's own view. This is

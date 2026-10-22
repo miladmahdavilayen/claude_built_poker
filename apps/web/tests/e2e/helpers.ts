@@ -1,14 +1,14 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, request, type Page } from '@playwright/test';
 
 /**
- * Starts a guest session through the real API rather than the login page:
- * the site is invite-only, so the page itself only offers "Play now" to a
- * visitor who arrived through an invite link (see Login.tsx). The refresh
- * cookie lands in this page's browser context, so loading the app signs
- * it in exactly as a real guest would be.
+ * Starts a guest session through the test-only route (testSeed.ts): the
+ * real /auth/guest only creates one for a visitor holding a live invite
+ * (see Login.tsx), and most tests just need a guest to spectate or be
+ * invited later. The refresh cookie lands in this page's browser context,
+ * so loading the app signs it in exactly as a real guest would be.
  */
 export async function guestSignup(page: Page, name: string): Promise<void> {
-  const res = await page.request.post('http://localhost:4210/auth/guest', { data: { displayName: name } });
+  const res = await page.request.post('http://localhost:4210/test-only/guest', { data: { displayName: name } });
   expect(res.ok()).toBe(true);
   await page.goto('/lobby');
   await expect(page).toHaveURL(/\/lobby/);
@@ -52,10 +52,33 @@ export async function seedRealAccount(page: Page, displayName: string): Promise<
  * account; once deleted, it registers again — without a second bonus.
  */
 export async function googlePlayerLogin(page: Page, email: string, displayName: string): Promise<void> {
+  // No access key: this test-only route lets anyone register (see testSeed.ts).
   const res = await page.request.post('http://localhost:4210/test-only/google-login', { data: { email, displayName } });
   expect(res.ok()).toBe(true);
   await page.goto('/lobby');
+  // A new player (or one who never agreed) gets the friendly-game waiver first.
+  await page.locator('.practice-card, .waiver-card').first().waitFor();
+  if (await page.locator('.waiver-card').isVisible()) {
+    await page.getByLabel(/Your initials/).fill(displayName.slice(0, 2));
+    await page.getByRole('button', { name: 'I agree' }).click();
+  }
   await expect(page.locator('.practice-card')).toBeVisible();
+}
+
+/**
+ * Generates a one-time access key as the owner, through the API, in its own
+ * request context — so the owner's session cookie never lands in any test
+ * page's browser.
+ */
+export async function createAccessKey(label: string, email?: string): Promise<string> {
+  const api = await request.newContext({ baseURL: 'http://localhost:4210' });
+  const login = await api.post('/auth/login', { data: { email: 'admin@pokerclause.local', password: 'admin12345' } });
+  const { accessToken } = (await login.json()) as { accessToken: string };
+  const res = await api.post('/admin/signup-keys', { data: email ? { label, email } : { label }, headers: { authorization: `Bearer ${accessToken}` } });
+  expect(res.status()).toBe(201);
+  const { key } = (await res.json()) as { key: string };
+  await api.dispose();
+  return key;
 }
 
 export interface CreateTableOptions {

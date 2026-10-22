@@ -127,6 +127,9 @@ async function main(): Promise<void> {
 
   const isProd = process.env.NODE_ENV === 'production';
   const app = Fastify({
+    // Nothing this API accepts comes close (the biggest is a 200-id bulk
+    // delete); Fastify's 1 MB default just gives a flood more to chew on.
+    bodyLimit: 64 * 1024,
     ...(process.env.TRUST_PROXY ? { trustProxy: parseTrustProxy(process.env.TRUST_PROXY) } : {}),
     logger: isProd
       ? { level: process.env.LOG_LEVEL ?? 'info' }
@@ -176,11 +179,11 @@ async function main(): Promise<void> {
   const adminUserId = await ensureAdminAccount(store, app.log);
 
   registerHealthRoute(app);
-  registerAuthRoutes(app, store);
   registerFairnessRoutes(app, store);
   registerTestSeedRoutes(app, store);
 
   const { io, registry, closeAllTables, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
+  registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null);
   registerUserRoutes(app, store, closePracticeTableOf);
   registerTableRoutes(app, store, registry, watchPracticeTable);
   registerAdminRoutes(app, store, registry, closePracticeTableOf);

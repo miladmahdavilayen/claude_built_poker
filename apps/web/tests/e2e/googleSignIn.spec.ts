@@ -22,6 +22,7 @@ test('with no Google configuration, the server reports it unavailable, the sign-
   // button doesn't render and the visitor is told sign-in isn't available —
   // and guest play (the way an owner-invited player gets in) is unaffected.
   await page.goto('/');
+  await page.getByRole('button', { name: 'Already have an account? Sign in' }).click();
   await expect(page.locator('.google-signin-row iframe')).toHaveCount(0);
   await expect(page.getByText('Sign-in isn’t available right now')).toBeVisible();
 

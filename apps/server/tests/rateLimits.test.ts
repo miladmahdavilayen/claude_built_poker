@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import { register } from '../src/auth/authService.js';
+import { signupKeyLockout } from '../src/security/lockouts.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
 import { registerAuthRoutes } from '../src/http/routes/auth.js';
 import { attachSocketServer } from '../src/socket/socketServer.js';
@@ -25,13 +26,30 @@ describe('abuse limits', () => {
     app = Fastify();
     await app.register(cookie);
     await app.register(rateLimit, { max: 1000, timeWindow: '1 minute' });
-    registerAuthRoutes(app, store);
+    registerAuthRoutes(app, store, () => false);
 
     const attempt = (password: string) =>
       app!.inject({ method: 'POST', url: '/auth/login', payload: { email: 'owner@example.com', password } });
     for (let i = 0; i < 4; i++) expect((await attempt('guess')).statusCode).toBe(401);
     expect((await attempt('correct-horse')).statusCode).toBe(200); // 5th try, still within the limit
     expect((await attempt('correct-horse')).statusCode).toBe(429);
+  });
+
+  it('/auth/signup-key allows 10 checks per 15 minutes per IP at most, wrong or right', async () => {
+    const store = new MemoryStore();
+    app = Fastify();
+    await app.register(cookie);
+    await app.register(rateLimit, { max: 1000, timeWindow: '1 minute' });
+    registerAuthRoutes(app, store, () => false);
+    signupKeyLockout.reset();
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      // A fresh lockout window each time, so only the request limit is in play.
+      signupKeyLockout.reset();
+      statuses.push((await app.inject({ method: 'POST', url: '/auth/signup-key', payload: { key: 'AAAAA-AAAAA-AAAAA-AAAAA' } })).statusCode);
+    }
+    expect(statuses.slice(0, 10).every((s) => s === 403)).toBe(true);
+    expect(statuses.slice(10)).toEqual([429, 429]);
   });
 
   it('caps concurrent sockets per IP', async () => {

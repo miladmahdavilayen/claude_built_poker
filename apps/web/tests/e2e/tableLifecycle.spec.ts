@@ -227,7 +227,15 @@ test('the owner swipes a table card left in the lobby and deletes it after confi
   await expect(owner.getByText('Delete “Swipe Me Away”?')).toBeHidden();
   await expect(owner.locator('.table-card', { hasText: 'Swipe Me Away' })).toBeVisible();
 
-  await swipeLeft();
+  // This time a quick flick whose release arrives before any of its moves —
+  // what a busy browser does with batched move events (it once left the card
+  // shut on a slow CI runner).
+  await card.scrollIntoViewIfNeeded();
+  const item = card.locator('.swipe-delete-item');
+  const box = (await item.boundingBox())!;
+  const at = (dx: number) => ({ clientX: box.x + box.width * 0.7 - dx, clientY: box.y + 30, pointerId: 7, isPrimary: true, bubbles: true });
+  await item.dispatchEvent('pointerdown', at(0));
+  await item.dispatchEvent('pointerup', at(140));
   await card.getByRole('button', { name: 'Delete Swipe Me Away' }).click();
   await owner.getByRole('button', { name: 'Delete table' }).click();
   await expect(owner.locator('.table-card', { hasText: 'Swipe Me Away' })).toHaveCount(0);

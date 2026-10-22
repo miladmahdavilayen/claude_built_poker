@@ -24,25 +24,41 @@ export function SwipeToDelete({ label, onDelete, children }: { label: string; on
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     start.current = { x: e.clientX, y: e.clientY, base: open ? -REVEAL_PX : 0, dragging: false };
   };
+  /** Whether the pointer has moved far enough, and sideways enough, to be a swipe. */
+  const isSwipe = (dx: number, dy: number): boolean => Math.abs(dx) >= DRAG_START_PX && Math.abs(dx) >= Math.abs(dy);
+  const clampOffset = (v: number): number => Math.min(0, Math.max(v, -REVEAL_PX));
+
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const s = start.current;
     if (!s) return;
     const dx = e.clientX - s.x;
     if (!s.dragging) {
-      if (Math.abs(dx) < DRAG_START_PX || Math.abs(dx) < Math.abs(e.clientY - s.y)) return;
+      if (!isSwipe(dx, e.clientY - s.y)) return;
       s.dragging = true;
       e.currentTarget.setPointerCapture(e.pointerId);
     }
-    liveOffset.current = Math.min(0, Math.max(s.base + dx, -REVEAL_PX));
+    liveOffset.current = clampOffset(s.base + dx);
     setDrag(liveOffset.current);
   };
-  const onPointerUp = (): void => {
+  // Decided from where the pointer is released, not just from the moves
+  // seen so far: under load the browser batches move events into the next
+  // frame but delivers the release at once, so a quick flick can end before
+  // any of its moves have arrived.
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
     const s = start.current;
     start.current = null;
-    if (!s?.dragging) return;
+    if (!s) return;
+    const dx = e.clientX - s.x;
+    if (!s.dragging && !isSwipe(dx, e.clientY - s.y)) return;
+    liveOffset.current = clampOffset(s.base + dx);
     justDragged.current = true;
     setTimeout(() => (justDragged.current = false), 0);
     setOpen(liveOffset.current <= -OPEN_THRESHOLD_PX);
+    setDrag(null);
+  };
+  /** The browser took the pointer back (e.g. to scroll): drop the drag, change nothing. */
+  const onPointerCancel = (): void => {
+    start.current = null;
     setDrag(null);
   };
 
@@ -71,7 +87,7 @@ export function SwipeToDelete({ label, onDelete, children }: { label: string; on
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
         // A click that ends a drag shouldn't also land on a button inside.
         onClickCapture={(e) => {
           if (justDragged.current) e.stopPropagation();

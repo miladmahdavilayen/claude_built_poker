@@ -279,6 +279,11 @@ export interface SignupKeyDto {
   usedByName: string | null;
 }
 
+/** Owner-only: deletes (terminates) a table — everyone seated is refunded, and it's gone for good. */
+export function adminDeleteTable(tableId: string, accessToken: string): Promise<{ ok: true }> {
+  return deleteJson(`/admin/tables/${encodeURIComponent(tableId)}`, accessToken);
+}
+
 export function adminListSignupKeys(accessToken: string): Promise<{ keys: SignupKeyDto[] }> {
   return getJson('/admin/signup-keys', accessToken);
 }

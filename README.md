@@ -44,9 +44,11 @@ docker compose exec server pnpm db:seed   # optional: admin + test accounts
 
 Open http://localhost:5173. The server listens on http://localhost:4000.
 
-Two public tables ("Micro Stakes 1/2", "High Stakes 5/10") are created
-automatically on every server boot — see `seedDefaultTables` in
-`apps/server/src/index.ts`. An owner/admin account
+The default public tables are created on the server's very first boot
+(see `openTables` in `apps/server/src/index.ts`); after that, every boot
+restores whichever tables were open when it stopped — so a table the owner
+deleted (swipe its card left in the lobby) stays deleted, and tables the
+owner created survive a deploy. An owner/admin account
 (`admin@pokerclause.local` / `admin12345` by default — override with
 `ADMIN_EMAIL`/`ADMIN_PASSWORD`) is *also* created automatically on every
 boot, regardless of storage backend — see "Owner-controlled chip

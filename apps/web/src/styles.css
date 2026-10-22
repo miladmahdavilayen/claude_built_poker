@@ -2979,3 +2979,37 @@ input[type='range']::-moz-range-thumb {
   -webkit-backdrop-filter: blur(6px);
 }
 
+
+/* Swipe-to-delete (components/SwipeToDelete.tsx) — the owner's table cards in the lobby. */
+.swipe-delete {
+  position: relative;
+  display: flex;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.swipe-delete-action {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 96px;
+  background: var(--danger);
+  color: #fff;
+  font-weight: 700;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.swipe-delete-item {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  transition: transform 0.2s ease;
+  /* Let the browser keep vertical scrolling; sideways drags are ours. */
+  touch-action: pan-y;
+  cursor: grab;
+}
+.swipe-delete-item > * {
+  flex: 1;
+  min-width: 0;
+}
+.swipe-delete-dragging {
+  transition: none;
+  cursor: grabbing;
+}

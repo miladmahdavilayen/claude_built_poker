@@ -325,6 +325,17 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  private readonly settings = new Map<string, string>();
+
+  async getSetting(key: string): Promise<string | null> {
+    return Promise.resolve(this.settings.get(key) ?? null);
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    this.settings.set(key, value);
+    return Promise.resolve();
+  }
+
   async createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {
     this.sessions.set(tokenHash, { userId, expiresAt });
     return Promise.resolve();

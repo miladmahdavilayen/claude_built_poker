@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { GameEvent } from '@pokerclause/engine';
 import type { TableSettings } from '@pokerclause/shared';
-import type { Store } from '../db/store.js';
+import type { Store, TableRecord } from '../db/store.js';
 import { LiveTable, type BroadcastPayload, type VacatedSeat } from './liveTable.js';
 
 export interface TableSummary {
@@ -36,8 +36,21 @@ export class TableRegistry {
 
   async createTable(name: string, settings: TableSettings, createdBy: string | null, inviteCode: string | null, isPractice = false): Promise<LiveTable> {
     const record = await this.store.createTable({ name, config: settings as unknown as Record<string, unknown>, inviteCode, createdBy, ephemeral: isPractice });
+    return this.open(record.id, name, settings, createdBy, inviteCode, isPractice);
+  }
+
+  /**
+   * Brings a table that was open when the server last stopped back to
+   * life — same id, name, settings and invite code; its seats start empty
+   * (everyone was cashed out at shutdown). See index.ts.
+   */
+  restore(record: TableRecord): LiveTable {
+    return this.open(record.id, record.name, record.config as unknown as TableSettings, record.createdBy, record.inviteCode, false);
+  }
+
+  private open(id: string, name: string, settings: TableSettings, createdBy: string | null, inviteCode: string | null, isPractice: boolean): LiveTable {
     const table = new LiveTable(
-      record.id,
+      id,
       name,
       settings,
       this.store,
@@ -51,7 +64,7 @@ export class TableRegistry {
       createdBy,
       isPractice,
     );
-    this.tables.set(record.id, table);
+    this.tables.set(id, table);
     return table;
   }
 
@@ -88,14 +101,18 @@ export class TableRegistry {
     return null;
   }
 
-  async close(tableId: string): Promise<void> {
+  /**
+   * Takes a table out of play. A practice table leaves nothing behind; a
+   * real one is kept on record, marked closed — unless `keepOpen` (a
+   * server shutdown), which leaves it open so the next boot restores it.
+   */
+  async close(tableId: string, keepOpen = false): Promise<void> {
     const table = this.tables.get(tableId);
     if (!table) return;
     table.dispose();
     this.tables.delete(tableId);
-    // A practice table leaves nothing behind; a real one is kept, marked closed.
     if (table.isPractice) await this.store.deleteTable(tableId);
-    else await this.store.closeTable(tableId);
+    else if (!keepOpen) await this.store.closeTable(tableId);
   }
 
   newTableId(): string {

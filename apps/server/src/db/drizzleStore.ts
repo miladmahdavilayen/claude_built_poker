@@ -317,6 +317,18 @@ export class DrizzleStore implements Store {
     await this.db.delete(schema.users).where(eq(schema.users.id, userId));
   }
 
+  async getSetting(key: string): Promise<string | null> {
+    const [row] = await this.db.select().from(schema.appSettings).where(eq(schema.appSettings.key, key)).limit(1);
+    return row?.value ?? null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await this.db
+      .insert(schema.appSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: schema.appSettings.key, set: { value, updatedAt: new Date() } });
+  }
+
   async createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {
     await this.db.insert(schema.sessions).values({ tokenHash, userId, expiresAt });
   }
@@ -392,7 +404,7 @@ export class DrizzleStore implements Store {
   }
 
   async listTables(): Promise<TableRecord[]> {
-    const rows = await this.db.select().from(schema.tables).where(eq(schema.tables.status, 'open'));
+    const rows = await this.db.select().from(schema.tables).where(eq(schema.tables.status, 'open')).orderBy(schema.tables.createdAt);
     return rows.map(toTableRecord);
   }
 

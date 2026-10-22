@@ -180,3 +180,65 @@ test('the owner can reset a table, freeing every seat while keeping the table it
   await ctxOwner.close();
   await ctxAlice.close();
 });
+
+test('the owner swipes a table card left in the lobby and deletes it after confirming; nobody else can', async ({ browser }) => {
+  const ctxOwner = await browser.newContext();
+  const ctxGuest = await browser.newContext();
+  const owner = await ctxOwner.newPage();
+  const guest = await ctxGuest.newPage();
+
+  await adminLogin(owner);
+  await createTable(owner, { name: 'Swipe Me Away', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  const tableUrl = owner.url();
+  await guestSignup(guest, 'Watcher Wes');
+  await guest.goto(tableUrl); // watching it when it goes
+  await expect(guest.locator('[data-testid="seat-0"]')).toBeVisible();
+
+  // A non-admin's lobby has nothing to swipe.
+  const guestLobby = await (await ctxGuest.browser()!.newContext()).newPage();
+  await guestSignup(guestLobby, 'Lobby Lou');
+  await expect(guestLobby.locator('.table-card', { hasText: 'Swipe Me Away' })).toBeVisible();
+  await expect(guestLobby.locator('.swipe-delete')).toHaveCount(0);
+
+  await owner.goto('/lobby');
+  const card = owner.locator('.swipe-delete', { hasText: 'Swipe Me Away' });
+  await expect(card).toBeVisible();
+  // Swipe it left with the mouse (the lobby may be long — bring the card into view first).
+  const swipeLeft = async (): Promise<void> => {
+    await card.scrollIntoViewIfNeeded();
+    const box = (await card.boundingBox())!;
+    await owner.mouse.move(box.x + box.width * 0.7, box.y + 30);
+    await owner.mouse.down();
+    for (let dx = 10; dx <= 140; dx += 10) await owner.mouse.move(box.x + box.width * 0.7 - dx, box.y + 32);
+    await owner.mouse.up();
+  };
+  await swipeLeft();
+  await card.getByRole('button', { name: 'Delete Swipe Me Away' }).click();
+
+  // Confirmation first; cancelling keeps it.
+  await expect(owner.getByText('Delete “Swipe Me Away”?')).toBeVisible();
+  await owner.getByRole('button', { name: 'Cancel' }).click();
+  await expect(owner.locator('.table-card', { hasText: 'Swipe Me Away' })).toBeVisible();
+
+  await swipeLeft();
+  await card.getByRole('button', { name: 'Delete Swipe Me Away' }).click();
+  await owner.getByRole('button', { name: 'Delete table' }).click();
+  await expect(owner.locator('.table-card', { hasText: 'Swipe Me Away' })).toHaveCount(0);
+
+  // The watcher is sent back to the lobby; it's gone for everyone.
+  await expect(guest).toHaveURL(/\/lobby/, { timeout: 10_000 });
+  await guestLobby.reload();
+  await expect(guestLobby.locator('.table-card', { hasText: 'Swipe Me Away' })).toHaveCount(0);
+
+  await ctxOwner.close();
+  await ctxGuest.close();
+});
+
+test('tapping Join on an owner’s swipeable card still joins the table', async ({ page }) => {
+  await adminLogin(page);
+  await createTable(page, { name: 'Tap To Join', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  const tableUrl = page.url();
+  await page.goto('/lobby');
+  await page.locator('.swipe-delete', { hasText: 'Tap To Join' }).getByRole('button', { name: 'Join table' }).click();
+  await expect(page).toHaveURL(tableUrl);
+});

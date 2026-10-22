@@ -2175,3 +2175,23 @@ listed, empty or not, through leaves, removals and resets; only
 "Terminate table" (or a server restart, which closes everything and
 re-seeds the defaults) ends one. An empty table costs nothing: no hand can
 start without a seated human, so any bots left behind just wait.
+
+## Deleting tables from the lobby, and tables surviving restarts
+
+The owner can swipe any table card in the lobby left (or drag it with a
+mouse) to reveal Delete; a confirmation follows. Deleting is terminating
+(`DELETE /admin/tables/:id`, shared with the in-table Terminate via
+`terminateTable`): everyone seated is cashed out, spectators are sent to the
+lobby, the game's books close, and the table is marked closed. The old
+`POST /admin/tables/:id/close` route used to skip all of that (no refunds,
+no notice); it now goes through the same path. The swipe only captures the
+pointer once a drag is clearly sideways, so tapping Join and scrolling on a
+phone still work.
+
+For a delete to stick, boot had to change: every boot used to create the
+default tables afresh, so a deleted one came back on the next deploy. Now
+the very first boot creates them and records it (`app_settings`, migration
+0010); every boot after restores the tables that were open when the server
+stopped (a shutdown cashes everyone out but leaves the table open on
+record). That first boot also closes any stale table left open from before.
+A side effect: tables the owner creates survive deploys too.

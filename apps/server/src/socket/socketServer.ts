@@ -114,6 +114,8 @@ export function attachSocketServer(
   io: Server;
   registry: TableRegistry;
   closeAllTables: () => Promise<void>;
+  /** The owner ending a table for good (terminate, or delete from the lobby): everyone's refunded and notified, and it's gone from the lobby. */
+  terminateTable: (tableId: string) => Promise<boolean>;
   closePracticeTableOf: (userId: string) => Promise<void>;
   watchPracticeTable: (tableId: string) => void;
 } {
@@ -234,7 +236,7 @@ export function attachSocketServer(
    * rule that a table with no human players left has no reason to keep
    * existing.
    */
-  async function closeTableWithNotice(tableId: string, reason: string, bookReason?: string): Promise<void> {
+  async function closeTableWithNotice(tableId: string, reason: string, bookReason?: string, keepOpen = false): Promise<void> {
     const table = registry.get(tableId);
     if (!table) return;
     // Book everyone's cash-out and write this game's final report before
@@ -251,7 +253,7 @@ export function attachSocketServer(
     }
     const rooms = [spectatorRoom(tableId), ...humanSeats.map((s) => seatRoom(tableId, s.seatId))];
     for (const room of rooms) io.to(room).emit('table-closed', { reason });
-    await registry.close(tableId);
+    await registry.close(tableId, keepOpen);
     clearPracticeAbandonTimer(tableId);
     practiceOwnerSockets.delete(tableId);
   }
@@ -812,7 +814,7 @@ export function attachSocketServer(
       const table = currentTable();
       if (!table) return;
       if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can terminate a table.');
-      void closeTableWithNotice(table.tableId, 'Table terminated by the owner.').then(() => callback?.());
+      void terminateTable(table.tableId).then(() => callback?.());
     });
 
     socket.on('reset-table', (callback?: () => void): void => {
@@ -1037,9 +1039,16 @@ export function attachSocketServer(
    */
   async function closeAllTables(): Promise<void> {
     for (const { tableId } of registry.list()) {
-      await closeTableWithNotice(tableId, 'The server is restarting for an update. Your chips are back in your balance.', 'server restarted for an update');
+      // keepOpen: the table itself comes back on the next boot (see index.ts) — only the game in progress ends.
+      await closeTableWithNotice(tableId, 'The server is restarting for an update. Your chips are back in your balance.', 'server restarted for an update', true);
     }
   }
 
-  return { io, registry, closeAllTables, closePracticeTableOf, watchPracticeTable };
+  async function terminateTable(tableId: string): Promise<boolean> {
+    if (!registry.get(tableId)) return false;
+    await closeTableWithNotice(tableId, 'Table terminated by the owner.');
+    return true;
+  }
+
+  return { io, registry, closeAllTables, terminateTable, closePracticeTableOf, watchPracticeTable };
 }

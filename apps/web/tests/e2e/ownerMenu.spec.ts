@@ -111,7 +111,7 @@ test('deleting a seat mid-hand removes it for everyone; adding a seat brings it 
 test('a $0.10/$0.20 table with a $10 buy-in can be created and played from the lobby', async ({ page }) => {
   await adminLogin(page);
   await page.getByRole('button', { name: 'Create table' }).click();
-  await page.getByLabel('Name').fill('Dime Game');
+  await page.getByLabel('Name', { exact: true }).fill('Dime Game');
   await page.getByLabel('Small blind').fill('0.10');
   await page.getByLabel('Big blind').fill('0.20');
   await expect(page.getByLabel('Min buy-in ($)')).toHaveValue('8');

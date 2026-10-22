@@ -178,6 +178,14 @@ export class HybridStore implements Store {
     return this.real.deleteUser(userId);
   }
 
+  getSetting(key: string): Promise<string | null> {
+    return this.real.getSetting(key);
+  }
+
+  setSetting(key: string, value: string): Promise<void> {
+    return this.real.setSetting(key, value);
+  }
+
   // --- Sessions ---
 
   async createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {

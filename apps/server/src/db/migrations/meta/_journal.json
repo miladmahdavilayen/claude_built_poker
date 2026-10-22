@@ -71,6 +71,13 @@
       "when": 1792400000000,
       "tag": "0009_carried_balance",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792500000000,
+      "tag": "0010_app_settings",
+      "breakpoints": true
     }
   ]
 }

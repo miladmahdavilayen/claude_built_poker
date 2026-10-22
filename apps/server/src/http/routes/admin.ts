@@ -10,12 +10,18 @@ import {
 import { normalizeEmailKey } from '../../auth/authService.js';
 import { generateSignupKey, hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
 import type { SignupKeyRecord } from '../../db/store.js';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
 import { requireAdmin } from '../middleware.js';
 
-export function registerAdminRoutes(app: FastifyInstance, store: Store, registry: TableRegistry, closePracticeTableOf: (userId: string) => Promise<void>): void {
+export function registerAdminRoutes(
+  app: FastifyInstance,
+  store: Store,
+  registry: TableRegistry,
+  closePracticeTableOf: (userId: string) => Promise<void>,
+  terminateTable: (tableId: string) => Promise<boolean>,
+): void {
   app.get('/admin/tables', { preHandler: requireAdmin }, () => {
     return { tables: registry.list() };
   });
@@ -150,11 +156,17 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
     return { ok: true, reason, chips: result.chips };
   });
 
-  app.post('/admin/tables/:tableId/close', { preHandler: requireAdmin }, async (req) => {
+  // Deleting a table from the lobby (swipe left) is terminating it: everyone
+  // seated is cashed out and told, spectators are sent to the lobby, the
+  // game's books close, and it stays gone — including after a restart (it's
+  // marked closed, and index.ts only restores open tables).
+  const terminate = async (req: FastifyRequest, reply: FastifyReply): Promise<{ ok: true } | FastifyReply> => {
     const { tableId } = req.params as { tableId: string };
-    await registry.close(tableId);
+    if (!(await terminateTable(tableId))) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
     return { ok: true };
-  });
+  };
+  app.delete('/admin/tables/:tableId', { preHandler: requireAdmin }, terminate);
+  app.post('/admin/tables/:tableId/close', { preHandler: requireAdmin }, terminate);
 
   // --- Access keys: one per new player (see auth/signupKeys.ts). ---
 

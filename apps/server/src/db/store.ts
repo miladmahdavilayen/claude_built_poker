@@ -266,6 +266,9 @@ export interface Store {
   /** Permanently removes a user row. Every other table's foreign key to `users` is `onDelete: 'set null'` (sessions cascade instead) — hand history, chat, and past ledger entries survive with `userId: null`, exactly like a guest table wipe already leaves them. See DECISIONS.md. */
   deleteUser(userId: string): Promise<void>;
 
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
+
   createSession(userId: string, tokenHash: string, expiresAt: Date): Promise<void>;
   findSessionByTokenHash(tokenHash: string): Promise<{ userId: string; expiresAt: Date } | null>;
   touchSession(tokenHash: string): Promise<void>;
@@ -286,6 +289,7 @@ export interface Store {
    * never reaches Postgres at all.
    */
   createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null; ephemeral?: boolean }): Promise<TableRecord>;
+  /** Every table still open (not closed or deleted), oldest first — what the server restores on boot. */
   listTables(): Promise<TableRecord[]>;
   getTable(id: string): Promise<TableRecord | null>;
   closeTable(id: string): Promise<void>;

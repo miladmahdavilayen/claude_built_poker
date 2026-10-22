@@ -60,7 +60,13 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null);
     signupKeyLockout.reset();
     inviteLockout.reset();
-    registerAdminRoutes(app, store, registry, closePracticeTableOf);
+    // The real one (socketServer.ts) also refunds and notifies everyone at the table.
+    const terminateTable = async (tableId: string): Promise<boolean> => {
+      if (!registry.get(tableId)) return false;
+      await registry.close(tableId);
+      return true;
+    };
+    registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable);
   });
 
   afterEach(async () => {
@@ -365,6 +371,41 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       await store.adjustUserChips(first.id, 10_000);
       await deleteMe(first.token);
       expect((await register('c')).chips).toBe(WELCOME_BONUS);
+    });
+  });
+
+  describe('tables: deleting from the lobby, and surviving a restart', () => {
+    it('the owner deletes a table (DELETE /admin/tables/:id): gone from the lobby and closed for good; nobody else can', async () => {
+      const table = await registry.createTable('Doomed', { ...SETTINGS_FOR_LIST }, null, null);
+      const player = await store.createGoogleAccount({ googleId: 'g-tbl', email: 'tbl@gmail.com', displayName: 'P', avatarUrl: null });
+      expect((await app.inject({ method: 'DELETE', url: `/admin/tables/${table.tableId}`, headers: auth(issueAccessToken(player)) })).statusCode).toBe(403);
+      expect(registry.get(table.tableId)).not.toBeNull();
+
+      const admin = await store.createAccount('tbl-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const token = issueAccessToken({ ...admin, role: 'admin' });
+      expect((await app.inject({ method: 'DELETE', url: `/admin/tables/${table.tableId}`, headers: auth(token) })).statusCode).toBe(200);
+      expect(registry.get(table.tableId)).toBeNull();
+      expect((await store.getTable(table.tableId))?.status).toBe('closed');
+      expect((await store.listTables()).map((t) => t.id)).not.toContain(table.tableId);
+      expect((await app.inject({ method: 'GET', url: '/tables' })).json<{ tables: { tableId: string }[] }>().tables.map((t) => t.tableId)).not.toContain(table.tableId);
+      expect((await app.inject({ method: 'DELETE', url: `/admin/tables/${table.tableId}`, headers: auth(token) })).statusCode).toBe(404);
+    });
+
+    it('a shutdown keeps a table open on record, and the next boot restores it as it was', async () => {
+      const table = await registry.createTable('Keeper', { ...SETTINGS_FOR_LIST, maxSeats: 4 }, 'owner-id', 'code123');
+      await registry.close(table.tableId, true);
+      expect(registry.get(table.tableId)).toBeNull();
+      const [record] = await store.listTables();
+      expect(record?.id).toBe(table.tableId);
+
+      const restored = registry.restore(record!);
+      expect(restored.tableId).toBe(table.tableId);
+      expect(restored.name).toBe('Keeper');
+      expect(restored.settings.maxSeats).toBe(4);
+      expect(restored.inviteCode).toBe('code123');
+      expect(restored.ownerId).toBe('owner-id');
+      expect(restored.seats.every((s) => s.userId === null)).toBe(true);
     });
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
 import { ApiError, isPracticeOnly, PRACTICE_STAKES, type PracticeStakes, type TableSummaryDto } from '../api.js';
@@ -6,6 +6,7 @@ import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
 import { AnimatedBackground } from '../components/AnimatedBackground.js';
 import { MoneyInput } from '../components/MoneyInput.js';
+import { SwipeToDelete } from '../components/SwipeToDelete.js';
 
 export function LobbyPage(): React.JSX.Element {
   const { user } = useAuth();
@@ -24,7 +25,28 @@ function TablesLobby(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoinPrivate, setShowJoinPrivate] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TableSummaryDto | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const isAdmin = user?.role === 'admin';
   const navigate = useNavigate();
+
+  const confirmDelete = (): void => {
+    if (!deleteTarget || !accessToken) return;
+    setDeleting(true);
+    api
+      .adminDeleteTable(deleteTarget.tableId, accessToken)
+      .then(() => {
+        setTables((prev) => prev.filter((t) => t.tableId !== deleteTarget.tableId));
+        setDeleteTarget(null);
+        setRefreshTick((n) => n + 1);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Failed to delete the table.');
+        setDeleteTarget(null);
+      })
+      .finally(() => setDeleting(false));
+  };
 
   useEffect(() => {
     const refresh = (): void => {
@@ -36,7 +58,7 @@ function TablesLobby(): React.JSX.Element {
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
-  }, [accessToken]);
+  }, [accessToken, refreshTick]);
 
   return (
     <div className="lobby-page">
@@ -81,35 +103,65 @@ function TablesLobby(): React.JSX.Element {
       </div>
 
       <div className="table-grid">
-        {tables.map((t) => (
-          <div className="table-card" key={t.tableId}>
-            <div className="table-card-top">
-              <h3 className="table-card-name">{t.name}</h3>
-              <span className="table-card-seats" title="Seats filled">
-                {t.seatsFilled}/{t.maxSeats}
-              </span>
-            </div>
-            <div className="table-card-stats">
-              <div className="table-card-stat">
-                <span className="stat-label">Stakes</span>
-                <span className="stat-value">
-                  {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
+        {tables.map((t) => {
+          const card = (
+            <div className="table-card">
+              <div className="table-card-top">
+                <h3 className="table-card-name">{t.name}</h3>
+                <span className="table-card-seats" title="Seats filled">
+                  {t.seatsFilled}/{t.maxSeats}
                 </span>
               </div>
-              <div className="table-card-stat">
-                <span className="stat-label">Buy-in</span>
-                <span className="stat-value">
-                  {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
-                </span>
+              <div className="table-card-stats">
+                <div className="table-card-stat">
+                  <span className="stat-label">Stakes</span>
+                  <span className="stat-value">
+                    {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
+                  </span>
+                </div>
+                <div className="table-card-stat">
+                  <span className="stat-label">Buy-in</span>
+                  <span className="stat-value">
+                    {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
+                  </span>
+                </div>
               </div>
+              <button type="button" className="btn-primary table-card-join" onClick={() => void navigate(`/table/${t.tableId}`)}>
+                Join table
+              </button>
             </div>
-            <button type="button" className="btn-primary table-card-join" onClick={() => void navigate(`/table/${t.tableId}`)}>
-              Join table
-            </button>
-          </div>
-        ))}
+          );
+          // The owner can swipe a table left to delete it (after confirming).
+          return isAdmin ? (
+            <SwipeToDelete key={t.tableId} label={t.name} onDelete={() => setDeleteTarget(t)}>
+              {card}
+            </SwipeToDelete>
+          ) : (
+            <Fragment key={t.tableId}>{card}</Fragment>
+          );
+        })}
         {tables.length === 0 && <div className="table-grid-empty">No tables open right now.</div>}
       </div>
+
+      {deleteTarget && (
+        <div className="modal-backdrop" onClick={() => !deleting && setDeleteTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete &ldquo;{deleteTarget.name}&rdquo;?</h3>
+            <p>
+              It&rsquo;s removed from the lobby for good. Anyone seated gets their chips back, and anyone watching is sent to the lobby.
+              {deleteTarget.seatsFilled > 0 && ` ${String(deleteTarget.seatsFilled)} ${deleteTarget.seatsFilled === 1 ? 'player is' : 'players are'} seated right now.`}
+            </p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button type="button" className="btn-owner-action btn-owner-danger" onClick={confirmDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete table'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showCreate && accessToken && <CreateTableModal onClose={() => setShowCreate(false)} accessToken={accessToken} />}
 

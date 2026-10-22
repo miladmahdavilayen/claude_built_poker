@@ -92,7 +92,7 @@ export interface CreateTableOptions {
 /** Creates a table from the lobby and lands on it. Returns the invite link when private, else null. */
 export async function createTable(page: Page, opts: CreateTableOptions): Promise<string | null> {
   await page.getByRole('button', { name: 'Create table' }).click();
-  await page.getByLabel('Name').fill(opts.name);
+  await page.getByLabel('Name', { exact: true }).fill(opts.name);
   await page.getByLabel('Small blind').fill(String(opts.smallBlind));
   await page.getByLabel('Big blind').fill(String(opts.bigBlind));
   await page.getByLabel('Max seats').fill(String(opts.maxSeats));

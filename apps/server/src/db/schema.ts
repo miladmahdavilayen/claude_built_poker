@@ -71,6 +71,13 @@ export const signupKeys = pgTable(
   (t) => [index('signup_keys_created_at_idx').on(t.createdAt)],
 );
 
+/** Small server-wide facts that must survive restarts — e.g. that the default tables were created once (see index.ts). */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const sessions = pgTable('sessions', {
   tokenHash: text('token_hash').primaryKey(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

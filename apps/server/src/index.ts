@@ -25,10 +25,9 @@ import { backfillGameReportSummaries, finishInterruptedGameReports } from './rep
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
- * Live tables only ever exist in this process's memory (see DECISIONS —
- * no horizontal scaling), so there's nothing for a DB seed script to
- * create here. Instead we spin up a couple of welcoming public tables
- * fresh on every boot, so a new self-host isn't a blank lobby.
+ * The welcoming public tables a new deployment starts with, so it isn't a
+ * blank lobby — created on the very first boot only (see openTables);
+ * after that they're ordinary tables the owner can delete.
  */
 async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger): Promise<void> {
   // All amounts in cents (see packages/shared/src/money.ts). Buy-ins run
@@ -62,6 +61,30 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
   await registry.createTable('Medium Stakes $10/$20', mediumStakes, null, null);
   await registry.createTable('Low Stakes $1/$2', lowStakes, null, null);
   log.info('Seeded 4 default public tables (heads-up high, high, medium, low stakes).');
+}
+
+/**
+ * Puts the lobby back the way it was. The very first boot creates the
+ * default tables (and records that it did); every boot after restores
+ * whichever tables were open when the server last stopped — so a table the
+ * owner deleted stays deleted, and tables the owner created survive a
+ * deploy. Before this, every boot created the four defaults afresh, and a
+ * deleted default table came back on the next deploy.
+ *
+ * The first boot also closes any table left marked open from before this
+ * existed (a crash, an old server), so they don't all come back at once.
+ */
+async function openTables(store: Store, registry: TableRegistry, log: FastifyBaseLogger): Promise<void> {
+  const SEEDED = 'default_tables_seeded';
+  if (await store.getSetting(SEEDED)) {
+    const open = await store.listTables();
+    for (const record of open) registry.restore(record);
+    log.info(`Restored ${String(open.length)} open table(s).`);
+    return;
+  }
+  for (const stale of await store.listTables()) await store.closeTable(stale.id);
+  if (process.env.SEED_DEFAULT_TABLES !== 'false') await seedDefaultTables(registry, log);
+  await store.setSetting(SEEDED, new Date().toISOString());
 }
 
 /**
@@ -182,19 +205,17 @@ async function main(): Promise<void> {
   registerFairnessRoutes(app, store);
   registerTestSeedRoutes(app, store);
 
-  const { io, registry, closeAllTables, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
+  const { io, registry, closeAllTables, terminateTable, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null);
   registerUserRoutes(app, store, closePracticeTableOf);
   registerTableRoutes(app, store, registry, watchPracticeTable);
-  registerAdminRoutes(app, store, registry, closePracticeTableOf);
+  registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable);
   registerReportRoutes(app, store, registry);
 
   await finishInterruptedGameReports(store, (msg) => app.log.info(msg));
   await backfillGameReportSummaries(store, (msg) => app.log.info(msg));
 
-  if (process.env.SEED_DEFAULT_TABLES !== 'false') {
-    await seedDefaultTables(registry, app.log);
-  }
+  await openTables(store, registry, app.log);
 
   await app.listen({ port, host });
   app.log.info(`pokerclause server listening on http://${host}:${String(port)} (LAN: find your machine's local IP and use that instead of ${host})`);

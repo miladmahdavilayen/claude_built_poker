@@ -64,6 +64,13 @@
       "when": 1792300000000,
       "tag": "0008_signup_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0009_carried_balance",
+      "breakpoints": true
     }
   ]
 }

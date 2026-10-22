@@ -206,10 +206,10 @@ quickstart above), regardless of storage backend, so this works out of
 the box without touching Postgres.
 
 Clicking **"Leave table"** genuinely leaves — the seat clears, its chips
-are refunded to your balance, and you're sent back to the lobby. If that
-leaves nobody human still seated, the table closes itself immediately
-(any spectator watching gets sent to the lobby too) — a table with only
-bots left in it, or nobody at all, has no reason to keep running.
+are refunded to your balance, and you're sent back to the lobby. The table
+itself stays in the lobby, even with nobody left at it, until the owner
+terminates it (a reset only empties its seats). The exception is a Google
+player's practice table, which ends — and is deleted — when they leave.
 
 ## Human player accounts
 
@@ -222,8 +222,9 @@ and vanish when they leave. A Google player's account and balance persist.
 - **$1,000 welcome bonus, once per person.** A new Google account starts
   with $1,000 of play money. The bonus is remembered by normalized email
   (and Google account) in `welcome_bonus_claims`, which survives account
-  deletion: delete the account and sign up again with the same email, and
-  the new account starts at $0. A Google account needs a verified email to
+  deletion. Deleting your own account keeps your balance there: sign up
+  again with the same Google account and you start with exactly what you
+  had — never a second bonus, and nothing lost but what you lost playing. A Google account needs a verified email to
   register.
 - **Practice tables only.** A Google player doesn't see the lobby's
   tables. They pick 1–4 computer opponents (so at most 5 seats), one of

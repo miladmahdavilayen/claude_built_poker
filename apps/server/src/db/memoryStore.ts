@@ -30,9 +30,8 @@ export class MemoryStore implements Store {
   private readonly tables = new Map<string, TableRecord>();
   private readonly hands = new Map<string, HandRow>();
   private readonly chat: ChatMessageRecord[] = [];
-  /** Never cleared by deleteUser — a claimed bonus outlives the account (see schema.ts's welcomeBonusClaims). */
-  private readonly welcomeBonusEmails = new Set<string>();
-  private readonly welcomeBonusGoogleIds = new Set<string>();
+  /** Never cleared by deleteUser — outlives the account, like schema.ts's welcomeBonusClaims. */
+  private readonly bonusClaims: { emailKey: string; googleId: string | null; carriedBalance: number | null }[] = [];
 
   async createGuestUser(displayName: string): Promise<UserRecord> {
     const user: UserRecord = {
@@ -191,11 +190,29 @@ export class MemoryStore implements Store {
     return Promise.resolve(updated);
   }
 
-  async claimWelcomeBonus(emailKey: string, googleId: string, _amount: number): Promise<boolean> {
-    if (this.welcomeBonusEmails.has(emailKey) || this.welcomeBonusGoogleIds.has(googleId)) return Promise.resolve(false);
-    this.welcomeBonusEmails.add(emailKey);
-    this.welcomeBonusGoogleIds.add(googleId);
-    return Promise.resolve(true);
+  private claimsFor(emailKey: string, googleId: string): { emailKey: string; googleId: string | null; carriedBalance: number | null }[] {
+    return this.bonusClaims.filter((c) => c.emailKey === emailKey || c.googleId === googleId);
+  }
+
+  async claimStartingBalance(emailKey: string, googleId: string, welcomeBonus: number): Promise<{ reason: 'welcome_bonus' | 'balance_restored'; amount: number }> {
+    const claims = this.claimsFor(emailKey, googleId);
+    if (claims.length === 0) {
+      this.bonusClaims.push({ emailKey, googleId, carriedBalance: null });
+      return Promise.resolve({ reason: 'welcome_bonus', amount: welcomeBonus });
+    }
+    let amount = 0;
+    for (const c of claims) {
+      amount += c.carriedBalance ?? 0;
+      c.carriedBalance = null;
+    }
+    return Promise.resolve({ reason: 'balance_restored', amount });
+  }
+
+  async keepBalanceForReturn(emailKey: string, googleId: string, balance: number): Promise<void> {
+    const claims = this.claimsFor(emailKey, googleId);
+    if (claims.length === 0) this.bonusClaims.push({ emailKey, googleId, carriedBalance: balance });
+    claims.forEach((c, i) => (c.carriedBalance = i === 0 ? balance : null));
+    return Promise.resolve();
   }
 
   async createGoogleAccountFromGuest(input: {

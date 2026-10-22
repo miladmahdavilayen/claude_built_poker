@@ -197,7 +197,7 @@ export function createTable(
 export interface LedgerEntryDto {
   id: string;
   amount: number;
-  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus';
+  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus' | 'balance_restored';
   tableId: string | null;
   createdAt: string;
 }

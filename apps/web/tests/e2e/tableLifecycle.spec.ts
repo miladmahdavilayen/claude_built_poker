@@ -36,7 +36,7 @@ test('leaving a table navigates back to the lobby and genuinely frees the seat f
   await ctxCarol.close();
 });
 
-test('a table auto-terminates once the last human leaves, and any watching spectator is sent back to the lobby', async ({ browser }) => {
+test('a table stays in the lobby when the last human leaves — a watching spectator stays put too', async ({ browser }) => {
   const ctxA = await browser.newContext();
   const ctxSpec = await browser.newContext();
   const pageA = await ctxA.newPage();
@@ -57,8 +57,11 @@ test('a table auto-terminates once the last human leaves, and any watching spect
 
   await pageA.getByRole('button', { name: 'Leave table' }).click();
   await expect(pageA).toHaveURL(/\/lobby/);
-  // The spectator gets swept back to the lobby too, once the table closes.
-  await expect(pageSpec).toHaveURL(/\/lobby/, { timeout: 10_000 });
+  // Still listed, and the seat is free again.
+  await expect(pageA.locator('.table-card', { hasText: 'Auto Terminate Table' })).toBeVisible();
+  await expect(pageSpec.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'empty');
+  await pageSpec.waitForTimeout(1500);
+  await expect(pageSpec).toHaveURL(tableUrl);
 
   await ctxA.close();
   await ctxSpec.close();

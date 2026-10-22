@@ -95,8 +95,12 @@ export class HybridStore implements Store {
     return this.real.acceptWaiver(userId, version, initials); // only Google players are asked
   }
 
-  claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean> {
-    return this.real.claimWelcomeBonus(emailKey, googleId, amount);
+  claimStartingBalance(emailKey: string, googleId: string, welcomeBonus: number): Promise<{ reason: 'welcome_bonus' | 'balance_restored'; amount: number }> {
+    return this.real.claimStartingBalance(emailKey, googleId, welcomeBonus);
+  }
+
+  keepBalanceForReturn(emailKey: string, googleId: string, balance: number): Promise<void> {
+    return this.real.keepBalanceForReturn(emailKey, googleId, balance); // only Google accounts, never a guest
   }
 
   createGoogleAccountFromGuest(input: {

@@ -74,7 +74,7 @@ test('profile page shows only registration info, and never offers to delete the 
   await expect(page.getByRole('button', { name: 'Delete my account' })).toHaveCount(0);
 });
 
-test('a Google player: $1,000 welcome bonus, a bots-only table of the size they pick, deleted when they leave; delete account and re-register gets no second bonus', async ({ page }) => {
+test('a Google player: $1,000 welcome bonus, a bots-only table of the size they pick, deleted when they leave; delete account and re-register gets their balance back', async ({ page }) => {
   const email = `e2e.player.${String(Date.now())}@gmail.com`;
   await googlePlayerLogin(page, email, 'Polly');
   await expect(page.getByTestId('lobby-balance')).toHaveText('$1,000');
@@ -118,10 +118,11 @@ test('a Google player: $1,000 welcome bonus, a bots-only table of the size they 
   // Account gone: this browser no longer greets them as a member.
   await expect(page.getByLabel('Access key')).toBeVisible();
 
-  // Same person, same email (Gmail ignores dots and case) — no second bonus.
+  // Same person, same email (Gmail ignores dots and case): their $1,000 is
+  // back — what they had when they deleted — and it isn't a second bonus.
   await googlePlayerLogin(page, email.replace('e2e.', 'E2E'), 'Polly Again');
-  await expect(page.getByTestId('lobby-balance')).toHaveText('$0');
-  await expect(page.getByRole('button', { name: 'Start game' })).toBeDisabled();
+  await expect(page.getByTestId('lobby-balance')).toHaveText('$1,000');
+  await expect(page.getByRole('button', { name: 'Start game' })).toBeEnabled();
 });
 
 // A guest is never persisted at all anymore (see HybridStore /

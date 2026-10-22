@@ -82,7 +82,7 @@ describe('authService', () => {
       expect(second.user.chips).toBe(WELCOME_BONUS);
     });
 
-    it('never grants the bonus twice to the same email: delete the account, register again, start at $0', async () => {
+    it('never grants the bonus twice to the same email: an account removed without keeping its balance (the admin deleting it) comes back at $0', async () => {
       const first = await loginOrRegisterWithGoogle(store, google('g-3', 'c@gmail.com'), open);
       await store.adjustUserChips(first.user.id, -WELCOME_BONUS); // lost it all
       await store.deleteUser(first.user.id);

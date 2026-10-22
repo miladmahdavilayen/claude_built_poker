@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { REFRESH_COOKIE_NAME } from '../../auth/session.js';
 import type { Store } from '../../db/store.js';
 import { requireAuth } from '../middleware.js';
+import { normalizeEmailKey } from '../../auth/authService.js';
 import { publicUser } from './auth.js';
 
 /**
@@ -44,15 +45,20 @@ export function registerUserRoutes(app: FastifyInstance, store: Store, closePrac
   // deployment, whose loss would be far more disruptive than a normal
   // player's — so this is scoped to a signed-in, non-guest, non-admin
   // account only. Their practice table (if open) closes first, so its
-  // stack lands back in the balance being deleted rather than nowhere.
-  // The welcome-bonus claim is NOT deleted — see schema.ts's
-  // welcomeBonusClaims. See DECISIONS.md.
+  // stack is back in their balance — which is then kept (see schema.ts's
+  // welcomeBonusClaims) and handed back if they register again: deleting
+  // an account loses nothing but what was already lost at the tables, and
+  // never earns a second welcome bonus. See DECISIONS.md.
   app.delete('/users/me', { preHandler: requireAuth }, async (req, reply) => {
     const user = await store.findUserById(req.userId!);
     if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
     if (user.isGuest) return reply.code(400).send({ code: 'GUEST_ACCOUNT', message: 'Guest sessions have nothing to delete — just leave the table.' });
     if (user.role === 'admin') return reply.code(400).send({ code: 'CANNOT_DELETE_ADMIN', message: 'The admin account cannot be deleted this way.' });
     await closePracticeTableOf(user.id);
+    if (user.googleId && user.email) {
+      const refunded = await store.findUserById(user.id);
+      await store.keepBalanceForReturn(normalizeEmailKey(user.email), user.googleId, refunded?.chips ?? user.chips);
+    }
     await store.deleteUser(user.id);
     reply.clearCookie(REFRESH_COOKIE_NAME, { path: '/' });
     return { ok: true };

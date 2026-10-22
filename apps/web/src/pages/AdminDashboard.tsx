@@ -15,6 +15,7 @@ const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
   rake: 'Rake',
   admin_adjust: 'Admin adjustment',
   welcome_bonus: 'Welcome bonus',
+  balance_restored: 'Balance restored (re-registered)',
 };
 
 /**

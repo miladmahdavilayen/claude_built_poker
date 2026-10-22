@@ -174,8 +174,8 @@ export function attachSocketServer(
    * their own, and moves their socket to spectating so it keeps getting
    * updates (see evictSeatToSpectator). Room moves happen synchronously,
    * before the first await, so they're in place before any broadcast that
-   * follows. Closes the table if that removed its last human, same rule
-   * as everyone leaving.
+   * follows. A practice table closes if that removed its player; a real
+   * table stays open, empty or not (see 'leave-table').
    */
   async function settleVacatedSeats(table: LiveTable, vacated: readonly VacatedSeat[]): Promise<void> {
     for (const v of vacated) evictSeatToSpectator(io, table.tableId, v.seatId);
@@ -187,7 +187,7 @@ export function attachSocketServer(
         { userId: null, isHouse: true, amount: -v.refund, reason: 'cash_out', tableId: table.tableId },
       ]);
     }
-    if (vacated.some((v) => v.userId) && !table.seats.some((s) => s.userId !== null)) {
+    if (table.isPractice && vacated.some((v) => v.userId) && !table.seats.some((s) => s.userId !== null)) {
       await closeTableWithNotice(table.tableId, 'All players left.');
     }
   }
@@ -788,8 +788,11 @@ export function attachSocketServer(
               { userId: null, isHouse: true, amount: -result.stack, reason: 'cash_out', tableId: table.tableId },
             ]);
           }
-          const hasHuman = table.seats.some((s) => s.userId !== null);
-          if (!hasHuman) {
+          // Only a practice table ends when its player leaves (and is
+          // deleted). Every real table — the default ones above all — stays
+          // in the lobby, empty or not, until the owner terminates it. With
+          // no human seated, no hand can start, so leftover bots just wait.
+          if (table.isPractice && !table.seats.some((s) => s.userId !== null)) {
             await closeTableWithNotice(table.tableId, 'All players left.');
           } else {
             broadcastTable(table);

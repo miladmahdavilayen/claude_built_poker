@@ -207,15 +207,44 @@ export class DrizzleStore implements Store {
     return toUserRecord(row);
   }
 
-  async claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean> {
+  async claimStartingBalance(emailKey: string, googleId: string, welcomeBonus: number): Promise<{ reason: 'welcome_bonus' | 'balance_restored'; amount: number }> {
     // Either unique column (email key or Google id) already present means
-    // it was claimed before: the insert is skipped and nothing comes back.
+    // this person has been here before: the insert is skipped, nothing
+    // comes back, and they get what their deleted account kept instead.
     const inserted = await this.db
       .insert(schema.welcomeBonusClaims)
-      .values({ emailKey, googleId, amount })
+      .values({ emailKey, googleId, amount: welcomeBonus })
       .onConflictDoNothing()
       .returning({ emailKey: schema.welcomeBonusClaims.emailKey });
-    return inserted.length > 0;
+    if (inserted.length > 0) return { reason: 'welcome_bonus', amount: welcomeBonus };
+    // Read-and-clear in one statement, so it's handed over exactly once.
+    const kept = await this.db.execute<{ carried: number | null }>(sql`
+      UPDATE welcome_bonus_claims c SET carried_balance = NULL
+      FROM (SELECT email_key, carried_balance FROM welcome_bonus_claims
+            WHERE (email_key = ${emailKey} OR google_id = ${googleId}) AND carried_balance IS NOT NULL FOR UPDATE) old
+      WHERE c.email_key = old.email_key
+      RETURNING old.carried_balance AS carried`);
+    const amount = kept.rows.reduce((sum, r) => sum + Number(r.carried ?? 0), 0);
+    return { reason: 'balance_restored', amount };
+  }
+
+  async keepBalanceForReturn(emailKey: string, googleId: string, balance: number): Promise<void> {
+    const c = schema.welcomeBonusClaims;
+    await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select({ emailKey: c.emailKey })
+        .from(c)
+        .where(or(eq(c.emailKey, emailKey), eq(c.googleId, googleId)))
+        .for('update');
+      if (rows.length === 0) {
+        // An account from before the welcome bonus: no row yet. amount 0 — it never got one.
+        await tx.insert(c).values({ emailKey, googleId, amount: 0, carriedBalance: balance });
+        return;
+      }
+      for (const [i, row] of rows.entries()) {
+        await tx.update(c).set({ carriedBalance: i === 0 ? balance : null }).where(eq(c.emailKey, row.emailKey));
+      }
+    });
   }
 
   async createGoogleAccountFromGuest(input: {

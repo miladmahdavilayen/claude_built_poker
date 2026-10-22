@@ -42,7 +42,7 @@ export interface SignupKeyRecord {
   revokedAt: Date | null;
 }
 
-export type LedgerReason = 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus';
+export type LedgerReason = 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus' | 'balance_restored';
 
 export interface TableRecord {
   id: string;
@@ -209,11 +209,16 @@ export interface Store {
   /** Stamps a Google sign-in on an existing account: last sign-in time, and the current profile photo. */
   recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord>;
   /**
-   * Records that the welcome bonus has been granted to this (normalized)
-   * email and Google account. Returns false, recording nothing, if either
-   * one has ever claimed it before — even on an account deleted since.
+   * What a newly registered Google account starts with. The first time this
+   * (normalized) email and Google account are ever seen: the welcome bonus,
+   * recorded so it's never granted twice. After that: whatever balance the
+   * person's deleted account was keeping for them (see keepBalanceForReturn),
+   * handed over once — or 0 if there is none. Atomic: two registrations
+   * racing can't both collect.
    */
-  claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean>;
+  claimStartingBalance(emailKey: string, googleId: string, welcomeBonus: number): Promise<{ reason: 'welcome_bonus' | 'balance_restored'; amount: number }>;
+  /** Keeps a deleting account's balance for when the same person registers again (replacing anything kept before). */
+  keepBalanceForReturn(emailKey: string, googleId: string, balance: number): Promise<void>;
   createSignupKey(input: { keyHash: string; hint: string; label: string; email: string | null; emailKey: string | null; createdBy: string; expiresAt: Date }): Promise<SignupKeyRecord>;
   /** Newest first. */
   listSignupKeys(): Promise<SignupKeyRecord[]>;

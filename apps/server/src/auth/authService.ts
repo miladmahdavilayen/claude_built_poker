@@ -88,9 +88,10 @@ export type RegistrationGate = { signupKey: string | undefined } | 'open';
  *
  * A new account needs a verified email, and gets the WELCOME_BONUS — but
  * only the first time that email (or that Google account) ever registers.
- * The claim is kept in its own table that outlives the account, so
- * deleting an account and signing up again starts the new one at $0. See
- * DECISIONS.md.
+ * After that, it starts with whatever the person's deleted account had
+ * when they deleted it (see DELETE /users/me): deleting loses nothing but
+ * what was already lost at the tables, and never earns a second bonus.
+ * See DECISIONS.md.
  */
 export async function loginOrRegisterWithGoogle(store: Store, profile: GoogleProfile, gate: RegistrationGate): Promise<AuthResult> {
   const existing = await store.findUserByGoogleId(profile.googleId);
@@ -118,12 +119,12 @@ export async function loginOrRegisterWithGoogle(store: Store, profile: GooglePro
     avatarUrl: profile.avatarUrl,
   });
   if (keyId) await store.attachSignupKeyUser(keyId, created.id);
-  const firstTime = await store.claimWelcomeBonus(normalizeEmailKey(profile.email), profile.googleId, WELCOME_BONUS);
-  if (!firstTime) return buildAuthResult(store, created);
-  const funded = await store.adjustUserChips(created.id, WELCOME_BONUS);
+  const start = await store.claimStartingBalance(normalizeEmailKey(profile.email), profile.googleId, WELCOME_BONUS);
+  if (start.amount <= 0) return buildAuthResult(store, created);
+  const funded = await store.adjustUserChips(created.id, start.amount);
   await store.recordLedgerEntries([
-    { userId: created.id, isHouse: false, amount: WELCOME_BONUS, reason: 'welcome_bonus' },
-    { userId: null, isHouse: true, amount: -WELCOME_BONUS, reason: 'welcome_bonus' },
+    { userId: created.id, isHouse: false, amount: start.amount, reason: start.reason },
+    { userId: null, isHouse: true, amount: -start.amount, reason: start.reason },
   ]);
   return buildAuthResult(store, funded);
 }

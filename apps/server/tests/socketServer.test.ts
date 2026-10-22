@@ -397,7 +397,7 @@ describe('socketServer: live signaling and access control', () => {
     aliceSocket.close();
   });
 
-  it('closes the table automatically once the last human leaves, notifying any remaining spectator', async () => {
+  it('a real table stays open when its last human leaves — or is removed — or it is reset; only terminating ends it', async () => {
     const alice = await makeAdminUser('Alice'); // owner-only take-seat — irrelevant to what this test checks
     const eve = await makeUser('Eve'); // never takes a seat — stays a spectator
     const table = await registry.createTable('Auto Close Table', SETTINGS, null, null);
@@ -413,10 +413,27 @@ describe('socketServer: live signaling and access control', () => {
     aliceSocket.emit('take-seat', { tableId: table.tableId, seatId: 0, buyIn: 100 });
     await seatedPromise;
 
-    const eveSeesClose = waitFor<{ reason: string }>(eveSocket, 'table-closed');
+    let closed = false;
+    eveSocket.on('table-closed', () => (closed = true));
     await emitWithAck(aliceSocket, 'leave-table');
-    const closeNotice = await eveSeesClose;
-    expect(closeNotice.reason).toMatch(/all players left/i);
+    expect(table.seatOfUser(alice.userId)).toBeNull();
+    expect(registry.get(table.tableId)).not.toBeNull();
+    expect(registry.list().map((t) => t.tableId)).toContain(table.tableId);
+
+    // The owner removing the last player, and a reset, don't end it either.
+    const reseated = waitFor(aliceSocket, 'state');
+    aliceSocket.emit('take-seat', { tableId: table.tableId, seatId: 1, buyIn: 100 });
+    await reseated;
+    await new Promise<void>((resolve) => aliceSocket.emit('remove-player', { seatId: 1 }, () => resolve()));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(registry.get(table.tableId)).not.toBeNull();
+    await emitWithAck(aliceSocket, 'reset-table');
+    expect(registry.get(table.tableId)).not.toBeNull();
+    expect(closed).toBe(false);
+
+    const eveSeesClose = waitFor<{ reason: string }>(eveSocket, 'table-closed');
+    await emitWithAck(aliceSocket, 'terminate-table');
+    expect((await eveSeesClose).reason).toMatch(/terminated/i);
     expect(registry.get(table.tableId)).toBeNull();
 
     aliceSocket.close();

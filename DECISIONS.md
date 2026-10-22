@@ -2148,3 +2148,30 @@ A guest session now requires a live invite token: before, anyone could
 mint unlimited in-memory guest sessions. Request bodies are capped at
 64 KB (was Fastify's 1 MB). The existing socket-per-IP cap, chat/action
 rate limits and Cloudflare's bot protection stay as they were.
+
+## Deleting an account keeps its balance for the player's return
+
+Supersedes "Delete and re-register with the same email … → $0" above. A
+player deleting their own account (DELETE /users/me) loses nothing but what
+they already lost at the tables: their practice table (if open) is closed
+and refunded first, then the balance is kept in `welcome_bonus_claims.
+carried_balance` (migration 0009) — keyed by normalized email and Google id,
+outliving the account. Registering again (with a new access key) hands it
+back once, ledgered as `balance_restored`, instead of $0; it's never a
+second welcome bonus. Never played → $1,000 back; lost $400 → $600 back.
+An account from before the welcome bonus gets a claims row (amount 0) at
+deletion, so it, too, comes back with exactly what it had.
+
+The owner deleting an account from the admin dashboard does NOT keep the
+balance — that's a removal, and the money goes with it.
+
+## Real tables stay until the owner terminates them
+
+A table used to close itself the moment its last human left (or the owner
+removed them), which took the default tables out of the lobby until the
+next deploy re-seeded them. Now only a practice table ends that way (and
+is deleted). Every real table — the defaults and the owner's own — stays
+listed, empty or not, through leaves, removals and resets; only
+"Terminate table" (or a server restart, which closes everything and
+re-seeds the defaults) ends one. An empty table costs nothing: no hand can
+start without a seated human, so any bots left behind just wait.

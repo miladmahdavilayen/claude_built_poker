@@ -86,7 +86,8 @@ export function ProfilePage(): React.JSX.Element {
         <div className="profile-danger-zone">
           <h3>Delete account</h3>
           <p className="profile-hint">
-            Permanently deletes your account and your balance. If you sign up again later with the same email, you won&rsquo;t get the welcome bonus a second time.
+            Permanently deletes your account. Your balance is kept: sign up again later with the same Google account and it&rsquo;ll be waiting for you
+            (there&rsquo;s no second welcome bonus).
           </p>
           <button type="button" className="btn-owner-danger btn-owner-action" onClick={() => setShowDeleteConfirm(true)}>
             Delete my account
@@ -98,7 +99,10 @@ export function ProfilePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => !deleting && setShowDeleteConfirm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Delete your account?</h3>
-            <p>This cannot be undone. You will lose your balance and be signed out immediately. Signing up again with the same email starts at $0.</p>
+            <p>
+              This cannot be undone, and you&rsquo;ll be signed out immediately. If you sign up again with the same Google account (you&rsquo;ll need a new
+              access key), you&rsquo;ll start with the balance you have now.
+            </p>
             {deleteError && <div className="error-banner">{deleteError}</div>}
             <label>
               Type &ldquo;{confirmationPhrase}&rdquo; to confirm

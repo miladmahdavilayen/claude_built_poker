@@ -7,6 +7,8 @@ import { MemoryStore } from '../src/db/memoryStore.js';
 import { TableRegistry } from '../src/game/tableRegistry.js';
 import { registerAdminRoutes } from '../src/http/routes/admin.js';
 import { registerAuthRoutes } from '../src/http/routes/auth.js';
+import { loginOrRegisterWithGoogle, WELCOME_BONUS } from '../src/auth/authService.js';
+import type { GoogleProfile } from '../src/auth/googleAuth.js';
 import { inviteLockout, signupKeyLockout } from '../src/security/lockouts.js';
 import { registerTableRoutes } from '../src/http/routes/tables.js';
 import { registerUserRoutes } from '../src/http/routes/users.js';
@@ -321,6 +323,48 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     it('ten invite codes that match nothing lock the address out', async () => {
       for (let i = 0; i < 10; i++) expect((await app.inject({ method: 'GET', url: `/invites/miss-${String(i)}` })).statusCode).toBe(404);
       expect((await app.inject({ method: 'GET', url: '/invites/miss-again' })).statusCode).toBe(429);
+    });
+  });
+
+  describe('deleting an account keeps its balance for when the player comes back', () => {
+    const profile = (n: string): GoogleProfile => ({ googleId: `g-del-${n}`, email: `del.${n}@gmail.com`, emailVerified: true, displayName: 'Del', avatarUrl: null });
+    const register = async (n: string): Promise<{ id: string; token: string; chips: number }> => {
+      const r = await loginOrRegisterWithGoogle(store, profile(n), 'open');
+      return { id: r.user.id, token: r.accessToken, chips: r.user.chips };
+    };
+    const deleteMe = (token: string) => app.inject({ method: 'DELETE', url: '/users/me', headers: auth(token) });
+
+    it('never played: deleting and registering again gives back the full $1,000 — not a second bonus', async () => {
+      const first = await register('a');
+      expect(first.chips).toBe(WELCOME_BONUS);
+      expect((await deleteMe(first.token)).statusCode).toBe(200);
+      const again = await register('a');
+      expect(again.id).not.toBe(first.id);
+      expect(again.chips).toBe(WELCOME_BONUS);
+      const [entry] = await store.ledgerEntriesForUser(again.id, 10);
+      expect(entry).toMatchObject({ reason: 'balance_restored', amount: WELCOME_BONUS });
+      // Kept once, handed back once: delete with $0, come back with $0.
+      await store.adjustUserChips(again.id, -WELCOME_BONUS);
+      await deleteMe(again.token);
+      expect((await register('a')).chips).toBe(0);
+    });
+
+    it('lost $400 at the tables: comes back with $600 — what they actually had', async () => {
+      const first = await register('b');
+      await store.adjustUserChips(first.id, -40_000);
+      await deleteMe(first.token);
+      expect((await register('b')).chips).toBe(60_000);
+    });
+
+    it('chips sitting on an open practice table come back too', async () => {
+      const first = await register('c');
+      await store.acceptWaiver(first.id, WAIVER_VERSION, 'DC');
+      const opened = await app.inject({ method: 'POST', url: '/tables/practice', headers: auth(first.token), payload: { bots: 1, stakes: 'low', buyIn: 10_000 } });
+      expect(opened.statusCode).toBe(201);
+      // The real closePracticeTableOf refunds the stack first; this test harness's stand-in doesn't, so refund it by hand.
+      await store.adjustUserChips(first.id, 10_000);
+      await deleteMe(first.token);
+      expect((await register('c')).chips).toBe(WELCOME_BONUS);
     });
   });
 

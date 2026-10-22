@@ -2944,3 +2944,38 @@ input[type='range']::-moz-range-thumb {
   color: var(--accent);
   font-size: 14px;
 }
+
+/* ------------------------------------------------------------------ */
+/* Page backgrounds (components/AnimatedBackground.tsx): a canvas the  */
+/* scene draws on, usually from a worker. The gradient underneath      */
+/* paints instantly, before the first frame arrives.                   */
+/* ------------------------------------------------------------------ */
+.bg-anim {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.bg-anim-landing {
+  background: radial-gradient(ellipse 85% 70% at 50% 42%, #13704a 0%, #0c4a31 45%, #05150f 100%);
+}
+.bg-anim-lobby {
+  background: linear-gradient(#1d1834, #100f1c 55%, #08090f);
+}
+.bg-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Let the background show faintly through the panels that sit on it. */
+.welcome-card,
+.waiver-card,
+.practice-card,
+.table-card {
+  background: rgba(24, 31, 42, 0.86);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+

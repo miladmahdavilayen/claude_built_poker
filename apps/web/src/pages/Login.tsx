@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
 import { isKnownMember, useAuth } from '../AuthContext.js';
+import { AnimatedBackground } from '../components/AnimatedBackground.js';
 import { GoogleSignInButton, useGoogleSignInAvailable } from '../components/GoogleSignInButton.js';
 
 // An owner-generated seat invite (`/table/:id?assign=:token`) sends an
@@ -123,7 +124,8 @@ export function LoginPage(): React.JSX.Element {
   if (mode === 'admin-login' || isInvitedPlayer) {
     return (
       <div className="page-centered">
-        <div className="auth-card">
+        <AnimatedBackground variant="landing" />
+        <div className="auth-card welcome-card">
           <h1>pokerclause</h1>
           <form
             onSubmit={(e) => {
@@ -165,6 +167,7 @@ export function LoginPage(): React.JSX.Element {
 
   return (
     <div className="page-centered">
+      <AnimatedBackground variant="landing" />
       <div className="auth-card welcome-card">
         <h1>pokerclause</h1>
 

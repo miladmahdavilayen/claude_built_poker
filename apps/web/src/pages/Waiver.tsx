@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../AuthContext.js';
+import { AnimatedBackground } from '../components/AnimatedBackground.js';
 
 /**
  * The friendly-game waiver every Google player agrees to, by typing their
@@ -30,6 +31,7 @@ export function WaiverPage(): React.JSX.Element {
 
   return (
     <div className="page-centered">
+      <AnimatedBackground variant="landing" />
       <div className="auth-card waiver-card">
         <h1>pokerclause</h1>
         <h2>Friendly game agreement</h2>

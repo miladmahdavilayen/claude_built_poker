@@ -4,11 +4,17 @@ import * as api from '../api.js';
 import { ApiError, isPracticeOnly, PRACTICE_STAKES, type PracticeStakes, type TableSummaryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
+import { AnimatedBackground } from '../components/AnimatedBackground.js';
 import { MoneyInput } from '../components/MoneyInput.js';
 
 export function LobbyPage(): React.JSX.Element {
   const { user } = useAuth();
-  return user && isPracticeOnly(user) ? <PracticeLobby /> : <TablesLobby />;
+  return (
+    <>
+      <AnimatedBackground variant="lobby" />
+      {user && isPracticeOnly(user) ? <PracticeLobby /> : <TablesLobby />}
+    </>
+  );
 }
 
 /** The admin's lobby — and an invited guest's: every public table, plus (for the admin) creating one. */

@@ -14,6 +14,7 @@ import type {
   UserRecord,
   GameReportPlayerRecord,
   GameReportRecord,
+  GoogleAccountInput,
 } from './store.js';
 
 type GameReportRow = Omit<typeof schema.gameReports.$inferSelect, 'reportYaml'>;
@@ -40,7 +41,9 @@ function toUserRecord(row: typeof schema.users.$inferSelect): UserRecord {
     avatarSeed: row.avatarSeed,
     clientSeed: row.clientSeed,
     chips: row.chips,
+    avatarUrl: row.avatarUrl,
     createdAt: row.createdAt,
+    lastLoginAt: row.lastLoginAt,
   };
 }
 
@@ -103,19 +106,38 @@ export class DrizzleStore implements Store {
     return row ? toUserRecord(row) : null;
   }
 
-  async createGoogleAccount(googleId: string, email: string | null, displayName: string): Promise<UserRecord> {
+  async createGoogleAccount(input: GoogleAccountInput): Promise<UserRecord> {
     const [row] = await this.db
       .insert(schema.users)
       .values({
-        email,
-        googleId,
-        displayName,
+        email: input.email,
+        googleId: input.googleId,
+        displayName: input.displayName,
+        avatarUrl: input.avatarUrl,
         isGuest: false,
         avatarSeed: randomBytes(8).toString('hex'),
         clientSeed: randomBytes(16).toString('hex'),
+        lastLoginAt: new Date(),
       })
       .returning();
     return toUserRecord(row!);
+  }
+
+  async recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord> {
+    const [row] = await this.db.update(schema.users).set({ avatarUrl, lastLoginAt: new Date() }).where(eq(schema.users.id, userId)).returning();
+    if (!row) throw new Error('USER_NOT_FOUND');
+    return toUserRecord(row);
+  }
+
+  async claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean> {
+    // Either unique column (email key or Google id) already present means
+    // it was claimed before: the insert is skipped and nothing comes back.
+    const inserted = await this.db
+      .insert(schema.welcomeBonusClaims)
+      .values({ emailKey, googleId, amount })
+      .onConflictDoNothing()
+      .returning({ emailKey: schema.welcomeBonusClaims.emailKey });
+    return inserted.length > 0;
   }
 
   async createGoogleAccountFromGuest(input: {
@@ -254,7 +276,7 @@ export class DrizzleStore implements Store {
     return Number(row?.total ?? 0);
   }
 
-  async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord> {
+  async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null; ephemeral?: boolean }): Promise<TableRecord> {
     const [row] = await this.db
       .insert(schema.tables)
       .values({ name: input.name, config: input.config, inviteCode: input.inviteCode, createdBy: input.createdBy })
@@ -274,6 +296,15 @@ export class DrizzleStore implements Store {
 
   async closeTable(id: string): Promise<void> {
     await this.db.update(schema.tables).set({ status: 'closed' }).where(eq(schema.tables.id, id));
+  }
+
+  async deleteTable(id: string): Promise<void> {
+    // Hands (and their seats/actions/results/RNG commits) and chat cascade
+    // from `tables`; game reports have no foreign key, so they go by hand.
+    await this.db.transaction(async (tx) => {
+      await tx.delete(schema.gameReports).where(eq(schema.gameReports.tableId, id));
+      await tx.delete(schema.tables).where(eq(schema.tables.id, id));
+    });
   }
 
   async saveGameReport(record: GameReportRecord): Promise<void> {

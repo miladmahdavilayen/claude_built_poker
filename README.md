@@ -81,13 +81,15 @@ JWT_SECRET=dev-secret-change-me PORT=4000 pnpm --filter @pokerclause/server dev
 VITE_API_URL=http://localhost:4000 pnpm --filter @pokerclause/web dev
 ```
 
-Open http://localhost:5173, and log in as the owner (**Log in** tab,
-`admin@pokerclause.local` / `admin12345`) — self-serve seating no longer
-exists (see "Owner-controlled chip economy" below), so the owner account
-is how you actually get a hand going: sit yourself down at a table, add
-a computer opponent to play against, or generate an invite link for
-someone else to join with. A "Play as guest" account can only join a
-table via a link the owner sends them.
+Open http://localhost:5173. The front page is a single **Sign in with
+Google** button (see "Sign in with Google" below for setup); every player
+registers that way and plays at their own table against computer players
+(see "Human player accounts"). The owner logs in through the small gear in
+the bottom-right corner (`admin@pokerclause.local` / `admin12345`) and
+keeps every owner control. To try the player flow locally without a Google
+OAuth client, run the server with `ALLOW_TEST_SEEDING=true` and the client
+with `VITE_DEV_GOOGLE_STUB=true`: the login page then shows a dev-only
+stand-in that signs in as any email you type.
 
 ## Running the test suites
 
@@ -169,11 +171,10 @@ DECISIONS.md.
 ## Owner-controlled chip economy
 
 Buy-ins, rebuys, and adding a computer player are **owner-only** for
-every table but one exception: a signed-in (non-guest) human can also
-self-serve seat themselves and add bots, but only on a table THEY
-created (see "Human player accounts" below) — never on anyone else's,
-and never a real human invite (that stays owner-only, full stop, on
-every table). Otherwise, only the account logged in as the owner
+every table but one exception: a Google player's own practice table,
+where they buy in from their own balance and add or remove bots (see
+"Human player accounts" below) — never a real human invite (that stays
+owner-only, full stop, and practice tables don't accept one at all). Otherwise, only the account logged in as the owner
 (`role: 'admin'` — see the quickstart above) can seat/top up/add a bot
 for anyone, human or bot. This isn't just a UI restriction; every one of
 these is enforced server-side.
@@ -209,32 +210,30 @@ bots left in it, or nobody at all, has no reason to keep running.
 
 ## Human player accounts
 
-A guest is never written to the database at all, not even briefly — their
-account, chips, seat, and chat all live only in the server process's
-memory for as long as they're connected, and vanish the moment they
-leave a table, the table resets/terminates, or the server restarts. A
-signed-in (Google) human is different: their account, balance, and hand
-history are the only human data that's ever persisted, and they carry
-over across sessions and devices.
+Players sign in with Google — that's the only way to register. A guest is
+someone the owner invited to a real table through an invite link; a guest
+is never written to the database at all, not even briefly — their
+account, chips, seat, and chat live only in the server process's memory
+and vanish when they leave. A Google player's account and balance persist.
 
-- **Starting balance is $0.** Unlike a guest's automatic $5,000, a fresh
-  Google sign-in starts with nothing — only the owner/admin can grant a
-  real player their first buy-in or a rebuy (via the admin dashboard, or
-  the in-table "Rebuy" flow once they're seated). This is deliberate: real
-  accounts persist, so their balance is something the owner actually
-  controls, not a self-serve grant.
-- **Self-serve practice tables.** A signed-in human can create their own
-  table (**"+ Create table"** in the lobby — hidden for guests, who'd have
-  nothing to do with one) and, on that ONE table only, seat themselves and
-  add computer players, all without the owner's involvement. They still
-  can never invite another real human to any table — that stays
-  owner-only everywhere, including their own table.
-- **Profile page** (`/profile`, linked from the lobby): balance, net
-  result from actually playing hands (separate from an owner-granted
-  buy-in — this is winnings minus losses, not the raw balance), a recent
-  transaction history, and a delete-account option (behind a
-  type-to-confirm prompt — permanent, and the owner/admin account is
-  exempt from it).
+- **$1,000 welcome bonus, once per person.** A new Google account starts
+  with $1,000 of play money. The bonus is remembered by normalized email
+  (and Google account) in `welcome_bonus_claims`, which survives account
+  deletion: delete the account and sign up again with the same email, and
+  the new account starts at $0. A Google account needs a verified email to
+  register.
+- **Practice tables only.** A Google player doesn't see the lobby's
+  tables. They pick 1–4 computer opponents (so at most 5 seats), one of
+  three stake levels, and a buy-in from their balance, and get a private
+  table of their own — no other human can join it, and no invite exists
+  for it. They can swap bots in and out; nothing else. When they leave
+  (or 2 minutes after their last connection drops), their chips go back to
+  their balance and every record of the table is deleted — it was never
+  written to the database in the first place (see DECISIONS.md).
+- **Profile page** (`/profile`): what they registered with — name,
+  email, Google photo, sign-in method, member-since — and a
+  delete-account option (behind a type-to-confirm prompt — permanent, and
+  the owner/admin account is exempt from it).
 - **Admin dashboard** (`/admin`, owner-only): search every account on the
   deployment (guests never show up here — they're never persisted), view
   a player's balance and history, rename them, adjust their chips (a
@@ -356,13 +355,12 @@ DNS setup, by encoding the IP in the hostname itself (e.g.
 
 ## Sign in with Google
 
-A human player has exactly two ways in: play as a guest, or sign in with
-Google — there is no public self-registration anymore (see "Human player
-accounts" below). Email/password login still exists, but only for the
-owner/admin account, reached via a small, deliberately unadvertised
-trigger in the corner of the login page, not a visible option. Guest play
-works with zero configuration regardless; Google sign-in is entirely
-absent (button doesn't render, nothing breaks) until you configure it:
+Google is how players register and sign in — the front page is just the
+Google button (see "Human player accounts" above). The only other ways in
+are an owner's invite link (which seats a guest at a real table) and the
+owner's own email/password login, reached via the small gear in the corner
+of the login page. Until you configure Google, the button doesn't render
+and the front page says sign-in isn't available:
 
 1. In the [Google Cloud Console credentials page](https://console.cloud.google.com/apis/credentials),
    create an **OAuth client ID** of type **Web application**.
@@ -376,13 +374,6 @@ absent (button doesn't render, nothing breaks) until you configure it:
 4. Restart the server, and rebuild the client if you're using the Docker
    path (`VITE_GOOGLE_CLIENT_ID` is baked in at build time, since the
    client ships as a static bundle).
-
-A guest can also link Google to their existing guest account later
-("Create account" in the lobby), which is the moment their account is
-actually persisted for the first time — same id, same current chip
-balance carry over, but any hands they played as a guest were never
-written to the database at all (see "Human player accounts" above), so
-there's no guest-era history to bring along.
 
 > This project's sandbox has no real Google Cloud project to test the
 > actual "click the button, sign in with a real Google account" flow

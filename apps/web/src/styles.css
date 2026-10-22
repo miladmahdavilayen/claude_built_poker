@@ -186,12 +186,34 @@ input[type='range']::-moz-range-thumb {
   margin-bottom: 16px;
   min-height: 1px;
 }
-.invite-only-note {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.4;
-  color: var(--muted);
+/* The front door: just the name, one line, and Sign in with Google. */
+.welcome-card {
   text-align: center;
+}
+.welcome-tagline {
+  margin: 0 0 24px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.welcome-unavailable {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.dev-google-stub {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius);
+  text-align: left;
+}
+.dev-google-stub-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 .auth-card form {
   display: flex;
@@ -468,6 +490,116 @@ input[type='range']::-moz-range-thumb {
   margin-top: 32px;
   padding-top: 16px;
   border-top: 1px solid var(--panel-border);
+}
+
+.lobby-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* A Google player's lobby: set up a game against computer players. */
+.practice-card {
+  max-width: 520px;
+  margin: 24px auto 0;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.practice-card h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.practice-card .profile-hint {
+  margin: -8px 0 0;
+  line-height: 1.5;
+}
+.practice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.practice-field input {
+  min-height: 44px;
+}
+.practice-field-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+.practice-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 8px;
+}
+.practice-choice {
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  font-weight: 600;
+}
+.practice-choice.selected {
+  border-color: var(--accent);
+  background: rgba(224, 167, 48, 0.12);
+  color: var(--accent-strong);
+}
+.practice-choice-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.practice-warning {
+  margin: 0;
+  font-size: 13px;
+  color: #ffb3ac;
+}
+.practice-start {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+/* Profile: what the player registered with. */
+.profile-card {
+  margin: 16px 0;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.profile-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.profile-fields {
+  flex: 1 1 240px;
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 20px;
+  font-size: 14px;
+}
+.profile-fields dt {
+  color: var(--muted);
+}
+.profile-fields dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .admin-search {

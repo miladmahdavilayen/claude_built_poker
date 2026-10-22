@@ -33,6 +33,10 @@ export interface TableSocketApi {
   tableClosedReason: string | null;
   /** Whether the viewer can self-serve seat themselves / add bots on the table they're currently joined to — true for the admin on any table, or for a signed-in non-guest human on the one table they created. Sent once per join-table (see socketServer.ts's canManageTable) since it never changes over the connection's lifetime. */
   canManageTable: boolean;
+  /** Seat layout and table settings (the table menu) — the admin anywhere, or a table's creator except on a practice table. Sent with canManageTable. */
+  canManageLayout: boolean;
+  /** A signed-in player's own temporary table against computer players — see apps/server's practiceTables.ts. */
+  isPractice: boolean;
   joinTable: (tableId: string, inviteCode?: string) => void;
   takeSeat: (tableId: string, seatId: number, buyIn: number, displayName?: string) => void;
   /** Resolves only once the server has actually cleared the seat — safe to navigate away (and tear down this socket) only after it resolves, not before. See DECISIONS.md. */
@@ -83,6 +87,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
   const [lastError, setLastError] = useState<ServerError | null>(null);
   const [tableClosedReason, setTableClosedReason] = useState<string | null>(null);
   const [canManageTable, setCanManageTable] = useState(false);
+  const [canManageLayout, setCanManageLayout] = useState(false);
+  const [isPractice, setIsPractice] = useState(false);
 
   useEffect(() => {
     if (!socket) {
@@ -92,6 +98,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       setLatestEvents([]);
       setTableClosedReason(null);
       setCanManageTable(false);
+      setCanManageLayout(false);
+      setIsPractice(false);
       return;
     }
 
@@ -106,7 +114,11 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
     const onChat = (message: ChatMessageRecord): void => setChat((prev) => [...prev, message].slice(-200));
     const onError = (err: ServerError): void => setLastError(err);
     const onTableClosed = (payload: { reason: string }): void => setTableClosedReason(payload.reason);
-    const onTablePermissions = (payload: { canManageTable: boolean }): void => setCanManageTable(payload.canManageTable);
+    const onTablePermissions = (payload: { canManageTable: boolean; canManageLayout: boolean; isPractice: boolean }): void => {
+      setCanManageTable(payload.canManageTable);
+      setCanManageLayout(payload.canManageLayout);
+      setIsPractice(payload.isPractice);
+    };
 
     socket.on('state', onState);
     socket.on('chat-history', onChatHistory);
@@ -134,6 +146,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       lastError,
       tableClosedReason,
       canManageTable,
+      canManageLayout,
+      isPractice,
       joinTable: (tableId, inviteCode) => socket?.emit('join-table', inviteCode ? { tableId, inviteCode } : { tableId }),
       takeSeat: (tableId, seatId, buyIn, displayName) =>
         socket?.emit('take-seat', displayName ? { tableId, seatId, buyIn, displayName } : { tableId, seatId, buyIn }),
@@ -175,6 +189,6 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       getInviteCode: () =>
         new Promise((resolve) => (socket ? socket.emit('get-invite-code', (r: { inviteCode: string | null }) => resolve(r.inviteCode)) : resolve(null))),
     }),
-    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable],
+    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice],
   );
 }

@@ -5,9 +5,11 @@ import {
   login,
   loginOrRegisterWithGoogle,
   register,
+  normalizeEmailKey,
   signUpGuest,
-  upgradeGuestWithGoogle,
+  WELCOME_BONUS,
 } from '../src/auth/authService.js';
+import type { GoogleProfile } from '../src/auth/googleAuth.js';
 import { verifyAccessToken } from '../src/auth/session.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
 
@@ -50,48 +52,67 @@ describe('authService', () => {
   });
 
   describe('Google sign-in', () => {
-    it('creates a new account on first Google sign-in, starting at 0 chips (no self-serve starting grant — only admin sets a real player\'s first buy-in)', async () => {
-      const result = await loginOrRegisterWithGoogle(store, { googleId: 'g-1', email: 'a@gmail.com', displayName: 'Ann' });
-      expect(result.user.isGuest).toBe(false);
-      expect(result.user.googleId).toBe('g-1');
-      expect(result.user.chips).toBe(0);
+    const google = (googleId: string, email: string | null, displayName = 'Player', emailVerified = true): GoogleProfile => ({
+      googleId,
+      email,
+      emailVerified,
+      displayName,
+      avatarUrl: 'https://example.com/photo.png',
     });
 
-    it('logs back in via the same Google id on a return visit, without creating a second account or granting more chips', async () => {
-      const first = await loginOrRegisterWithGoogle(store, { googleId: 'g-2', email: 'b@gmail.com', displayName: 'Bob' });
-      const second = await loginOrRegisterWithGoogle(store, { googleId: 'g-2', email: 'b@gmail.com', displayName: 'Bob' });
+    it('registers a new account on first sign-in with the $1,000 welcome bonus, ledgered', async () => {
+      const result = await loginOrRegisterWithGoogle(store, google('g-1', 'a@gmail.com', 'Ann'));
+      expect(result.user.isGuest).toBe(false);
+      expect(result.user.googleId).toBe('g-1');
+      expect(result.user.email).toBe('a@gmail.com');
+      expect(result.user.avatarUrl).toBe('https://example.com/photo.png');
+      expect(result.user.lastLoginAt).not.toBeNull();
+      expect(result.user.chips).toBe(WELCOME_BONUS);
+      expect(WELCOME_BONUS).toBe(100_000);
+      expect(await store.ledgerBalanceForUser(result.user.id)).toBe(WELCOME_BONUS);
+      expect((await store.ledgerConservationCheck()).balanced).toBe(true);
+    });
+
+    it('logs back in via the same Google id on a return visit, without a second account or a second bonus', async () => {
+      const first = await loginOrRegisterWithGoogle(store, google('g-2', 'b@gmail.com', 'Bob'));
+      const second = await loginOrRegisterWithGoogle(store, google('g-2', 'b@gmail.com', 'Bob'));
       expect(second.user.id).toBe(first.user.id);
-      expect(second.user.chips).toBe(0);
+      expect(second.user.chips).toBe(WELCOME_BONUS);
+    });
+
+    it('never grants the bonus twice to the same email: delete the account, register again, start at $0', async () => {
+      const first = await loginOrRegisterWithGoogle(store, google('g-3', 'c@gmail.com'));
+      await store.adjustUserChips(first.user.id, -WELCOME_BONUS); // lost it all
+      await store.deleteUser(first.user.id);
+      const again = await loginOrRegisterWithGoogle(store, google('g-3', 'c@gmail.com'));
+      expect(again.user.id).not.toBe(first.user.id);
+      expect(again.user.chips).toBe(0);
+    });
+
+    it('treats Gmail dots, +tags and letter case as the same email for the bonus', async () => {
+      const first = await loginOrRegisterWithGoogle(store, google('g-4', 'jane.doe@gmail.com'));
+      await store.deleteUser(first.user.id);
+      const again = await loginOrRegisterWithGoogle(store, google('g-4-new', 'JaneDoe+poker@googlemail.com'));
+      expect(again.user.chips).toBe(0);
+      expect(normalizeEmailKey('J.Doe+x@Gmail.com')).toBe('jdoe@gmail.com');
+      expect(normalizeEmailKey('j.doe+x@company.com')).toBe('j.doe@company.com');
+    });
+
+    it('never grants the bonus twice to the same Google account, even under a changed email', async () => {
+      const first = await loginOrRegisterWithGoogle(store, google('g-5', 'old@gmail.com'));
+      await store.deleteUser(first.user.id);
+      const again = await loginOrRegisterWithGoogle(store, google('g-5', 'new@gmail.com'));
+      expect(again.user.chips).toBe(0);
+    });
+
+    it('refuses to register a Google account without a verified email', async () => {
+      await expect(loginOrRegisterWithGoogle(store, google('g-6', 'x@gmail.com', 'X', false))).rejects.toThrow(AuthError);
+      await expect(loginOrRegisterWithGoogle(store, google('g-7', null))).rejects.toThrow(AuthError);
     });
 
     it('refuses Google sign-in when the email already belongs to a different (password) account', async () => {
       await register(store, 'dup@example.com', 'password123', 'Dup');
-      await expect(loginOrRegisterWithGoogle(store, { googleId: 'g-3', email: 'dup@example.com', displayName: 'Dup' })).rejects.toThrow(AuthError);
-    });
-
-    it('upgrading a guest via Google preserves their id and existing chip balance in place', async () => {
-      const guest = await signUpGuest(store, 'TempName');
-      await store.adjustUserChips(guest.user.id, 1000);
-      const upgraded = await upgradeGuestWithGoogle(store, guest.user.id, { googleId: 'g-4', email: 'temp@gmail.com', displayName: 'Temp' });
-      expect(upgraded.user.id).toBe(guest.user.id);
-      expect(upgraded.user.chips).toBe(STARTING_CHIP_GRANT + 1000);
-      expect(upgraded.user.isGuest).toBe(false);
-      expect(upgraded.user.googleId).toBe('g-4');
-    });
-
-    it('cannot upgrade a non-guest account via Google', async () => {
-      const result = await register(store, 'real2@example.com', 'password123', 'Real2');
-      await expect(
-        upgradeGuestWithGoogle(store, result.user.id, { googleId: 'g-5', email: 'x@gmail.com', displayName: 'X' }),
-      ).rejects.toThrow(AuthError);
-    });
-
-    it('refuses to link a Google account that is already linked to someone else', async () => {
-      await loginOrRegisterWithGoogle(store, { googleId: 'g-shared', email: 'shared@gmail.com', displayName: 'Shared' });
-      const guest = await signUpGuest(store, 'Guest2');
-      await expect(
-        upgradeGuestWithGoogle(store, guest.user.id, { googleId: 'g-shared', email: null, displayName: 'X' }),
-      ).rejects.toThrow(AuthError);
+      await expect(loginOrRegisterWithGoogle(store, google('g-8', 'dup@example.com'))).rejects.toThrow(AuthError);
     });
   });
 });

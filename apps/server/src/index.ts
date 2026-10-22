@@ -178,12 +178,12 @@ async function main(): Promise<void> {
   registerHealthRoute(app);
   registerAuthRoutes(app, store);
   registerFairnessRoutes(app, store);
-  registerUserRoutes(app, store);
   registerTestSeedRoutes(app, store);
 
-  const { io, registry, closeAllTables } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
-  registerTableRoutes(app, store, registry);
-  registerAdminRoutes(app, store, registry);
+  const { io, registry, closeAllTables, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
+  registerUserRoutes(app, store, closePracticeTableOf);
+  registerTableRoutes(app, store, registry, watchPracticeTable);
+  registerAdminRoutes(app, store, registry, closePracticeTableOf);
   registerReportRoutes(app, store, registry);
 
   await finishInterruptedGameReports(store, (msg) => app.log.info(msg));

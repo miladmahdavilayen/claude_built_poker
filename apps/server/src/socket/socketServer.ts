@@ -6,6 +6,7 @@ import {
   AssignSeatSchema,
   ChatMessageSchema,
   JoinTableSchema,
+  MAX_PRACTICE_BOTS,
   PlayerActionIntentSchema,
   projectEvent,
   RedeemAssignmentSchema,
@@ -91,10 +92,31 @@ function clientIp(socket: Socket): string {
   return socket.handshake.address;
 }
 
+/**
+ * How long a practice table waits for its player to come back after their
+ * last connection to it drops (a reload, a flaky network, a closed tab)
+ * before it closes — refunding their stack and deleting the table, exactly
+ * like leaving. Env-overridable for tests.
+ */
+function practiceAbandonMs(): number {
+  return Number(process.env.PRACTICE_ABANDON_MS ?? 120_000);
+}
+
+/** A signed-in player who isn't the admin: they play only at their own practice table (see game/practiceTables.ts). */
+function isPracticeOnly(data: SocketData): boolean {
+  return data.userId !== null && !data.isGuest && data.role !== 'admin';
+}
+
 export function attachSocketServer(
   httpServer: HttpServer,
   deps: { store: Store; corsOrigin: string; adminUserId: string },
-): { io: Server; registry: TableRegistry; closeAllTables: () => Promise<void> } {
+): {
+  io: Server;
+  registry: TableRegistry;
+  closeAllTables: () => Promise<void>;
+  closePracticeTableOf: (userId: string) => Promise<void>;
+  watchPracticeTable: (tableId: string) => void;
+} {
   const io = new Server(httpServer, {
     cors: { origin: deps.corsOrigin, credentials: true },
     // Nothing a client sends (actions, chat, WebRTC SDP/ICE) comes close
@@ -230,6 +252,57 @@ export function attachSocketServer(
     const rooms = [spectatorRoom(tableId), ...humanSeats.map((s) => seatRoom(tableId, s.seatId))];
     for (const room of rooms) io.to(room).emit('table-closed', { reason });
     await registry.close(tableId);
+    clearPracticeAbandonTimer(tableId);
+    practiceOwnerSockets.delete(tableId);
+  }
+
+  // --- Practice tables: the owner's open connections to their own table,
+  // and the timer that closes it once the last one has been gone a while
+  // (see practiceAbandonMs). ---
+  const practiceOwnerSockets = new Map<string, Set<string>>();
+  const practiceAbandonTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function clearPracticeAbandonTimer(tableId: string): void {
+    const timer = practiceAbandonTimers.get(tableId);
+    if (timer) clearTimeout(timer);
+    practiceAbandonTimers.delete(tableId);
+  }
+
+  function practiceOwnerConnected(tableId: string, socketId: string): void {
+    clearPracticeAbandonTimer(tableId);
+    const sockets = practiceOwnerSockets.get(tableId) ?? new Set<string>();
+    sockets.add(socketId);
+    practiceOwnerSockets.set(tableId, sockets);
+  }
+
+  function practiceOwnerDisconnected(tableId: string, socketId: string): void {
+    practiceOwnerSockets.get(tableId)?.delete(socketId);
+    watchPracticeTable(tableId);
+  }
+
+  /**
+   * Starts the abandon countdown unless the owner is connected to the
+   * table right now. Also called the moment a practice table opens (see
+   * POST /tables/practice), so one whose player never arrives — the tab
+   * closed before the page connected — doesn't sit there forever holding
+   * their buy-in.
+   */
+  function watchPracticeTable(tableId: string): void {
+    if ((practiceOwnerSockets.get(tableId)?.size ?? 0) > 0) return;
+    clearPracticeAbandonTimer(tableId);
+    const timer = setTimeout(() => {
+      practiceAbandonTimers.delete(tableId);
+      if ((practiceOwnerSockets.get(tableId)?.size ?? 0) > 0) return;
+      void closeTableWithNotice(tableId, 'Your table closed because you were away. Your chips are back in your balance.', 'the player left the table');
+    }, practiceAbandonMs());
+    timer.unref();
+    practiceAbandonTimers.set(tableId, timer);
+  }
+
+  /** Closes a player's practice table, if they have one — refunding their stack and deleting it. Used before their account is deleted. */
+  async function closePracticeTableOf(userId: string): Promise<void> {
+    const table = registry.practiceTableOf(userId);
+    if (table) await closeTableWithNotice(table.tableId, 'This account was deleted.', 'the player deleted their account');
   }
 
   function broadcastTable(table: LiveTable): void {
@@ -255,6 +328,18 @@ export function attachSocketServer(
   function canManageTable(table: LiveTable, data: SocketData): boolean {
     if (data.role === 'admin') return true;
     return data.userId !== null && !data.isGuest && table.ownerId !== null && table.ownerId === data.userId;
+  }
+
+  /**
+   * Table layout and settings (seats, blinds, privacy, invite code). A
+   * practice table's owner can add and remove computer players, nothing
+   * more — its seat count is what they picked (at most 5), and it has no
+   * settings worth changing and no one to invite. The admin keeps every
+   * power everywhere.
+   */
+  function canManageLayout(table: LiveTable, data: SocketData): boolean {
+    if (data.role === 'admin') return true;
+    return canManageTable(table, data) && !table.isPractice;
   }
 
   /**
@@ -409,10 +494,19 @@ export function attachSocketServer(
       const table = registry.get(parsed.data.tableId);
       if (!table) return emitError('TABLE_NOT_FOUND', 'Table not found.');
 
+      // A practice table is visible to its owner and the admin, no one
+      // else. A practice-only player sees no other table at all.
+      const isPracticeOwner = table.isPractice && data.userId !== null && data.userId === table.ownerId;
+      if (table.isPractice && !isPracticeOwner && data.role !== 'admin') return emitError('TABLE_NOT_FOUND', 'Table not found.');
+      if (!table.isPractice && isPracticeOnly(data)) {
+        return emitError('PRACTICE_ONLY', 'Your account plays at your own table against computer players — start one from the lobby.');
+      }
+
       const seatId = data.userId ? table.seatOfUser(data.userId) : null;
-      if (table.settings.isPrivate && seatId === null && parsed.data.inviteCode !== table.inviteCode) {
+      if (!table.isPractice && table.settings.isPrivate && seatId === null && parsed.data.inviteCode !== table.inviteCode) {
         return emitError('INVALID_INVITE_CODE', 'This table is private. Provide the correct invite code to join.');
       }
+      if (isPracticeOwner) practiceOwnerConnected(table.tableId, socket.id);
 
       joinedTableId = table.tableId;
       void socket.join(seatId !== null ? seatRoom(table.tableId, seatId) : spectatorRoom(table.tableId));
@@ -427,7 +521,7 @@ export function attachSocketServer(
       // spectating table creator has no seat/room of their own to target a
       // "canManage" field on a shared projection to in the first place.
       // See canManageTable's own doc comment.
-      socket.emit('table-permissions', { canManageTable: canManageTable(table, data) });
+      socket.emit('table-permissions', { canManageTable: canManageTable(table, data), canManageLayout: canManageLayout(table, data), isPractice: table.isPractice });
       // See registerVoiceParticipant's own doc comment — every human is
       // receive-ready from the moment they're at the table, not only once
       // they opt into sending their own mic/camera.
@@ -462,6 +556,10 @@ export function attachSocketServer(
       if (!canManageTable(table, data)) {
         return emitError('SELF_SERVE_DISABLED', 'Only the table owner can seat a player directly — ask them for an invite link.');
       }
+      // Only the player who owns a practice table ever sits at it.
+      if (table.isPractice && data.userId !== table.ownerId) {
+        return emitError('PRACTICE_TABLE', 'Only computer players can join this table.');
+      }
 
       // Per-table one-session rule: the same account cannot occupy two seats at one table.
       if (table.seatOfUser(data.userId) !== null) {
@@ -486,10 +584,16 @@ export function attachSocketServer(
     });
 
     socket.on('redeem-seat-assignment', (raw: unknown): void => {
+      // Checked first: a practice-only player's join-table was already
+      // refused, and that's the message they should keep seeing.
+      if (isPracticeOnly(data)) {
+        return emitError('PRACTICE_ONLY', 'Your account plays at your own table against computer players — start one from the lobby.');
+      }
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to join with an invite link.');
       const parsed = RedeemAssignmentSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed redeem payload.');
+      if (table.isPractice) return emitError('PRACTICE_TABLE', 'Only computer players can join this table.');
       if (table.seatOfUser(data.userId) !== null) return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
       const redeemed = table.redeemSeatAssignment(parsed.data.token);
       if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
@@ -508,6 +612,10 @@ export function attachSocketServer(
       if (!table) return;
       if (data.role !== 'admin') {
         callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can assign a seat.' });
+        return;
+      }
+      if (table.isPractice) {
+        callback?.({ ok: false, code: 'PRACTICE_TABLE', message: 'Only computer players can join a practice table.' });
         return;
       }
       const parsed = AssignSeatSchema.safeParse(raw);
@@ -555,7 +663,7 @@ export function attachSocketServer(
      */
     function canChangeSeat(table: LiveTable, seatId: number): boolean {
       if (data.role === 'admin') return true;
-      return canManageTable(table, data) && !table.seats[seatId]?.userId;
+      return canManageLayout(table, data) && !table.seats[seatId]?.userId;
     }
 
     function persistTable(table: LiveTable): void {
@@ -570,7 +678,7 @@ export function attachSocketServer(
 
     socket.on('update-table-settings', (raw: unknown, callback?: Ack): void => {
       const table = currentTable();
-      if (!table || !canManageTable(table, data)) {
+      if (!table || !canManageLayout(table, data)) {
         callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can change table settings.' });
         return;
       }
@@ -591,7 +699,7 @@ export function attachSocketServer(
 
     socket.on('get-invite-code', (callback?: (result: { inviteCode: string | null }) => void): void => {
       const table = currentTable();
-      if (!table || !canManageTable(table, data)) {
+      if (!table || !canManageLayout(table, data)) {
         callback?.({ inviteCode: null });
         return;
       }
@@ -600,8 +708,12 @@ export function attachSocketServer(
 
     socket.on('add-seat', (callback?: Ack): void => {
       const table = currentTable();
-      if (!table || !canManageTable(table, data)) {
+      if (!table || !canManageLayout(table, data)) {
         callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can add a seat.' });
+        return;
+      }
+      if (table.isPractice && table.visibleSeatCount >= MAX_PRACTICE_BOTS + 1) {
+        callback?.({ ok: false, code: 'TOO_MANY_SEATS', message: `A practice table has at most ${String(MAX_PRACTICE_BOTS + 1)} seats.` });
         return;
       }
       const result = table.addSeat();
@@ -684,7 +796,11 @@ export function attachSocketServer(
           }
           callback?.();
         } catch (err) {
-          socket.emit('error', { code: 'CANNOT_LEAVE', message: err instanceof Error ? err.message : 'Cannot leave right now.' });
+          const midHand = err instanceof Error && err.message === 'CANNOT_LEAVE_MID_HAND';
+          socket.emit('error', {
+            code: 'CANNOT_LEAVE',
+            message: midHand ? 'You can leave once you fold or this hand ends.' : err instanceof Error ? err.message : 'Cannot leave right now.',
+          });
         }
       })();
     });
@@ -760,6 +876,7 @@ export function attachSocketServer(
     socket.on('join-waitlist', (): void => {
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to join the waitlist.');
+      if (table.isPractice) return emitError('PRACTICE_TABLE', 'Only computer players can join this table.');
       const result = table.joinWaitlist(data.userId, data.displayName ?? 'Player');
       if (!result.ok) return emitError(result.code, result.message);
       broadcastTable(table);
@@ -901,6 +1018,7 @@ export function attachSocketServer(
         if (table) {
           table.setConnected(data.userId, false);
           broadcastTable(table);
+          if (table.isPractice && table.ownerId === data.userId) practiceOwnerDisconnected(table.tableId, socket.id);
         }
       }
       if (joinedTableId) removeVoiceParticipant(joinedTableId, socket.id);
@@ -920,5 +1038,5 @@ export function attachSocketServer(
     }
   }
 
-  return { io, registry, closeAllTables };
+  return { io, registry, closeAllTables, closePracticeTableOf, watchPracticeTable };
 }

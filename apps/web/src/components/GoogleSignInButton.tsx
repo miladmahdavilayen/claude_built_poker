@@ -14,14 +14,19 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
  * Google sign-in is an addition, not a replacement, so the rest of the
  * app (guest play, email/password) must keep working with zero setup.
  */
-export function GoogleSignInButton({ onCredential }: { onCredential: (idToken: string) => void }): React.JSX.Element | null {
-  const ref = useRef<HTMLDivElement>(null);
-  const [serverReady, setServerReady] = useState<boolean | null>(null);
-
+/** Whether Google sign-in is set up on both halves (client id baked into this build, and the server's) — null while still asking the server. */
+export function useGoogleSignInAvailable(): boolean | null {
+  const [serverReady, setServerReady] = useState<boolean | null>(CLIENT_ID ? null : false);
   useEffect(() => {
     if (!CLIENT_ID) return;
     googleSignInAvailable().then(setServerReady).catch(() => setServerReady(false));
   }, []);
+  return serverReady;
+}
+
+export function GoogleSignInButton({ onCredential }: { onCredential: (idToken: string) => void }): React.JSX.Element | null {
+  const ref = useRef<HTMLDivElement>(null);
+  const serverReady = useGoogleSignInAvailable();
 
   useEffect(() => {
     if (!CLIENT_ID || !serverReady || !ref.current) return;
@@ -34,7 +39,7 @@ export function GoogleSignInButton({ onCredential }: { onCredential: (idToken: s
         client_id: CLIENT_ID,
         callback: (response) => onCredential(response.credential),
       });
-      window.google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width: 280 });
+      window.google.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', shape: 'pill', text: 'continue_with', width: 280 });
     };
 
     if (window.google) {

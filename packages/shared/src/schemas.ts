@@ -236,3 +236,29 @@ export const AdminBulkDeleteUsersSchema = z
   })
   .strict();
 export type AdminBulkDeleteUsersInput = z.infer<typeof AdminBulkDeleteUsersSchema>;
+
+/**
+ * The stake levels a signed-in (Google) player can pick for a practice
+ * table — fixed presets rather than free-form blinds, since a practice
+ * table is the only kind of table they can play at. Amounts in cents;
+ * buy-ins run 40–100 big blinds, like every seeded table.
+ */
+export const PRACTICE_STAKES = {
+  low: { label: '$0.50/$1', smallBlind: 50, bigBlind: 100, minBuyIn: 4_000, maxBuyIn: 10_000 },
+  medium: { label: '$1/$2', smallBlind: 100, bigBlind: 200, minBuyIn: 8_000, maxBuyIn: 20_000 },
+  high: { label: '$5/$10', smallBlind: 500, bigBlind: 1_000, minBuyIn: 40_000, maxBuyIn: 100_000 },
+} as const;
+export type PracticeStakes = keyof typeof PRACTICE_STAKES;
+
+/** A practice table seats the player plus 1–4 computer players — at most 5 seats. */
+export const MAX_PRACTICE_BOTS = 4;
+
+export const CreatePracticeTableSchema = z
+  .object({
+    bots: z.number().int().min(1).max(MAX_PRACTICE_BOTS),
+    stakes: z.enum(['low', 'medium', 'high']),
+    /** The player's own buy-in, in cents — must sit inside the chosen stakes' range. Every bot buys in for the same amount. */
+    buyIn: z.number().int().positive(),
+  })
+  .strict();
+export type CreatePracticeTableInput = z.infer<typeof CreatePracticeTableSchema>;

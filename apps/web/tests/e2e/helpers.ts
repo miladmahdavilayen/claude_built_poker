@@ -45,6 +45,19 @@ export async function seedRealAccount(page: Page, displayName: string): Promise<
   return body.id;
 }
 
+/**
+ * Signs in exactly as a verified Google account with this email would
+ * (through the test-only route — see testSeed.ts; no real Google OAuth
+ * here), then opens the lobby. The same email signs back into the same
+ * account; once deleted, it registers again — without a second bonus.
+ */
+export async function googlePlayerLogin(page: Page, email: string, displayName: string): Promise<void> {
+  const res = await page.request.post('http://localhost:4210/test-only/google-login', { data: { email, displayName } });
+  expect(res.ok()).toBe(true);
+  await page.goto('/lobby');
+  await expect(page.locator('.practice-card')).toBeVisible();
+}
+
 export interface CreateTableOptions {
   name: string;
   smallBlind: number;

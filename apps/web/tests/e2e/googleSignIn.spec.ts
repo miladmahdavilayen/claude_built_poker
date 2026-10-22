@@ -18,12 +18,12 @@ test('with no Google configuration, the server reports it unavailable, the sign-
   const availability = await request.get('http://localhost:4210/auth/google/available');
   expect(await availability.json()).toEqual({ available: false });
 
-  // The login page never shows a Google button now (invite-only: an
-  // uninvited visitor only gets the invitation-link prompt), and guest play
-  // — the way an invited player gets in — is unaffected.
+  // The front page is Google sign-in only: with nothing configured, the
+  // button doesn't render and the visitor is told sign-in isn't available —
+  // and guest play (the way an owner-invited player gets in) is unaffected.
   await page.goto('/');
-  await expect(page.locator('.google-signin-row')).toHaveCount(0);
-  await expect(page.getByLabel('Invitation link')).toBeVisible();
+  await expect(page.locator('.google-signin-row iframe')).toHaveCount(0);
+  await expect(page.getByText('Sign-in isn’t available right now')).toBeVisible();
 
   await guestSignup(page, 'NoGoogleGuest');
   await expect(page.getByText('NoGoogleGuest')).toBeVisible();

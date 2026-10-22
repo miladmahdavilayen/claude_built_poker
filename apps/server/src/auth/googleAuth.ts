@@ -3,7 +3,11 @@ import { OAuth2Client } from 'google-auth-library';
 export interface GoogleProfile {
   googleId: string;
   email: string | null;
+  /** Google's own `email_verified` claim — a new account needs a verified email (see loginOrRegisterWithGoogle). */
+  emailVerified: boolean;
   displayName: string;
+  /** Google profile photo URL, if the account has one. */
+  avatarUrl: string | null;
 }
 
 let client: OAuth2Client | null = null;
@@ -36,7 +40,10 @@ export async function verifyGoogleIdToken(idToken: string): Promise<GoogleProfil
     return {
       googleId: payload.sub,
       email: payload.email ?? null,
-      displayName: payload.name ?? payload.email?.split('@')[0] ?? 'Player',
+      emailVerified: payload.email_verified === true,
+      // Display names are capped at 24 characters everywhere else (see GuestSignupSchema).
+      displayName: (payload.name ?? payload.email?.split('@')[0] ?? 'Player').slice(0, 24),
+      avatarUrl: payload.picture ?? null,
     };
   } catch {
     return null;

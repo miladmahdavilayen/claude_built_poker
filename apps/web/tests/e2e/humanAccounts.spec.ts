@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addBot, adminLogin, createTable, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
+import { addBot, adminLogin, createTable, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
 
 // This sandbox has no real Google Cloud OAuth Client ID to drive an actual
 // "sign in with Google" click-through with (see googleSignIn.spec.ts's own
@@ -15,18 +15,13 @@ import { addBot, adminLogin, createTable, guestSignup, seedRealAccount, takeSeat
 // browser, and the guest-facing restriction (no "Create table" at all)
 // and the new admin/profile pages render and function correctly.
 
-test('a guest never sees "Create table" — only a signed-in human (or the admin) can', async ({ page }) => {
+test('a guest never sees "Create table" — only the admin can', async ({ page }) => {
   await guestSignup(page, 'Gary');
   await expect(page.getByRole('button', { name: '+ Create table' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Join private table/ })).toBeVisible();
 });
 
-test('a signed-in human can create their own table, sit themselves down, and add a bot, all self-serve', async ({ page }) => {
-  // Admin is also a genuine non-guest account (isGuest: false) — this
-  // proves the CREATE → SELF-SEAT → ADD-BOT UI flow itself works; the
-  // narrower claim that a REGULAR (non-admin) human gets this same
-  // ability only on their OWN table is proven server-side (see this
-  // file's own top comment).
+test('the admin can create a table, sit themselves down, and add a bot, all self-serve', async ({ page }) => {
   await adminLogin(page);
   await createTable(page, { name: 'My Practice Table', smallBlind: 1, bigBlind: 2, maxSeats: 4, isPrivate: false });
   await expect(page.locator('[data-testid="seat-0"]').getByText('Sit here')).toBeVisible();
@@ -38,19 +33,14 @@ test('a signed-in human can create their own table, sit themselves down, and add
   await expect(page.locator('[data-testid="seat-1"]').getByText('🤖 bot')).toBeVisible();
 });
 
-test('an uninvited visitor is only asked for an invitation link — no guest form, no self-registration — with a small hidden admin-login trigger', async ({ page }) => {
+test('the front page is Google sign-in only — no guest form, no invite prompt, no self-registration — with a small hidden admin-login trigger', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByLabel('Invitation link')).toBeVisible();
-  await expect(page.getByText('invite-only')).toBeVisible();
+  await expect(page.locator('.welcome-card')).toBeVisible();
+  await expect(page.getByLabel('Invitation link')).toHaveCount(0);
   await expect(page.getByLabel('Display name')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Play now' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Register', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Log in', exact: true })).toHaveCount(0);
-
-  // Anything that isn't an invite link is turned away with a hint.
-  await page.getByLabel('Invitation link').fill('https://example.com/not-an-invite');
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByText("doesn't look like an invitation link")).toBeVisible();
 
   await page.locator('.admin-login-trigger').click();
   await expect(page.getByLabel('Email')).toBeVisible();
@@ -58,13 +48,62 @@ test('an uninvited visitor is only asked for an invitation link — no guest for
   await expect(page.getByRole('button', { name: 'Log in' })).toBeVisible();
 });
 
-test('profile page shows a signed-in human’s balance and history, and never offers to delete the admin account', async ({ page }) => {
+test('profile page shows only registration info, and never offers to delete the admin account', async ({ page }) => {
   await adminLogin(page);
   await page.goto('/profile');
   await expect(page.getByText('My profile')).toBeVisible();
-  await expect(page.getByText('Balance', { exact: true })).toBeVisible();
-  await expect(page.getByText('Net result from playing')).toBeVisible();
+  await expect(page.locator('.profile-fields')).toContainText('admin@pokerclause.local');
+  await expect(page.locator('.profile-fields')).toContainText('Email and password');
+  await expect(page.getByText('Balance', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Delete my account' })).toHaveCount(0);
+});
+
+test('a Google player: $1,000 welcome bonus, a bots-only table of the size they pick, deleted when they leave; delete account and re-register gets no second bonus', async ({ page }) => {
+  const email = `e2e.player.${String(Date.now())}@gmail.com`;
+  await googlePlayerLogin(page, email, 'Polly');
+  await expect(page.getByTestId('lobby-balance')).toHaveText('$1,000');
+  // No public tables, no table creation, no private-table join — just their own game.
+  await expect(page.locator('.table-card')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Create table/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Join private table/ })).toHaveCount(0);
+
+  await page.getByRole('radio', { name: '4 bots' }).click();
+  await expect(page.getByText('5 seats — you plus 4 computer players')).toBeVisible();
+  await page.getByRole('radio', { name: /\$1\/\$2/ }).click();
+  await page.getByLabel(/Buy-in/).fill('150');
+  await page.getByRole('button', { name: 'Start game' }).click();
+  await expect(page).toHaveURL(/\/table\//);
+  const tableUrl = page.url();
+
+  await expect(page.locator('[data-testid^="seat-"]')).toHaveCount(5);
+  await expect(page.locator('[data-testid="seat-0"]')).toContainText('Polly');
+  await expect(page.getByText('🤖 bot')).toHaveCount(4);
+  await expect(page.locator('.seat-tag', { hasText: 'practice' })).toBeVisible();
+  // Bots only: no table menu, no invite/sit buttons, no waitlist, no voice.
+  await expect(page.locator('.owner-menu-toggle')).toHaveCount(0);
+  await expect(page.getByText('+ Assign human')).toHaveCount(0);
+  await expect(page.getByText('Sit here')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Join voice/ })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Leave table' }).click();
+  await expect(page).toHaveURL(/\/lobby/);
+  await expect(page.getByTestId('lobby-balance')).toHaveText('$1,000');
+  // The table is gone for good.
+  await page.goto(tableUrl);
+  await expect(page.getByText('Table not found')).toBeVisible();
+
+  await page.goto('/profile');
+  await expect(page.locator('.profile-fields')).toContainText(email);
+  await expect(page.locator('.profile-fields')).toContainText('Google');
+  await page.getByRole('button', { name: 'Delete my account' }).click();
+  await page.getByLabel(/Type/).fill('delete my account');
+  await page.getByRole('button', { name: 'Permanently delete' }).click();
+  await expect(page).toHaveURL(/\/login/);
+
+  // Same person, same email (Gmail ignores dots and case) — no second bonus.
+  await googlePlayerLogin(page, email.replace('e2e.', 'E2E'), 'Polly Again');
+  await expect(page.getByTestId('lobby-balance')).toHaveText('$0');
+  await expect(page.getByRole('button', { name: 'Start game' })).toBeDisabled();
 });
 
 // A guest is never persisted at all anymore (see HybridStore /
@@ -84,12 +123,12 @@ test('admin dashboard lists a real account and can adjust their balance and rena
 
   const detail = page.locator('.admin-user-detail');
   const balanceValue = detail.locator('.profile-stat-card', { hasText: 'Balance' }).locator('.stat-value');
-  await expect(balanceValue).toHaveText('$0'); // real accounts start at 0 — see authService.ts
+  await expect(balanceValue).toHaveText('$1,000'); // the welcome bonus — see authService.ts
 
   await detail.getByLabel(/Amount in \$/).fill('500');
   await detail.getByLabel('Reason').fill('E2E test bonus');
   await detail.getByRole('button', { name: 'Add to balance' }).click();
-  await expect(balanceValue).toHaveText('$500');
+  await expect(balanceValue).toHaveText('$1,500');
 
   // Or set it to an exact amount instead of adding.
   await detail.getByLabel(/Amount in \$/).fill('75.5');

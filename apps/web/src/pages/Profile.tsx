@@ -1,30 +1,28 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
-import type { LedgerEntryDto, MySummaryDto } from '../api.js';
+import type { MyProfileDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
-import { formatChips } from '../chips.js';
 
-const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
-  buy_in: 'Bought in',
-  cash_out: 'Cashed out',
-  pot_win: 'Hand result',
-  rake: 'Rake',
-  admin_adjust: 'Admin adjustment',
+const SIGN_IN_METHOD_LABEL: Record<MyProfileDto['signInMethod'], string> = {
+  google: 'Google',
+  guest: 'Guest',
+  password: 'Email and password',
 };
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 /**
- * A signed-in (non-guest) human's own balance, net result from actually
- * playing hands (separate from admin-granted buy-ins — see
- * `ledgerPlayNetForUser` server-side), a recent transaction history, and
- * the one place they can permanently delete their own account. Guests
- * never reach this page (App.tsx redirects them to the lobby) — they
- * already lose everything the moment they leave/reset/close a table, so
- * there's nothing durable here for them to look at.
+ * A signed-in (non-guest) human's own account: exactly what they
+ * registered with, and the one place they can permanently delete it.
+ * Nothing else — balance lives in the lobby header. Guests never reach
+ * this page (App.tsx redirects them to the lobby).
  */
 export function ProfilePage(): React.JSX.Element {
   const { user, deleteAccount, accessToken } = useAuth();
-  const [summary, setSummary] = useState<MySummaryDto | null>(null);
+  const [profile, setProfile] = useState<MyProfileDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -35,8 +33,8 @@ export function ProfilePage(): React.JSX.Element {
   useEffect(() => {
     if (!accessToken) return;
     api
-      .getMySummary(accessToken)
-      .then(setSummary)
+      .getMyProfile(accessToken)
+      .then(setProfile)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load your profile.'));
   }, [accessToken]);
 
@@ -67,48 +65,29 @@ export function ProfilePage(): React.JSX.Element {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="profile-summary">
-        <div className="profile-stat-card">
-          <span className="stat-label">Display name</span>
-          <span className="stat-value">{user.displayName}</span>
-        </div>
-        <div className="profile-stat-card">
-          <span className="stat-label">Balance</span>
-          <span className="stat-value">{formatChips(summary?.balance ?? user.chips)}</span>
-        </div>
-        <div className="profile-stat-card">
-          <span className="stat-label">Net result from playing</span>
-          <span className={`stat-value ${(summary?.netPlayResult ?? 0) >= 0 ? 'profile-stat-positive' : 'profile-stat-negative'}`}>
-            {summary ? `${summary.netPlayResult >= 0 ? '+' : ''}${formatChips(summary.netPlayResult)}` : '—'}
-          </span>
-        </div>
-      </div>
-      <p className="profile-hint">
-        Only the admin can add to your balance (a buy-in or a rebuy) — ask them for chips before sitting down at a table.
-      </p>
-
-      <h3>Recent activity</h3>
-      {summary && summary.recentEntries.length === 0 && <p className="profile-hint">Nothing yet — this fills in once you play a hand.</p>}
-      {summary && summary.recentEntries.length > 0 && (
-        <div className="profile-history">
-          {summary.recentEntries.map((entry) => (
-            <div className="profile-history-row" key={entry.id}>
-              <span>{REASON_LABEL[entry.reason]}</span>
-              <span className={entry.amount >= 0 ? 'profile-stat-positive' : 'profile-stat-negative'}>
-                {entry.amount >= 0 ? '+' : ''}
-                {formatChips(entry.amount)}
-              </span>
-              <span className="profile-history-date">{new Date(entry.createdAt).toLocaleString()}</span>
-            </div>
-          ))}
-        </div>
+      {profile && (
+        <section className="profile-card">
+          {profile.avatarUrl && <img className="profile-avatar" src={profile.avatarUrl} alt="" referrerPolicy="no-referrer" />}
+          <dl className="profile-fields">
+            <dt>Name</dt>
+            <dd>{profile.displayName}</dd>
+            <dt>Email</dt>
+            <dd>{profile.email ?? '—'}</dd>
+            <dt>Signed up with</dt>
+            <dd>{SIGN_IN_METHOD_LABEL[profile.signInMethod]}</dd>
+            <dt>Member since</dt>
+            <dd>{formatDate(profile.createdAt)}</dd>
+          </dl>
+        </section>
       )}
 
       {/* The admin/owner account can't delete itself this way — see /users/me's own CANNOT_DELETE_ADMIN guard — so this is never offered to it in the first place. */}
       {user.role !== 'admin' && (
         <div className="profile-danger-zone">
           <h3>Delete account</h3>
-          <p className="profile-hint">Permanently deletes your account and balance. Your past hand history stays on record, anonymized.</p>
+          <p className="profile-hint">
+            Permanently deletes your account and your balance. If you sign up again later with the same email, you won&rsquo;t get the welcome bonus a second time.
+          </p>
           <button type="button" className="btn-owner-danger btn-owner-action" onClick={() => setShowDeleteConfirm(true)}>
             Delete my account
           </button>
@@ -119,7 +98,7 @@ export function ProfilePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => !deleting && setShowDeleteConfirm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Delete your account?</h3>
-            <p>This cannot be undone. You will lose your balance and be signed out immediately.</p>
+            <p>This cannot be undone. You will lose your balance and be signed out immediately. Signing up again with the same email starts at $0.</p>
             {deleteError && <div className="error-banner">{deleteError}</div>}
             <label>
               Type &ldquo;{confirmationPhrase}&rdquo; to confirm

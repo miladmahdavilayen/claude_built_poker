@@ -14,6 +14,7 @@ const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
   pot_win: 'Hand result',
   rake: 'Rake',
   admin_adjust: 'Admin adjustment',
+  welcome_bonus: 'Welcome bonus',
 };
 
 /**

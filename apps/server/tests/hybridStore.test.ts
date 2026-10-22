@@ -27,7 +27,7 @@ describe('HybridStore: a guest’s data never reaches the real (persisted) store
 
   it('listUsers only ever returns real (persisted) accounts', async () => {
     await store.createGuestUser('Gina');
-    const real1 = await store.createGoogleAccount('g-1', 'a@gmail.com', 'Ann');
+    const real1 = await store.createGoogleAccount({ googleId: 'g-1', email: 'a@gmail.com', displayName: 'Ann', avatarUrl: null });
     const users = await store.listUsers();
     expect(users.map((u) => u.id)).toEqual([real1.id]);
   });
@@ -56,14 +56,14 @@ describe('HybridStore: a guest’s data never reaches the real (persisted) store
   });
 
   it('a real account’s session goes through unaffected', async () => {
-    const user = await store.createGoogleAccount('g-2', 'b@gmail.com', 'Bob');
+    const user = await store.createGoogleAccount({ googleId: 'g-2', email: 'b@gmail.com', displayName: 'Bob', avatarUrl: null });
     await store.createSession(user.id, 'real-token-hash', new Date(Date.now() + 60_000));
     expect(await real.findSessionByTokenHash('real-token-hash')).toMatchObject({ userId: user.id });
   });
 
   it('ledger entries anonymize a guest’s own side (userId: null) while a real co-player’s side, and the group’s zero-sum, are both preserved exactly', async () => {
     const guest = await store.createGuestUser('Gina');
-    const real1 = await store.createGoogleAccount('g-3', 'c@gmail.com', 'Cara');
+    const real1 = await store.createGoogleAccount({ googleId: 'g-3', email: 'c@gmail.com', displayName: 'Cara', avatarUrl: null });
 
     // A hand where the guest lost 100 to the real player — a single group, same as settleHand's own batching.
     await store.recordLedgerEntries([
@@ -87,7 +87,7 @@ describe('HybridStore: a guest’s data never reaches the real (persisted) store
 
   it('recordHand anonymizes a guest’s seat the same way, leaving a real co-player’s seat untouched', async () => {
     const guest = await store.createGuestUser('Gina');
-    const real1 = await store.createGoogleAccount('g-4', 'd@gmail.com', 'Dee');
+    const real1 = await store.createGoogleAccount({ googleId: 'g-4', email: 'd@gmail.com', displayName: 'Dee', avatarUrl: null });
 
     await store.recordHand({
       id: 'hand-1',
@@ -126,7 +126,7 @@ describe('HybridStore: a guest’s data never reaches the real (persisted) store
   });
 
   it('a real account’s chat message is completely unaffected', async () => {
-    const user = await store.createGoogleAccount('g-5', 'e@gmail.com', 'Eli');
+    const user = await store.createGoogleAccount({ googleId: 'g-5', email: 'e@gmail.com', displayName: 'Eli', avatarUrl: null });
     const sent = await store.recordChatMessage('table-1', user.id, 'nice hand');
     expect(sent.userId).toBe(user.id);
     const history = await real.listRecentChat('table-1', 10);
@@ -159,7 +159,62 @@ describe('HybridStore: a guest’s data never reaches the real (persisted) store
   });
 
   it('rejects upgrading an id that was never a guest in the first place', async () => {
-    const user = await store.createGoogleAccount('g-7', 'f@gmail.com', 'Fay');
+    const user = await store.createGoogleAccount({ googleId: 'g-7', email: 'f@gmail.com', displayName: 'Fay', avatarUrl: null });
     await expect(store.linkGoogleToGuest(user.id, 'g-8', 'other@gmail.com')).rejects.toThrow('USER_NOT_FOUND');
+  });
+});
+
+describe('HybridStore: a practice table never reaches the real (persisted) store', () => {
+  let real: MemoryStore;
+  let store: HybridStore;
+
+  beforeEach(() => {
+    real = new MemoryStore();
+    store = new HybridStore(real);
+  });
+
+  it('keeps the table, its hands, chat and reports in memory only, wipes them on delete, and drops writes that arrive after', async () => {
+    const user = await store.createGoogleAccount({ googleId: 'g-p', email: 'p@gmail.com', displayName: 'Pat', avatarUrl: null });
+    const table = await store.createTable({ name: 'Practice', config: {}, inviteCode: null, createdBy: user.id, ephemeral: true });
+    expect(await real.getTable(table.id)).toBeNull();
+    expect(await store.getTable(table.id)).toMatchObject({ id: table.id });
+
+    await store.recordChatMessage(table.id, user.id, 'hi');
+    expect(await store.listRecentChat(table.id, 10)).toMatchObject([{ message: 'hi', displayName: 'Pat' }]);
+    expect(await real.listRecentChat(table.id, 10)).toHaveLength(0);
+
+    const report = {
+      id: '00000000-0000-0000-0000-000000000001',
+      tableId: table.id,
+      tableName: 'Practice',
+      status: 'live' as const,
+      handsPlayed: 1,
+      lastHandNumber: 1,
+      startedAt: new Date(),
+      updatedAt: new Date(),
+      endedAt: null,
+      summary: null,
+      reportYaml: 'x',
+    };
+    await store.saveGameReport(report);
+    expect(await real.listGameReports()).toHaveLength(0);
+
+    // Money still moves for real, but the ledger rows don't point at the table.
+    await store.recordLedgerEntries([
+      { userId: user.id, isHouse: false, amount: -500, reason: 'buy_in', tableId: table.id, handId: 'h' },
+      { userId: null, isHouse: true, amount: 500, reason: 'buy_in', tableId: table.id, handId: 'h' },
+    ]);
+    const [entry] = await real.ledgerEntriesForUser(user.id, 10);
+    expect(entry).toMatchObject({ amount: -500, tableId: null, handId: null });
+
+    await store.deleteTable(table.id);
+    expect(await store.getTable(table.id)).toBeNull();
+    expect(await store.listRecentChat(table.id, 10)).toHaveLength(0);
+    expect(await store.latestGameReportForTable(table.id)).toBeNull();
+
+    // A write still in flight when the table closed lands nowhere.
+    await store.saveGameReport({ ...report, handsPlayed: 2 });
+    expect(await real.listGameReports()).toHaveLength(0);
+    expect(await store.latestGameReportForTable(table.id)).toBeNull();
   });
 });

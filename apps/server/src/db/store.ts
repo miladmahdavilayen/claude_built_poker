@@ -12,8 +12,22 @@ export interface UserRecord {
   avatarSeed: string;
   clientSeed: string;
   chips: number;
+  /** Google profile photo, refreshed on every Google sign-in. Null for guests and email/password accounts. */
+  avatarUrl: string | null;
   createdAt: Date;
+  /** Last Google sign-in. Null for an account that has never signed in with Google. */
+  lastLoginAt: Date | null;
 }
+
+/** What a verified Google sign-in tells us about a new account — see googleAuth.ts. */
+export interface GoogleAccountInput {
+  googleId: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export type LedgerReason = 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus';
 
 export interface TableRecord {
   id: string;
@@ -29,7 +43,7 @@ export interface LedgerEntryInput {
   userId: string | null;
   isHouse: boolean;
   amount: number;
-  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust';
+  reason: LedgerReason;
   tableId?: string;
   handId?: string;
 }
@@ -38,7 +52,7 @@ export interface LedgerEntryInput {
 export interface LedgerEntryRecord {
   id: string;
   amount: number;
-  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust';
+  reason: LedgerReason;
   tableId: string | null;
   handId: string | null;
   createdAt: Date;
@@ -176,7 +190,15 @@ export interface Store {
   findUserByEmail(email: string): Promise<UserRecord | null>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByGoogleId(googleId: string): Promise<UserRecord | null>;
-  createGoogleAccount(googleId: string, email: string | null, displayName: string): Promise<UserRecord>;
+  createGoogleAccount(input: GoogleAccountInput): Promise<UserRecord>;
+  /** Stamps a Google sign-in on an existing account: last sign-in time, and the current profile photo. */
+  recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord>;
+  /**
+   * Records that the welcome bonus has been granted to this (normalized)
+   * email and Google account. Returns false, recording nothing, if either
+   * one has ever claimed it before — even on an account deleted since.
+   */
+  claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean>;
   /** Links a Google identity onto an EXISTING guest account, converting it in place. */
   linkGoogleToGuest(userId: string, googleId: string, email: string | null): Promise<UserRecord>;
   /**
@@ -220,10 +242,18 @@ export interface Store {
   /** Net result from actually PLAYING hands (sum of `reason: 'pot_win'` entries only) — excludes buy-ins/cash-outs/admin grants, so it reads as "winnings minus losses," not the account's raw balance. */
   ledgerPlayNetForUser(userId: string): Promise<number>;
 
-  createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord>;
+  /**
+   * `ephemeral` marks a practice table (see game/practiceTables.ts): its
+   * records only ever exist for as long as the table does, and `deleteTable`
+   * wipes them. HybridStore keeps such a table entirely in memory, so it
+   * never reaches Postgres at all.
+   */
+  createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null; ephemeral?: boolean }): Promise<TableRecord>;
   listTables(): Promise<TableRecord[]>;
   getTable(id: string): Promise<TableRecord | null>;
   closeTable(id: string): Promise<void>;
+  /** Permanently deletes a table and everything recorded under it — hands, chat, game reports. Used for practice tables, never for a real one. */
+  deleteTable(id: string): Promise<void>;
   /** Inserts or replaces a game's report (same id = same game, rewritten after every hand). */
   saveGameReport(record: GameReportRecord): Promise<void>;
   /** Every game report, most recently started first — without the YAML body. */

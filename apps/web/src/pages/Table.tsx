@@ -275,6 +275,19 @@ export function TablePage(): React.JSX.Element {
       </div>
     );
   }
+  // A practice-only player opening someone else's table (an old link, an
+  // invite), or anyone opening a practice table that's closed or not theirs.
+  if (!sock.state && (sock.lastError?.code === 'PRACTICE_ONLY' || sock.lastError?.code === 'TABLE_NOT_FOUND')) {
+    return (
+      <div className="page-centered">
+        <div className="auth-card">
+          <h3>{sock.lastError.code === 'PRACTICE_ONLY' ? 'Not available' : 'Table not found'}</h3>
+          <p>{sock.lastError.code === 'PRACTICE_ONLY' ? sock.lastError.message : 'This table has closed.'}</p>
+          <Link to="/lobby">&larr; Back to lobby</Link>
+        </div>
+      </div>
+    );
+  }
   if (!sock.state) {
     return <div className="page-centered">Connecting to table...</div>;
   }
@@ -293,6 +306,8 @@ export function TablePage(): React.JSX.Element {
   const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
   const revealLabel = mySeat && isBluffHand(mySeat.holeCards, state.board) ? 'Show Bluff' : 'Reveal Hand';
   const canManage = user.role === 'admin' || sock.canManageTable;
+  // The table menu (seats, settings, invites) — never a practice table's own player, who only swaps bots in and out.
+  const canManageLayout = user.role === 'admin' || sock.canManageLayout;
   const pendingBlinds = state.pendingSettings;
   const pendingNotice = pendingBlinds
     ? [
@@ -389,7 +404,7 @@ export function TablePage(): React.JSX.Element {
         {!user.isGuest && <Link to="/lobby">&larr; Lobby</Link>}
         <div className="table-header-name">
           {state.tableName}
-          {state.settings.isPrivate && <span className="seat-tag">private</span>}
+          {sock.isPractice ? <span className="seat-tag">practice</span> : state.settings.isPrivate && <span className="seat-tag">private</span>}
         </div>
         <div className="table-header-right">
           {!mySeat && myWaitlistIndex === 0 && hasEmptySeat && <span className="seat-tag seat-tag-allin">A seat is open!</span>}
@@ -412,7 +427,7 @@ export function TablePage(): React.JSX.Element {
               Leave table
             </button>
           )}
-          {canManage && (
+          {canManageLayout && (
             <button type="button" className="owner-menu-toggle" aria-label="Table menu" title="Table controls" onClick={() => setOwnerMenuOpen(true)}>
               <span aria-hidden="true">☰</span> Menu
             </button>
@@ -431,16 +446,21 @@ export function TablePage(): React.JSX.Element {
       </div>
 
       {pendingNotice && <div className="pending-settings-banner">Next hand: {pendingNotice}</div>}
-      <VoicePanel voice={voice} myName={user.displayName} amSeated={!!mySeat} unseatedPeers={unseatedVoicePeers} canSeeVideo={canSeeVideo} />
+      {/* Nobody to talk to at a practice table — only its own player and computer players ever sit there. */}
+      {!sock.isPractice && (
+        <VoicePanel voice={voice} myName={user.displayName} amSeated={!!mySeat} unseatedPeers={unseatedVoicePeers} canSeeVideo={canSeeVideo} />
+      )}
       {speakerBarActive && <SpeakerBar tiles={speakerTiles} />}
 
-      <WaitlistPanel
-        waitlist={state.waitlist}
-        myUserId={user.id}
-        canJoin={!mySeat}
-        onJoin={() => sock.joinWaitlist()}
-        onLeave={() => sock.leaveWaitlist()}
-      />
+      {!sock.isPractice && (
+        <WaitlistPanel
+          waitlist={state.waitlist}
+          myUserId={user.id}
+          canJoin={!mySeat}
+          onJoin={() => sock.joinWaitlist()}
+          onLeave={() => sock.leaveWaitlist()}
+        />
+      )}
 
       <div ref={feltRef} className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`} style={seatSizeVars(positions.length)}>
         <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} />
@@ -518,14 +538,15 @@ export function TablePage(): React.JSX.Element {
                   // socketServer.ts's canManageTable and its own doc
                   // comment). Inviting another real human (onAssignHumanClick)
                   // and rebuying (onRebuyClick) stay admin-only everywhere,
-                  // full stop — see DECISIONS.md.
+                  // full stop — see DECISIONS.md. Nobody but its own
+                  // player ever sits at a practice table.
                   onEmptySeatClick={
-                    (user.role === 'admin' || sock.canManageTable) && !mySeat && seat.status === 'empty' ? () => openSeatModal(seatId) : undefined
+                    (user.role === 'admin' || sock.canManageTable) && !sock.isPractice && !mySeat && seat.status === 'empty' ? () => openSeatModal(seatId) : undefined
                   }
                   onAddBotClick={
                     (user.role === 'admin' || sock.canManageTable) && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined
                   }
-                  onAssignHumanClick={user.role === 'admin' && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
+                  onAssignHumanClick={user.role === 'admin' && !sock.isPractice && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
                   // Owner-only, like every table control (the server rejects anyone else).
                   onRemoveBotClick={seat.isBot && canManage ? () => sock.removeBot(seatId) : undefined}
                   // Hidden in full screen / immersive mode — it renders as a
@@ -592,7 +613,7 @@ export function TablePage(): React.JSX.Element {
         <ActionLog events={sock.recentEvents} seats={state.seats} />
       )}
 
-      {ownerMenuOpen && canManage && tableId && (
+      {ownerMenuOpen && canManageLayout && tableId && (
         <OwnerMenu
           state={state}
           sock={sock}

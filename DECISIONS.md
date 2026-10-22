@@ -2007,3 +2007,59 @@ to this". Setting is ledgered as the difference, like any adjustment.
 `chips` is a 32-bit integer column (max ~$21.4M), so `MAX_BALANCE_CENTS`
 ($20M) bounds both routes — before this, a large enough adjustment would
 have failed inside Postgres.
+
+## Google sign-in front door, a one-time $1,000 welcome bonus, and bots-only practice tables
+
+Supersedes "Invite-only front door" and the $0-start / create-your-own-table
+parts of "Human player accounts" above.
+
+**Front door.** The login page is one button, Sign in with Google, plus the
+owner's gear in the corner. The invite-link guest form still appears for a
+visitor who arrives through an owner's `?assign=` link; the "paste your
+invitation link" prompt is gone. Guest→Google upgrade is gone too — a guest
+is someone the owner invited to a real table, and turning them into a
+practice-only player mid-session would have pulled them out of it.
+
+**Registration.** A Google sign-in needs a verified email to register. The
+account stores the Google profile photo (`users.avatar_url`, refreshed on
+every sign-in) and `last_login_at`. A new account gets `WELCOME_BONUS`
+($1,000), ledgered as `welcome_bonus` against the house — but only if
+`claimWelcomeBonus` succeeds: `welcome_bonus_claims` is keyed by the
+normalized email (lowercase, `+tag` dropped, Gmail dots dropped,
+googlemail→gmail) with a unique Google id, and has no foreign key to
+`users`, so it outlives account deletion. Delete and re-register with the
+same email (or the same Google account under a new email) → $0. Accounts
+that existed before this change are untouched: they never received the
+bonus, so their email has no claim row yet.
+
+**Practice tables.** Every signed-in player who isn't the owner plays only
+at a practice table of their own (`POST /tables/practice`): seat 0 is them,
+seats 1–4 are bots (they pick how many, so at most 5 seats), stakes are one
+of three presets (`PRACTICE_STAKES`), and the buy-in comes out of their
+balance. `POST /tables` (real tables) is owner-only now. The socket server
+keeps everyone else out: only the owning player and the admin can
+`join-table` a practice table; a practice-only player can't join any other
+table or redeem an invite; nobody can `assign-seat`, `take-seat`, waitlist,
+`add-seat` past 5, or change settings there (the admin can still watch and
+moderate). The table menu, voice bar and waitlist are hidden client-side.
+
+**Nothing about a practice table outlives it.** `HybridStore` keeps the
+table row, hands, chat and game reports in its own `practiceStore`
+(memory), so none of it is ever written to Postgres; `registry.close` calls
+`deleteTable`, which wipes them, and the id stays in `purgedTables` so a
+write still in flight (a report, a hand) is dropped instead of landing in
+the real store. The money still moves for real — buy-in, pot results and
+cash-out are ledgered — but those rows carry no table/hand id. The table
+closes when the player leaves (the usual "last human left" rule), when
+their account is deleted (closed first, so the stack is refunded before the
+row goes), or `PRACTICE_ABANDON_MS` (2 min) after their last connection to
+it drops, so a closed tab doesn't leave it running forever; a reload inside
+that window keeps it. Leaving mid-hand is refused, as everywhere ("You can
+leave once you fold or this hand ends") — closing the table mid-hand would
+void the hand and refund what was bet, an easy way out of any losing hand.
+
+**Local testing without Google.** `POST /test-only/google-login` (only with
+`ALLOW_TEST_SEEDING=true`) runs the real registration path for a given
+email and sets the session cookie; `VITE_DEV_GOOGLE_STUB=true` in a Vite
+dev server shows a stand-in form for it on the login page. Neither exists
+in a production build.

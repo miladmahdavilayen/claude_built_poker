@@ -36,11 +36,17 @@ describe('googleAuth', () => {
 
   it('maps a valid, verified token to a GoogleProfile', async () => {
     verifyIdTokenMock.mockResolvedValue({
-      getPayload: () => ({ sub: 'google-sub-123', email: 'alice@gmail.com', name: 'Alice' }),
+      getPayload: () => ({ sub: 'google-sub-123', email: 'alice@gmail.com', email_verified: true, name: 'Alice', picture: 'https://example.com/a.png' }),
     });
     const { verifyGoogleIdToken } = await import('../src/auth/googleAuth.js');
     const profile = await verifyGoogleIdToken('fake-token');
-    expect(profile).toEqual({ googleId: 'google-sub-123', email: 'alice@gmail.com', displayName: 'Alice' });
+    expect(profile).toEqual({
+      googleId: 'google-sub-123',
+      email: 'alice@gmail.com',
+      emailVerified: true,
+      displayName: 'Alice',
+      avatarUrl: 'https://example.com/a.png',
+    });
   });
 
   it('falls back to the email local-part as displayName when Google gives no name', async () => {

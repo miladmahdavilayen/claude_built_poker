@@ -4,7 +4,7 @@ import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
 import { requireAdmin } from '../middleware.js';
 
-export function registerAdminRoutes(app: FastifyInstance, store: Store, registry: TableRegistry): void {
+export function registerAdminRoutes(app: FastifyInstance, store: Store, registry: TableRegistry, closePracticeTableOf: (userId: string) => Promise<void>): void {
   app.get('/admin/tables', { preHandler: requireAdmin }, () => {
     return { tables: registry.list() };
   });
@@ -21,6 +21,7 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
         chips: u.chips,
         hasGoogle: u.googleId !== null,
         createdAt: u.createdAt.toISOString(),
+        lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
       })),
     };
   });
@@ -43,6 +44,7 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
       chips: user.chips,
       hasGoogle: user.googleId !== null,
       createdAt: user.createdAt.toISOString(),
+      lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
       netPlayResult,
       recentEntries: recentEntries.map((e) => ({
         id: e.id,
@@ -73,6 +75,7 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
     const user = await store.findUserById(userId);
     if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
     if (user.role === 'admin') return reply.code(400).send({ code: 'CANNOT_DELETE_ADMIN', message: 'The admin account cannot be deleted.' });
+    await closePracticeTableOf(userId);
     await store.deleteUser(userId);
     return { ok: true };
   });
@@ -89,6 +92,7 @@ export function registerAdminRoutes(app: FastifyInstance, store: Store, registry
         skipped.push(userId);
         continue;
       }
+      await closePracticeTableOf(userId);
       await store.deleteUser(userId);
       deleted.push(userId);
     }

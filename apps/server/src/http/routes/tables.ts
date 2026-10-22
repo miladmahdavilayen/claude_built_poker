@@ -1,33 +1,55 @@
 import { randomBytes } from 'node:crypto';
-import { CreateTableSchema, type TableSettings } from '@pokerclause/shared';
+import { CreatePracticeTableSchema, CreateTableSchema, type TableSettings } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
 import type { Store } from '../../db/store.js';
+import { openPracticeTable } from '../../game/practiceTables.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
-import { attachAuthIfPresent, requireAuth } from '../middleware.js';
+import { attachAuthIfPresent, requireAdmin, requireAuth } from '../middleware.js';
 
-export function registerTableRoutes(app: FastifyInstance, store: Store, registry: TableRegistry): void {
-  app.get('/tables', (req) => {
+/** A signed-in player who isn't the admin plays only at their own practice table — see practiceTables.ts. */
+export function isPracticeOnly(user: { isGuest: boolean; role: 'player' | 'admin' }): boolean {
+  return !user.isGuest && user.role !== 'admin';
+}
+
+/** `watchPracticeTable` closes a new practice table if its player never connects to it — see socketServer.ts. */
+export function registerTableRoutes(app: FastifyInstance, store: Store, registry: TableRegistry, watchPracticeTable: (tableId: string) => void = () => undefined): void {
+  // A practice-only player sees no public tables at all — only their own
+  // practice table, if they have one open, to get back to.
+  app.get('/tables', async (req) => {
     attachAuthIfPresent(req);
-    return { tables: registry.list().filter((t) => !t.isPrivate) };
+    const viewer = req.userId ? await store.findUserById(req.userId) : null;
+    if (viewer && isPracticeOnly(viewer)) {
+      const mine = registry.practiceTableOf(viewer.id);
+      return { tables: [], practiceTableId: mine?.tableId ?? null };
+    }
+    return { tables: registry.list().filter((t) => !t.isPrivate), practiceTableId: null };
   });
 
   app.get('/tables/:tableId', async (req, reply) => {
     attachAuthIfPresent(req);
     const { tableId } = req.params as { tableId: string };
     const table = registry.get(tableId);
-    if (!table) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
+    const visible = table && (!table.isPractice || req.userRole === 'admin' || req.userId === table.ownerId);
+    if (!visible) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
     return { tableId: table.tableId, name: table.name, settings: table.settings };
   });
 
-  // Guests can't create a table: they'd have nothing they could actually do
-  // with it (self-serve seating is still gated to the table's own creator
-  // OR the admin — see LiveTable.ownerId and socketServer.ts's canManageTable
-  // — and a guest never qualifies as either), so this avoids littering the
-  // lobby with tables nobody can ever sit down at. See DECISIONS.md.
-  app.post('/tables', { preHandler: requireAuth }, async (req, reply) => {
-    const creator = await store.findUserById(req.userId!);
-    if (!creator) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
-    if (creator.isGuest) return reply.code(403).send({ code: 'GUEST_CANNOT_CREATE_TABLE', message: 'Sign in with Google to create your own table.' });
+  app.post('/tables/practice', { preHandler: requireAuth }, async (req, reply) => {
+    const user = await store.findUserById(req.userId!);
+    if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
+    const body = CreatePracticeTableSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Pick 1 to 4 opponents, the stakes, and a buy-in.' });
+    const result = await openPracticeTable(store, registry, user, body.data);
+    if (!result.ok) return reply.code(result.status).send({ code: result.code, message: result.message, tableId: result.tableId });
+    watchPracticeTable(result.table.tableId);
+    reply.code(201);
+    return { tableId: result.table.tableId };
+  });
+
+  // Owner-only: real tables (public or private, any stakes) are the
+  // admin's. Every other signed-in player opens a practice table instead
+  // (above). See DECISIONS.md.
+  app.post('/tables', { preHandler: requireAdmin }, async (req, reply) => {
     const body = CreateTableSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid table config.' });
     const input = body.data;

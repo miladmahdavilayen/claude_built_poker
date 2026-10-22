@@ -15,7 +15,23 @@ export const users = pgTable('users', {
   avatarSeed: text('avatar_seed').notNull(),
   clientSeed: text('client_seed').notNull(),
   chips: integer('chips').notNull().default(0),
+  /** Google profile photo, refreshed on every Google sign-in. Null for guests and email/password accounts. */
+  avatarUrl: text('avatar_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+});
+
+/**
+ * One row per welcome bonus ever granted. Deliberately no foreign key to
+ * `users`: it must outlive the account, so deleting an account and signing
+ * up again with the same email (or the same Google account) never earns a
+ * second bonus. `emailKey` is the normalized email — see normalizeEmailKey.
+ */
+export const welcomeBonusClaims = pgTable('welcome_bonus_claims', {
+  emailKey: text('email_key').primaryKey(),
+  googleId: text('google_id').unique(),
+  amount: integer('amount').notNull(),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const sessions = pgTable('sessions', {
@@ -25,7 +41,7 @@ export const sessions = pgTable('sessions', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const chipLedgerReasonEnum = pgEnum('chip_ledger_reason', ['buy_in', 'cash_out', 'pot_win', 'rake', 'admin_adjust']);
+export const chipLedgerReasonEnum = pgEnum('chip_ledger_reason', ['buy_in', 'cash_out', 'pot_win', 'rake', 'admin_adjust', 'welcome_bonus']);
 
 /** Double-entry: every chip movement is a paired debit/credit row sharing a groupId. */
 export const chipLedger = pgTable('chip_ledger', {

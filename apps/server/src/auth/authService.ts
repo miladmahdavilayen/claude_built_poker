@@ -49,51 +49,68 @@ export async function register(store: Store, email: string, password: string, di
   return buildAuthResult(store, user);
 }
 
+/** Every new Google player's starting balance, granted once per person — ever. Play money only. */
+export const WELCOME_BONUS = 100_000; // $1,000 in cents
+
 /**
- * Logs in an existing Google-linked account, or creates a new one — Google
- * accounts have no password. This is the "no account to remember" path:
- * a valid, freshly-verified Google identity is already stronger proof of
- * "this is a real, returning person" than most password flows, so there's
- * no separate "register" step the way email/password has one.
+ * The key a welcome bonus is remembered by: the email lowercased, with any
+ * `+tag` dropped from the local part, and for Gmail the dots too (Gmail
+ * ignores both, so `J.Doe+poker@gmail.com` is the same inbox as
+ * `jdoe@gmail.com`). Stops the obvious ways of registering "the same email"
+ * twice; a genuinely different Google account is a different person as far
+ * as we can tell.
+ */
+export function normalizeEmailKey(email: string): string {
+  const lower = email.trim().toLowerCase();
+  const at = lower.lastIndexOf('@');
+  if (at <= 0) return lower;
+  let local = lower.slice(0, at).split('+')[0]!;
+  let domain = lower.slice(at + 1);
+  if (domain === 'googlemail.com') domain = 'gmail.com';
+  if (domain === 'gmail.com') local = local.replaceAll('.', '');
+  return `${local}@${domain}`;
+}
+
+/**
+ * Logs in an existing Google-linked account, or registers a new one —
+ * Google accounts have no password, and there's no separate "register"
+ * step: a valid, freshly-verified Google identity is the registration.
  *
- * Deliberately NO starting chip grant here (unlike a guest's automatic
- * $5,000) — a fresh Google account starts at 0. Only the admin can give a
- * real (non-guest) player their first buy-in or a rebuy, by design: see
+ * A new account needs a verified email, and gets the WELCOME_BONUS — but
+ * only the first time that email (or that Google account) ever registers.
+ * The claim is kept in its own table that outlives the account, so
+ * deleting an account and signing up again starts the new one at $0. See
  * DECISIONS.md.
  */
 export async function loginOrRegisterWithGoogle(store: Store, profile: GoogleProfile): Promise<AuthResult> {
   const existing = await store.findUserByGoogleId(profile.googleId);
-  if (existing) return buildAuthResult(store, existing);
-  if (profile.email) {
-    const emailTaken = await store.findUserByEmail(profile.email);
-    if (emailTaken) {
-      throw new AuthError('EMAIL_TAKEN', 'An account with this email already exists.');
-    }
+  if (existing) return buildAuthResult(store, await store.recordGoogleLogin(existing.id, profile.avatarUrl));
+  if (!profile.email || !profile.emailVerified) {
+    throw new AuthError('EMAIL_NOT_VERIFIED', 'Your Google account needs a verified email address to sign up.');
   }
-  const created = await store.createGoogleAccount(profile.googleId, profile.email, profile.displayName);
-  return buildAuthResult(store, created);
-}
-
-/** Preserves the same user row (id, chips, hand history) — a guest becomes a Google-backed account in place. */
-export async function upgradeGuestWithGoogle(store: Store, userId: string, profile: GoogleProfile): Promise<AuthResult> {
-  const user = await store.findUserById(userId);
-  if (!user) throw new AuthError('USER_NOT_FOUND', 'User not found.');
-  if (!user.isGuest) throw new AuthError('NOT_A_GUEST', 'This account is not a guest account.');
-  const existingGoogle = await store.findUserByGoogleId(profile.googleId);
-  if (existingGoogle) throw new AuthError('GOOGLE_ACCOUNT_ALREADY_LINKED', 'This Google account is already linked to a different user.');
-  if (profile.email) {
-    const emailTaken = await store.findUserByEmail(profile.email);
-    if (emailTaken && emailTaken.id !== userId) throw new AuthError('EMAIL_TAKEN', 'An account with this email already exists.');
-  }
-  const linked = await store.linkGoogleToGuest(userId, profile.googleId, profile.email);
-  return buildAuthResult(store, linked);
+  const emailTaken = await store.findUserByEmail(profile.email);
+  if (emailTaken) throw new AuthError('EMAIL_TAKEN', 'An account with this email already exists.');
+  const created = await store.createGoogleAccount({
+    googleId: profile.googleId,
+    email: profile.email,
+    displayName: profile.displayName,
+    avatarUrl: profile.avatarUrl,
+  });
+  const firstTime = await store.claimWelcomeBonus(normalizeEmailKey(profile.email), profile.googleId, WELCOME_BONUS);
+  if (!firstTime) return buildAuthResult(store, created);
+  const funded = await store.adjustUserChips(created.id, WELCOME_BONUS);
+  await store.recordLedgerEntries([
+    { userId: created.id, isHouse: false, amount: WELCOME_BONUS, reason: 'welcome_bonus' },
+    { userId: null, isHouse: true, amount: -WELCOME_BONUS, reason: 'welcome_bonus' },
+  ]);
+  return buildAuthResult(store, funded);
 }
 
 /**
  * Email/password login — kept ONLY for the admin/owner account (see
  * ensureAdminAccount in index.ts). There is no public registration path
- * for this anymore: a human player signs in with Google or plays as a
- * guest, full stop. See DECISIONS.md.
+ * for this: a human player signs in with Google, or plays as a guest
+ * through an owner's invite link. See DECISIONS.md.
  */
 export async function login(store: Store, email: string, password: string): Promise<AuthResult> {
   const user = await store.findUserByEmail(email);

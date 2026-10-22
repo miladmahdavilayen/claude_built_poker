@@ -9,6 +9,7 @@ import type {
   TableRecord,
   UserRecord,
   GameReportRecord,
+  GoogleAccountInput,
 } from './store.js';
 
 interface LedgerRow extends LedgerEntryInput {
@@ -28,6 +29,9 @@ export class MemoryStore implements Store {
   private readonly tables = new Map<string, TableRecord>();
   private readonly hands = new Map<string, HandRow>();
   private readonly chat: ChatMessageRecord[] = [];
+  /** Never cleared by deleteUser — a claimed bonus outlives the account (see schema.ts's welcomeBonusClaims). */
+  private readonly welcomeBonusEmails = new Set<string>();
+  private readonly welcomeBonusGoogleIds = new Set<string>();
 
   async createGuestUser(displayName: string): Promise<UserRecord> {
     const user: UserRecord = {
@@ -41,7 +45,9 @@ export class MemoryStore implements Store {
       avatarSeed: randomBytes(8).toString('hex'),
       clientSeed: randomBytes(16).toString('hex'),
       chips: 0,
+      avatarUrl: null,
       createdAt: new Date(),
+      lastLoginAt: null,
     };
     this.users.set(user.id, user);
     return Promise.resolve(user);
@@ -60,7 +66,9 @@ export class MemoryStore implements Store {
       avatarSeed: randomBytes(8).toString('hex'),
       clientSeed: randomBytes(16).toString('hex'),
       chips: 0,
+      avatarUrl: null,
       createdAt: new Date(),
+      lastLoginAt: null,
     };
     this.users.set(user.id, user);
     this.usersByEmail.set(email, user.id);
@@ -81,26 +89,44 @@ export class MemoryStore implements Store {
     return Promise.resolve(id ? (this.users.get(id) ?? null) : null);
   }
 
-  async createGoogleAccount(googleId: string, email: string | null, displayName: string): Promise<UserRecord> {
-    if (this.usersByGoogleId.has(googleId)) throw new Error('GOOGLE_ACCOUNT_ALREADY_LINKED');
-    if (email && this.usersByEmail.has(email)) throw new Error('EMAIL_TAKEN');
+  async createGoogleAccount(input: GoogleAccountInput): Promise<UserRecord> {
+    if (this.usersByGoogleId.has(input.googleId)) throw new Error('GOOGLE_ACCOUNT_ALREADY_LINKED');
+    if (this.usersByEmail.has(input.email)) throw new Error('EMAIL_TAKEN');
+    const now = new Date();
     const user: UserRecord = {
       id: randomUUID(),
-      email,
+      email: input.email,
       passwordHash: null,
-      googleId,
-      displayName,
+      googleId: input.googleId,
+      displayName: input.displayName,
       isGuest: false,
       role: 'player',
       avatarSeed: randomBytes(8).toString('hex'),
       clientSeed: randomBytes(16).toString('hex'),
       chips: 0,
-      createdAt: new Date(),
+      avatarUrl: input.avatarUrl,
+      createdAt: now,
+      lastLoginAt: now,
     };
     this.users.set(user.id, user);
-    this.usersByGoogleId.set(googleId, user.id);
-    if (email) this.usersByEmail.set(email, user.id);
+    this.usersByGoogleId.set(input.googleId, user.id);
+    this.usersByEmail.set(input.email, user.id);
     return Promise.resolve(user);
+  }
+
+  async recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error('USER_NOT_FOUND');
+    const updated: UserRecord = { ...user, avatarUrl, lastLoginAt: new Date() };
+    this.users.set(userId, updated);
+    return Promise.resolve(updated);
+  }
+
+  async claimWelcomeBonus(emailKey: string, googleId: string, _amount: number): Promise<boolean> {
+    if (this.welcomeBonusEmails.has(emailKey) || this.welcomeBonusGoogleIds.has(googleId)) return Promise.resolve(false);
+    this.welcomeBonusEmails.add(emailKey);
+    this.welcomeBonusGoogleIds.add(googleId);
+    return Promise.resolve(true);
   }
 
   async createGoogleAccountFromGuest(input: {
@@ -125,7 +151,9 @@ export class MemoryStore implements Store {
       avatarSeed: input.avatarSeed,
       clientSeed: input.clientSeed,
       chips: input.chips,
+      avatarUrl: null,
       createdAt: new Date(),
+      lastLoginAt: null,
     };
     this.users.set(user.id, user);
     this.usersByGoogleId.set(input.googleId, user.id);
@@ -258,7 +286,7 @@ export class MemoryStore implements Store {
     return Promise.resolve(this.ledger.filter((e) => e.userId === userId && e.reason === 'pot_win').reduce((s, e) => s + e.amount, 0));
   }
 
-  async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord> {
+  async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null; ephemeral?: boolean }): Promise<TableRecord> {
     const table: TableRecord = {
       id: randomUUID(),
       name: input.name,
@@ -283,6 +311,21 @@ export class MemoryStore implements Store {
   async closeTable(id: string): Promise<void> {
     const t = this.tables.get(id);
     if (t) this.tables.set(id, { ...t, status: 'closed' });
+    return Promise.resolve();
+  }
+
+  /** Mirrors the real DB's cascades from `tables` (hands, chat), plus the table's game reports, which have no foreign key. */
+  async deleteTable(id: string): Promise<void> {
+    this.tables.delete(id);
+    for (const [handId, h] of [...this.hands]) {
+      if (h.tableId === id) this.hands.delete(handId);
+    }
+    for (let i = this.chat.length - 1; i >= 0; i--) {
+      if (this.chat[i]!.tableId === id) this.chat.splice(i, 1);
+    }
+    for (const [reportId, r] of [...this.gameReports]) {
+      if (r.tableId === id) this.gameReports.delete(reportId);
+    }
     return Promise.resolve();
   }
 

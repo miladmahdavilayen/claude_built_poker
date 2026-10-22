@@ -6,6 +6,7 @@ import type { Server } from 'socket.io';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { issueAccessToken } from '../src/auth/session.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
+import type { LiveTable } from '../src/game/liveTable.js';
 import type { TableRegistry } from '../src/game/tableRegistry.js';
 import { attachSocketServer } from '../src/socket/socketServer.js';
 
@@ -35,6 +36,7 @@ describe('socketServer: live signaling and access control', () => {
   let io: Server;
   let registry: TableRegistry;
   let closeAllTables: () => Promise<void>;
+  let watchPracticeTable: (tableId: string) => void;
   let baseUrl: string;
   // Held by reference (not destructured) so a test can set `deps.adminUserId`
   // AFTER attachSocketServer is already running — the real app resolves this
@@ -47,7 +49,7 @@ describe('socketServer: live signaling and access control', () => {
     store = new MemoryStore();
     httpServer = createServer();
     deps = { store, corsOrigin: 'http://localhost:5173', adminUserId: '' };
-    ({ io, registry, closeAllTables } = attachSocketServer(httpServer, deps));
+    ({ io, registry, closeAllTables, watchPracticeTable } = attachSocketServer(httpServer, deps));
     await new Promise<void>((resolve) => httpServer.listen(0, resolve));
     const { port } = httpServer.address() as AddressInfo;
     baseUrl = `http://localhost:${String(port)}`;
@@ -76,7 +78,7 @@ describe('socketServer: live signaling and access control', () => {
 
   /** A signed-in, non-guest human (what a real Google sign-in produces) — this repo's test harness can't drive a real Google OAuth click-through, so this creates the account directly in the store exactly as `loginOrRegisterWithGoogle` would, the same shortcut `makeUser`/`makeAdminUser` already take for guest/admin accounts. */
   async function makeRegisteredUser(name: string, chips = 0): Promise<{ userId: string; token: string }> {
-    const created = await store.createGoogleAccount(`google-${name}`, `${name.toLowerCase()}@example.com`, name);
+    const created = await store.createGoogleAccount({ googleId: `google-${name}`, email: `${name.toLowerCase()}@example.com`, displayName: name, avatarUrl: null });
     const user = chips > 0 ? await store.adjustUserChips(created.id, chips) : created;
     return { userId: user.id, token: issueAccessToken(user) };
   }
@@ -512,57 +514,179 @@ describe('socketServer: live signaling and access control', () => {
     aliceSocket.close();
   });
 
-  it("a signed-in (non-guest) human can self-serve seat themselves and add bots — but ONLY on the table they created, never anyone else's, and never by generating an invite link", async () => {
+  /** Opens a practice table for `owner` the way POST /tables/practice does: seated in seat 0, one bot per remaining seat. */
+  async function openPractice(owner: { userId: string }, bots: number, buyIn = 200): Promise<LiveTable> {
+    const user = (await store.findUserById(owner.userId))!;
+    const table = await registry.createTable('Practice', { ...SETTINGS, maxSeats: bots + 1, isPrivate: true }, owner.userId, null, true);
+    table.takeSeat(0, user.id, { displayName: user.displayName, isGuest: false, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed }, buyIn);
+    await store.adjustUserChips(user.id, -buyIn);
+    for (let seat = 1; seat <= bots; seat++) table.addBot(seat, 'nit', buyIn);
+    return table;
+  }
+
+  it('a practice table: its owner can swap computer players, but never invite a human, add seats, change settings, or let anyone else in', async () => {
     const bob = await makeRegisteredUser('Bob', 500);
-    const ownTable = await registry.createTable('Bob’s Practice Table', SETTINGS, bob.userId, null);
-    const othersTable = await registry.createTable('Someone Else’s Table', SETTINGS, null, null);
+    const table = await openPractice(bob, 2);
 
     const bobSocket = connect(bob.token);
     await waitFor(bobSocket, 'connect');
-
     // Both listeners registered BEFORE the triggering emit — join-table
-    // fires 'table-permissions' and 'state' back to back, close enough
-    // together that registering the second listener only after awaiting
-    // the first risks missing it entirely (a one-time EventEmitter
-    // listener attached after an event already fired never sees it).
-    const permissionsPromise = waitFor<{ canManageTable: boolean }>(bobSocket, 'table-permissions');
+    // fires 'table-permissions' and 'state' back to back.
+    const permissionsPromise = waitFor<{ canManageTable: boolean; canManageLayout: boolean; isPractice: boolean }>(bobSocket, 'table-permissions');
     const statePromise = waitFor(bobSocket, 'state');
-    bobSocket.emit('join-table', { tableId: ownTable.tableId });
-    // The one-shot permissions signal join-table sends — this is what the
-    // client UI gates "Sit here"/"Add bot" on (see socketServer.ts).
-    expect((await permissionsPromise).canManageTable).toBe(true);
+    bobSocket.emit('join-table', { tableId: table.tableId });
+    expect(await permissionsPromise).toEqual({ canManageTable: true, canManageLayout: false, isPractice: true });
     await statePromise;
 
-    const seatFilled = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
-      p.state.seats.some((s) => s.seatId === 0 && s.status !== 'empty'),
+    const botRemoved = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
+      p.state.seats.some((s) => s.seatId === 2 && s.status === 'empty'),
     );
-    bobSocket.emit('take-seat', { tableId: ownTable.tableId, seatId: 0, buyIn: 200 });
-    await seatFilled;
-    expect(ownTable.seatOfUser(bob.userId)).toBe(0);
-
+    bobSocket.emit('remove-bot', { seatId: 2 });
+    await botRemoved;
     const botAdded = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
-      p.state.seats.some((s) => s.seatId === 1 && s.status !== 'empty'),
+      p.state.seats.some((s) => s.seatId === 2 && s.status !== 'empty'),
     );
-    bobSocket.emit('add-bot', { seatId: 1, persona: 'nit', buyIn: 100 });
+    bobSocket.emit('add-bot', { seatId: 2, persona: 'maniac', buyIn: 100 });
     await botAdded;
 
-    // Still can't invite a real human to their own table — that stays admin-only.
-    const assignDenied = await new Promise<{ ok: boolean; code?: string }>((resolve) => {
-      bobSocket.emit('assign-seat', { seatId: 2, buyIn: 100 }, resolve);
-    });
-    expect(assignDenied).toEqual({ ok: false, code: 'ADMIN_REQUIRED', message: expect.any(String) as string });
+    const ack = (event: string, payload?: unknown): Promise<{ ok: boolean; code?: string }> =>
+      new Promise((resolve) => (payload === undefined ? bobSocket.emit(event, resolve) : bobSocket.emit(event, payload, resolve)));
+    expect((await ack('assign-seat', { seatId: 2, buyIn: 100 })).code).toBe('ADMIN_REQUIRED');
+    expect((await ack('add-seat')).code).toBe('ADMIN_REQUIRED');
+    expect((await ack('update-table-settings', { isPrivate: false })).code).toBe('ADMIN_REQUIRED');
+    expect((await ack('delete-seat', { seatId: 2 })).code).toBe('ADMIN_REQUIRED');
+    const waitlistDenied = waitFor<{ code: string }>(bobSocket, 'error');
+    bobSocket.emit('join-waitlist');
+    expect((await waitlistDenied).code).toBe('PRACTICE_TABLE');
 
-    // A different table — even unowned — is off-limits the same as any regular player.
-    const otherPermissionsPromise = waitFor<{ canManageTable: boolean }>(bobSocket, 'table-permissions');
-    const otherStatePromise = waitFor(bobSocket, 'state');
-    bobSocket.emit('join-table', { tableId: othersTable.tableId });
-    expect((await otherPermissionsPromise).canManageTable).toBe(false);
-    await otherStatePromise;
-    const takeSeatDenied = waitFor<{ code: string }>(bobSocket, 'error');
-    bobSocket.emit('take-seat', { tableId: othersTable.tableId, seatId: 0, buyIn: 100 });
+    // Nobody else gets in — not another player, not a guest with a link.
+    const carol = await makeRegisteredUser('Carol', 500);
+    const guest = await makeUser('Guest');
+    for (const intruder of [carol, guest]) {
+      const sock = connect(intruder.token);
+      await waitFor(sock, 'connect');
+      const denied = waitFor<{ code: string }>(sock, 'error');
+      sock.emit('join-table', { tableId: table.tableId });
+      expect((await denied).code).toBe('TABLE_NOT_FOUND');
+      sock.close();
+    }
+
+    // Even the admin can't hand out a seat at it.
+    const admin = await makeAdminUser('Owner');
+    const adminSocket = connect(admin.token);
+    await waitFor(adminSocket, 'connect');
+    const adminState = waitFor(adminSocket, 'state');
+    adminSocket.emit('join-table', { tableId: table.tableId });
+    await adminState;
+    const adminAssign = await new Promise<{ ok: boolean; code?: string }>((resolve) => adminSocket.emit('assign-seat', { seatId: 2, buyIn: 100 }, resolve));
+    expect(adminAssign.code).toBe('PRACTICE_TABLE');
+    const adminSeat = waitFor<{ code: string }>(adminSocket, 'error');
+    adminSocket.emit('take-seat', { tableId: table.tableId, seatId: 2, buyIn: 100 });
+    expect((await adminSeat).code).toBe('PRACTICE_TABLE');
+
+    adminSocket.close();
+    bobSocket.close();
+  });
+
+  it('a Google player can join no table but their own — not a public one, not through an invite link', async () => {
+    const admin = await makeAdminUser('Owner');
+    const newbie = await makeRegisteredUser('Newbie', 500);
+    const table = await registry.createTable('Real Table', SETTINGS, null, null);
+
+    const newbieSocket = connect(newbie.token);
+    await waitFor(newbieSocket, 'connect');
+    const denied = waitFor<{ code: string }>(newbieSocket, 'error');
+    newbieSocket.emit('join-table', { tableId: table.tableId });
+    expect((await denied).code).toBe('PRACTICE_ONLY');
+
+    const adminSocket = connect(admin.token);
+    await waitFor(adminSocket, 'connect');
+    const adminState = waitFor(adminSocket, 'state');
+    adminSocket.emit('join-table', { tableId: table.tableId });
+    await adminState;
+    const token = await new Promise<string>((resolve) => {
+      adminSocket.emit('assign-seat', { seatId: 1, buyIn: 150 }, (result: { ok: true; token: string } | { ok: false }) => {
+        if (result.ok) resolve(result.token);
+      });
+    });
+    const redeemDenied = waitFor<{ code: string }>(newbieSocket, 'error');
+    newbieSocket.emit('redeem-seat-assignment', { token });
+    expect((await redeemDenied).code).toBe('PRACTICE_ONLY');
+    const takeSeatDenied = waitFor<{ code: string }>(newbieSocket, 'error');
+    newbieSocket.emit('take-seat', { tableId: table.tableId, seatId: 0, buyIn: 100 });
     expect((await takeSeatDenied).code).toBe('SELF_SERVE_DISABLED');
+    expect(table.seatOfUser(newbie.userId)).toBeNull();
+
+    adminSocket.close();
+    newbieSocket.close();
+  });
+
+  it('leaving a practice table refunds the stack and deletes the table and everything recorded at it', async () => {
+    const bob = await makeRegisteredUser('Bob', 500);
+    const table = await openPractice(bob, 1, 200);
+    expect((await store.findUserById(bob.userId))!.chips).toBe(300);
+
+    const bobSocket = connect(bob.token);
+    await waitFor(bobSocket, 'connect');
+    const joined = waitFor(bobSocket, 'state');
+    bobSocket.emit('join-table', { tableId: table.tableId });
+    await joined;
+    bobSocket.emit('chat', { message: 'gl' });
+    await waitFor(bobSocket, 'chat');
+    expect(await store.listRecentChat(table.tableId, 10)).toHaveLength(1);
+
+    const closed = waitFor<{ reason: string }>(bobSocket, 'table-closed');
+    await emitWithAck(bobSocket, 'leave-table');
+    await closed;
+    expect(registry.get(table.tableId)).toBeNull();
+    expect(await store.getTable(table.tableId)).toBeNull();
+    expect(await store.listRecentChat(table.tableId, 10)).toHaveLength(0);
+    expect((await store.findUserById(bob.userId))!.chips).toBe(500);
 
     bobSocket.close();
+  });
+
+  it('a practice table whose player never connects closes itself once watched', async () => {
+    process.env.PRACTICE_ABANDON_MS = '200';
+    try {
+      const bob = await makeRegisteredUser('Bob', 500);
+      const table = await openPractice(bob, 1, 200);
+      watchPracticeTable(table.tableId);
+      await new Promise((r) => setTimeout(r, 500));
+      expect(registry.get(table.tableId)).toBeNull();
+      expect((await store.findUserById(bob.userId))!.chips).toBe(500);
+    } finally {
+      delete process.env.PRACTICE_ABANDON_MS;
+    }
+  });
+
+  it('a practice table closes itself (refunding the stack) once its player has been disconnected for a while, but survives a quick reconnect', async () => {
+    process.env.PRACTICE_ABANDON_MS = '300';
+    try {
+      const bob = await makeRegisteredUser('Bob', 500);
+      const table = await openPractice(bob, 1, 200);
+
+      const first = connect(bob.token);
+      await waitFor(first, 'connect');
+      first.emit('join-table', { tableId: table.tableId });
+      await waitFor(first, 'state');
+      first.close();
+      // A reload: back within the grace period.
+      await new Promise((r) => setTimeout(r, 100));
+      const second = connect(bob.token);
+      await waitFor(second, 'connect');
+      second.emit('join-table', { tableId: table.tableId });
+      await waitFor(second, 'state');
+      await new Promise((r) => setTimeout(r, 500));
+      expect(registry.get(table.tableId)).not.toBeNull();
+
+      second.close();
+      await new Promise((r) => setTimeout(r, 700));
+      expect(registry.get(table.tableId)).toBeNull();
+      expect((await store.findUserById(bob.userId))!.chips).toBe(500);
+    } finally {
+      delete process.env.PRACTICE_ABANDON_MS;
+    }
   });
 
   it('assign-seat + redeem-seat-assignment: a one-time, seat-and-amount-specific invite link, ignoring anything the redeemer tries to supply themselves, consumed on use', async () => {
@@ -610,38 +734,6 @@ describe('socketServer: live signaling and access control', () => {
     adminSocket.close();
     aliceSocket.close();
     bobSocket.close();
-  });
-
-  it('an invite link seats a brand-new $0 Google account at the full linked buy-in, the owner covering it (and a later rebuy)', async () => {
-    const admin = await makeAdminUser('Owner');
-    const newbie = await makeRegisteredUser('Newbie'); // 0 chips, like a fresh Google sign-in
-    const table = await registry.createTable('Fresh Account Table', SETTINGS, null, null);
-
-    const adminSocket = connect(admin.token);
-    const newbieSocket = connect(newbie.token);
-    await Promise.all([waitFor(adminSocket, 'connect'), waitFor(newbieSocket, 'connect')]);
-    adminSocket.emit('join-table', { tableId: table.tableId });
-    newbieSocket.emit('join-table', { tableId: table.tableId });
-    await Promise.all([waitFor(adminSocket, 'state'), waitFor(newbieSocket, 'state')]);
-
-    let sawError: { code: string } | null = null;
-    newbieSocket.on('error', (e: { code: string }) => (sawError = e));
-    await assignAndSeat(adminSocket, newbieSocket, 1, 150);
-
-    expect(sawError).toBeNull();
-    expect(table.seatOfUser(newbie.userId)).toBe(1);
-    expect(table.state.seats[1]?.stack).toBe(150);
-    expect((await store.findUserById(newbie.userId))?.chips).toBe(0);
-
-    adminSocket.emit('admin-rebuy', { seatId: 1, amount: 50 });
-    await waitForState<{ state: { seats: { seatId: number; stack: number }[] } }>(
-      newbieSocket,
-      (p) => p.state.seats.find((s) => s.seatId === 1)?.stack === 200,
-    );
-    expect(sawError).toBeNull();
-
-    adminSocket.close();
-    newbieSocket.close();
   });
 
   it("assign-seat's nickname is visible only to the admin, never to the redeemer or a spectator", async () => {

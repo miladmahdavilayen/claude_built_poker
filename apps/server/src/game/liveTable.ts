@@ -207,6 +207,8 @@ export class LiveTable {
     public inviteCode: string | null = null,
     /** The user who created this table (never a guest — see the /tables route), or null for the built-in seeded public tables. Lets that one user self-serve seat themselves and add bots on THIS table only, same as the admin can on any table — see socketServer.ts's canManageTable. */
     readonly ownerId: string | null = null,
+    /** A signed-in player's practice table (see practiceTables.ts): only its owner and computer players ever sit here, and every record of it is deleted when it closes. */
+    readonly isPractice = false,
   ) {
     this.tableId = tableId;
     this.name = name;

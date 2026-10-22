@@ -11,6 +11,8 @@ export interface TableSummary {
   seatsFilled: number;
   maxSeats: number;
   isPrivate: boolean;
+  isPractice: boolean;
+  ownerId: string | null;
 }
 
 export type BroadcastHandler = (tableId: string, perSeat: Map<number | null, BroadcastPayload>, rawEvents: readonly GameEvent[]) => void;
@@ -32,8 +34,8 @@ export class TableRegistry {
     private readonly seatsVacatedHandler: SeatsVacatedHandler = () => undefined,
   ) {}
 
-  async createTable(name: string, settings: TableSettings, createdBy: string | null, inviteCode: string | null): Promise<LiveTable> {
-    const record = await this.store.createTable({ name, config: settings as unknown as Record<string, unknown>, inviteCode, createdBy });
+  async createTable(name: string, settings: TableSettings, createdBy: string | null, inviteCode: string | null, isPractice = false): Promise<LiveTable> {
+    const record = await this.store.createTable({ name, config: settings as unknown as Record<string, unknown>, inviteCode, createdBy, ephemeral: isPractice });
     const table = new LiveTable(
       record.id,
       name,
@@ -47,6 +49,7 @@ export class TableRegistry {
       },
       inviteCode,
       createdBy,
+      isPractice,
     );
     this.tables.set(record.id, table);
     return table;
@@ -64,7 +67,17 @@ export class TableRegistry {
       seatsFilled: t.seats.filter((s) => s.userId !== null).length,
       maxSeats: t.visibleSeatCount,
       isPrivate: t.settings.isPrivate,
+      isPractice: t.isPractice,
+      ownerId: t.ownerId,
     }));
+  }
+
+  /** The practice table this user owns, if one is open — a player has at most one at a time. */
+  practiceTableOf(userId: string): LiveTable | null {
+    for (const t of this.tables.values()) {
+      if (t.isPractice && t.ownerId === userId) return t;
+    }
+    return null;
   }
 
   async close(tableId: string): Promise<void> {
@@ -72,7 +85,9 @@ export class TableRegistry {
     if (!table) return;
     table.dispose();
     this.tables.delete(tableId);
-    await this.store.closeTable(tableId);
+    // A practice table leaves nothing behind; a real one is kept, marked closed.
+    if (table.isPractice) await this.store.deleteTable(tableId);
+    else await this.store.closeTable(tableId);
   }
 
   newTableId(): string {

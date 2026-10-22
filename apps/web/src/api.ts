@@ -8,6 +8,15 @@ export interface PublicUser {
   role: 'player' | 'admin';
   chips: number;
   avatarSeed: string;
+  /** Google profile photo, if any. */
+  avatarUrl: string | null;
+  hasGoogle: boolean;
+  createdAt: string;
+}
+
+/** A signed-in player who isn't the admin plays only at their own practice table, against computer players. */
+export function isPracticeOnly(user: PublicUser): boolean {
+  return !user.isGuest && user.role !== 'admin';
 }
 
 export interface AuthResponse {
@@ -84,8 +93,14 @@ export function googleSignIn(idToken: string): Promise<AuthResponse> {
   return postJson('/auth/google', { idToken });
 }
 
-export function upgradeWithGoogle(idToken: string, accessToken: string): Promise<AuthResponse> {
-  return postJson('/auth/upgrade/google', { idToken }, accessToken);
+/**
+ * Local development only: signs in exactly as a verified Google account
+ * with this email would, through a route the server only has when
+ * ALLOW_TEST_SEEDING=true — see apps/server's testSeed.ts. Lets the
+ * player flow be tried without a Google OAuth client.
+ */
+export function devGoogleSignIn(email: string, displayName: string): Promise<AuthResponse> {
+  return postJson('/test-only/google-login', { email, displayName });
 }
 
 export function googleSignInAvailable(): Promise<boolean> {
@@ -97,6 +112,10 @@ export function googleSignInAvailable(): Promise<boolean> {
 
 export function refresh(): Promise<AuthResponse> {
   return fetch(`${API_BASE}/auth/refresh`, { method: 'POST', credentials: 'include' }).then((res) => parseOrThrow<AuthResponse>(res));
+}
+
+export function getMe(accessToken: string): Promise<{ user: PublicUser }> {
+  return getJson('/auth/me', accessToken);
 }
 
 export function logout(): Promise<{ ok: true }> {
@@ -119,8 +138,24 @@ export interface TableSummaryDto {
   isPrivate: boolean;
 }
 
-export function listTables(): Promise<{ tables: TableSummaryDto[] }> {
-  return fetch(`${API_BASE}/tables`).then((res) => parseOrThrow<{ tables: TableSummaryDto[] }>(res));
+/** For a practice-only player, `tables` is always empty and `practiceTableId` is their open practice table, if any. */
+export function listTables(accessToken: string | null): Promise<{ tables: TableSummaryDto[]; practiceTableId: string | null }> {
+  return fetch(`${API_BASE}/tables`, { headers: authHeaders(accessToken ?? undefined) }).then((res) =>
+    parseOrThrow<{ tables: TableSummaryDto[]; practiceTableId: string | null }>(res),
+  );
+}
+
+export type PracticeStakes = 'low' | 'medium' | 'high';
+
+/** Mirrors PRACTICE_STAKES in packages/shared/src/schemas.ts (cents) — the server is the one that enforces it. */
+export const PRACTICE_STAKES: Record<PracticeStakes, { label: string; minBuyIn: number; maxBuyIn: number }> = {
+  low: { label: '$0.50/$1', minBuyIn: 4_000, maxBuyIn: 10_000 },
+  medium: { label: '$1/$2', minBuyIn: 8_000, maxBuyIn: 20_000 },
+  high: { label: '$5/$10', minBuyIn: 40_000, maxBuyIn: 100_000 },
+};
+
+export function createPracticeTable(input: { bots: number; stakes: PracticeStakes; buyIn: number }, accessToken: string): Promise<{ tableId: string }> {
+  return postJson('/tables/practice', input, accessToken);
 }
 
 /** Amounts are integer cents — see packages/shared/src/money.ts. */
@@ -144,19 +179,22 @@ export function createTable(
 export interface LedgerEntryDto {
   id: string;
   amount: number;
-  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust';
+  reason: 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus';
   tableId: string | null;
   createdAt: string;
 }
 
-export interface MySummaryDto {
-  balance: number;
-  netPlayResult: number;
-  recentEntries: LedgerEntryDto[];
+export interface MyProfileDto {
+  displayName: string;
+  email: string | null;
+  avatarUrl: string | null;
+  signInMethod: 'google' | 'guest' | 'password';
+  createdAt: string;
+  lastLoginAt: string | null;
 }
 
-export function getMySummary(accessToken: string): Promise<MySummaryDto> {
-  return getJson('/users/me/summary', accessToken);
+export function getMyProfile(accessToken: string): Promise<MyProfileDto> {
+  return getJson('/users/me/profile', accessToken);
 }
 
 export function deleteMyAccount(accessToken: string): Promise<{ ok: true }> {

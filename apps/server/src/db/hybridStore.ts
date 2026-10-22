@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { MemoryStore } from './memoryStore.js';
 import type {
   ChatMessageRecord,
@@ -9,6 +10,7 @@ import type {
   TableRecord,
   UserRecord,
   GameReportRecord,
+  GoogleAccountInput,
 } from './store.js';
 
 /**
@@ -27,6 +29,16 @@ import type {
  */
 export class HybridStore implements Store {
   private readonly guestStore = new MemoryStore();
+  /**
+   * Practice tables (see game/practiceTables.ts) — the table row, its
+   * hands, chat and game reports — live only here, never in `real`, and
+   * `deleteTable` wipes them. A practice table's id stays in
+   * `purgedTables` after that, so a write still in flight when it closed
+   * (a game report, a hand) is dropped instead of landing anywhere.
+   */
+  private readonly practiceStore = new MemoryStore();
+  private readonly practiceTables = new Set<string>();
+  private readonly purgedTables = new Set<string>();
 
   constructor(private readonly real: Store) {}
 
@@ -44,8 +56,16 @@ export class HybridStore implements Store {
     return this.real.createAccount(email, passwordHash, displayName);
   }
 
-  createGoogleAccount(googleId: string, email: string | null, displayName: string): Promise<UserRecord> {
-    return this.real.createGoogleAccount(googleId, email, displayName);
+  createGoogleAccount(input: GoogleAccountInput): Promise<UserRecord> {
+    return this.real.createGoogleAccount(input);
+  }
+
+  recordGoogleLogin(userId: string, avatarUrl: string | null): Promise<UserRecord> {
+    return this.real.recordGoogleLogin(userId, avatarUrl); // guests never sign in with Google
+  }
+
+  claimWelcomeBonus(emailKey: string, googleId: string, amount: number): Promise<boolean> {
+    return this.real.claimWelcomeBonus(emailKey, googleId, amount);
   }
 
   createGoogleAccountFromGuest(input: {
@@ -161,8 +181,19 @@ export class HybridStore implements Store {
   }
 
   async recordLedgerEntries(entries: readonly LedgerEntryInput[]): Promise<void> {
+    // A practice table's buy-ins, cash-outs and hand results still move a
+    // real player's balance, so they're ledgered like any other — just
+    // without the table/hand ids, which point at records that are never
+    // persisted (see practiceTables above).
     const resolved = await Promise.all(
-      entries.map(async (e) => ({ ...e, userId: await this.anonymizeGuestUserId(e.userId) })),
+      entries.map(async (e) => {
+        const entry = { ...e, userId: await this.anonymizeGuestUserId(e.userId) };
+        if (e.tableId && this.isPracticeOrPurged(e.tableId)) {
+          delete entry.tableId;
+          delete entry.handId;
+        }
+        return entry;
+      }),
     );
     return this.real.recordLedgerEntries(resolved);
   }
@@ -191,10 +222,18 @@ export class HybridStore implements Store {
     return this.real.ledgerPlayNetForUser(userId);
   }
 
-  // --- Tables: never keyed by a guest's identity (a guest can't create one) ---
+  // --- Tables: never keyed by a guest's identity (a guest can't create
+  // one). A practice table lives in `practiceStore` instead of `real`. ---
 
-  createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null }): Promise<TableRecord> {
-    return this.real.createTable(input);
+  private isPracticeOrPurged(tableId: string): boolean {
+    return this.practiceTables.has(tableId) || this.purgedTables.has(tableId);
+  }
+
+  async createTable(input: { name: string; config: Record<string, unknown>; inviteCode: string | null; createdBy: string | null; ephemeral?: boolean }): Promise<TableRecord> {
+    if (!input.ephemeral) return this.real.createTable(input);
+    const record = await this.practiceStore.createTable(input);
+    this.practiceTables.add(record.id);
+    return record;
   }
 
   listTables(): Promise<TableRecord[]> {
@@ -202,17 +241,37 @@ export class HybridStore implements Store {
   }
 
   getTable(id: string): Promise<TableRecord | null> {
+    if (this.practiceTables.has(id)) return this.practiceStore.getTable(id);
+    if (this.purgedTables.has(id)) return Promise.resolve(null);
     return this.real.getTable(id);
   }
 
   closeTable(id: string): Promise<void> {
+    if (this.practiceTables.has(id)) return this.practiceStore.closeTable(id);
+    if (this.purgedTables.has(id)) return Promise.resolve();
     return this.real.closeTable(id);
   }
 
-  // --- Game reports: always kept in the real store. Guests appear in them
-  // by display name only (no account row, no id) — see DECISIONS.md. ---
+  async deleteTable(id: string): Promise<void> {
+    if (!this.isPracticeOrPurged(id)) return this.real.deleteTable(id);
+    await this.practiceStore.deleteTable(id);
+    this.practiceTables.delete(id);
+    this.purgedTables.add(id);
+  }
+
+  updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {
+    if (this.practiceTables.has(id)) return this.practiceStore.updateTable(id, patch);
+    if (this.purgedTables.has(id)) return Promise.resolve();
+    return this.real.updateTable(id, patch);
+  }
+
+  // --- Game reports: kept in the real store, except a practice table's.
+  // Guests appear in them by display name only (no account row, no id) —
+  // see DECISIONS.md. ---
 
   saveGameReport(record: GameReportRecord): Promise<void> {
+    if (this.practiceTables.has(record.tableId)) return this.practiceStore.saveGameReport(record);
+    if (this.purgedTables.has(record.tableId)) return Promise.resolve();
     return this.real.saveGameReport(record);
   }
 
@@ -220,29 +279,29 @@ export class HybridStore implements Store {
     return this.real.listGameReports();
   }
 
-  getGameReport(id: string): Promise<GameReportRecord | null> {
-    return this.real.getGameReport(id);
+  async getGameReport(id: string): Promise<GameReportRecord | null> {
+    return (await this.practiceStore.getGameReport(id)) ?? this.real.getGameReport(id);
   }
 
   latestGameReportForTable(tableId: string): Promise<GameReportRecord | null> {
+    if (this.practiceTables.has(tableId)) return this.practiceStore.latestGameReportForTable(tableId);
+    if (this.purgedTables.has(tableId)) return Promise.resolve(null);
     return this.real.latestGameReportForTable(tableId);
-  }
-
-  updateTable(id: string, patch: { name: string; config: Record<string, unknown>; inviteCode: string | null }): Promise<void> {
-    return this.real.updateTable(id, patch);
   }
 
   // --- Hands: anonymize any guest seat the same way ledger entries are ---
 
   async recordHand(input: RecordHandInput): Promise<void> {
+    if (this.practiceTables.has(input.tableId)) return this.practiceStore.recordHand(input);
+    if (this.purgedTables.has(input.tableId)) return;
     const seats = await Promise.all(
       input.seats.map(async (s) => ({ ...s, userId: await this.anonymizeGuestUserId(s.userId) })),
     );
     return this.real.recordHand({ ...input, seats });
   }
 
-  getHandForVerification(handId: string): Promise<HandRecordForVerification | null> {
-    return this.real.getHandForVerification(handId);
+  async getHandForVerification(handId: string): Promise<HandRecordForVerification | null> {
+    return (await this.practiceStore.getHandForVerification(handId)) ?? this.real.getHandForVerification(handId);
   }
 
   // --- Chat: persisted anonymized for a guest, but the return value is
@@ -253,6 +312,14 @@ export class HybridStore implements Store {
   // on chatMessages.userId, which this exact shape already relied on). ---
 
   async recordChatMessage(tableId: string, userId: string | null, message: string): Promise<ChatMessageRecord> {
+    if (this.isPracticeOrPurged(tableId)) {
+      // practiceStore has no users, so the sender's name comes from here.
+      const sender = userId ? await this.findUserById(userId) : null;
+      const record = this.practiceTables.has(tableId)
+        ? await this.practiceStore.recordChatMessage(tableId, userId, message)
+        : { id: randomUUID(), tableId, userId, displayName: null, message, createdAt: new Date() };
+      return { ...record, displayName: sender?.displayName ?? null };
+    }
     if (userId === null) return this.real.recordChatMessage(tableId, null, message);
     const guest = await this.guestStore.findUserById(userId);
     if (!guest) return this.real.recordChatMessage(tableId, userId, message);
@@ -260,7 +327,11 @@ export class HybridStore implements Store {
     return { ...persisted, userId, displayName: guest.displayName };
   }
 
-  listRecentChat(tableId: string, limit: number): Promise<ChatMessageRecord[]> {
-    return this.real.listRecentChat(tableId, limit);
+  async listRecentChat(tableId: string, limit: number): Promise<ChatMessageRecord[]> {
+    if (!this.isPracticeOrPurged(tableId)) return this.real.listRecentChat(tableId, limit);
+    const messages = await this.practiceStore.listRecentChat(tableId, limit);
+    return Promise.all(
+      messages.map(async (m) => ({ ...m, displayName: m.userId ? ((await this.findUserById(m.userId))?.displayName ?? null) : null })),
+    );
   }
 }

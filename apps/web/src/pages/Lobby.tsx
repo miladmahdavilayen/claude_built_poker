@@ -1,33 +1,36 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
-import type { TableSummaryDto } from '../api.js';
+import { ApiError, isPracticeOnly, PRACTICE_STAKES, type PracticeStakes, type TableSummaryDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
 import { MoneyInput } from '../components/MoneyInput.js';
-import { GoogleSignInButton } from '../components/GoogleSignInButton.js';
 
 export function LobbyPage(): React.JSX.Element {
-  const { user, accessToken, logout, upgradeWithGoogle } = useAuth();
+  const { user } = useAuth();
+  return user && isPracticeOnly(user) ? <PracticeLobby /> : <TablesLobby />;
+}
+
+/** The admin's lobby — and an invited guest's: every public table, plus (for the admin) creating one. */
+function TablesLobby(): React.JSX.Element {
+  const { user, accessToken, logout } = useAuth();
   const [tables, setTables] = useState<TableSummaryDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [showUpgrade, setShowUpgrade] = useState(false);
   const [showJoinPrivate, setShowJoinPrivate] = useState(false);
   const navigate = useNavigate();
 
-  const refresh = (): void => {
-    api
-      .listTables()
-      .then((res) => setTables(res.tables))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load tables.'));
-  };
-
   useEffect(() => {
+    const refresh = (): void => {
+      api
+        .listTables(accessToken)
+        .then((res) => setTables(res.tables))
+        .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load tables.'));
+    };
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [accessToken]);
 
   return (
     <div className="lobby-page">
@@ -39,11 +42,6 @@ export function LobbyPage(): React.JSX.Element {
               <span className="lobby-user-name">{user.displayName}</span>
               <span className="lobby-user-chips">{formatChips(user.chips)}</span>
             </div>
-            {user.isGuest && (
-              <button type="button" className="btn-ghost" onClick={() => setShowUpgrade(true)}>
-                Create account
-              </button>
-            )}
             {!user.isGuest && (
               <Link to="/profile" className="btn-ghost lobby-link-button">
                 My profile
@@ -64,10 +62,9 @@ export function LobbyPage(): React.JSX.Element {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="lobby-toolbar">
-        {/* Guests have nothing to actually do with a table they create —
-            self-serve seating is still gated to the table's own creator
-            (never a guest) or the admin. See DECISIONS.md. */}
-        {user && !user.isGuest && (
+        {/* Only the owner creates real tables — every other signed-in
+            player gets a practice table instead (PracticeLobby). */}
+        {user?.role === 'admin' && (
           <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
             + Create table
           </button>
@@ -105,7 +102,7 @@ export function LobbyPage(): React.JSX.Element {
             </button>
           </div>
         ))}
-        {tables.length === 0 && <div className="table-grid-empty">No tables yet. Create one to get started.</div>}
+        {tables.length === 0 && <div className="table-grid-empty">No tables open right now.</div>}
       </div>
 
       {showCreate && accessToken && <CreateTableModal onClose={() => setShowCreate(false)} accessToken={accessToken} />}
@@ -115,10 +112,6 @@ export function LobbyPage(): React.JSX.Element {
           onClose={() => setShowJoinPrivate(false)}
           onJoin={(id, code) => void navigate(`/table/${id}?code=${encodeURIComponent(code)}`)}
         />
-      )}
-
-      {showUpgrade && (
-        <UpgradeModal onClose={() => setShowUpgrade(false)} onUpgradeGoogle={(idToken) => upgradeWithGoogle(idToken).then(() => setShowUpgrade(false))} />
       )}
     </div>
   );
@@ -261,33 +254,165 @@ function JoinPrivateModal({ onClose, onJoin }: { onClose: () => void; onJoin: (t
   );
 }
 
-/** Google is the ONLY way to turn a guest session into a real account — see DECISIONS.md. */
-function UpgradeModal({ onClose, onUpgradeGoogle }: { onClose: () => void; onUpgradeGoogle: (idToken: string) => Promise<void> }): React.JSX.Element {
-  const [error, setError] = useState<string | null>(null);
+const OPPONENT_CHOICES = [1, 2, 3, 4] as const;
 
-  const handleGoogleCredential = useCallback(
-    (idToken: string) => {
-      setError(null);
-      void onUpgradeGoogle(idToken).catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed.'));
-    },
-    [onUpgradeGoogle],
-  );
+/**
+ * A signed-in player's lobby: they play only at their own temporary table
+ * against computer players, so instead of a list of tables they pick how
+ * many opponents (1–4, so at most 5 seats), the stakes, and their buy-in,
+ * and get a table of their own. If they already have one open (say, after
+ * a reload), they're offered the way back to it instead.
+ */
+function PracticeLobby(): React.JSX.Element {
+  const { user, accessToken, logout, reloadUser } = useAuth();
+  const navigate = useNavigate();
+  const [openTableId, setOpenTableId] = useState<string | null | undefined>(undefined);
+  const [bots, setBots] = useState<number>(3);
+  const [stakes, setStakes] = useState<PracticeStakes>('low');
+  const [buyIn, setBuyIn] = useState<number | ''>(() => Math.min(PRACTICE_STAKES.low.maxBuyIn, Math.max(PRACTICE_STAKES.low.minBuyIn, user?.chips ?? 0)));
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    // A practice table that just closed returned its chips — show the real balance.
+    void reloadUser().catch(() => undefined);
+    api
+      .listTables(accessToken)
+      .then((res) => setOpenTableId(res.practiceTableId))
+      .catch(() => setOpenTableId(null));
+  }, [accessToken, reloadUser]);
+
+  if (!user) return <div className="page-centered">Loading...</div>;
+
+  const range = PRACTICE_STAKES[stakes];
+  const affordable = user.chips >= range.minBuyIn;
+  const maxAffordable = Math.min(range.maxBuyIn, user.chips);
+
+  const pickStakes = (next: PracticeStakes): void => {
+    setStakes(next);
+    setBuyIn(Math.min(PRACTICE_STAKES[next].maxBuyIn, Math.max(PRACTICE_STAKES[next].minBuyIn, user.chips)));
+    setError(null);
+  };
+
+  const start = (): void => {
+    if (!accessToken) return;
+    if (buyIn === '' || buyIn < range.minBuyIn || buyIn > maxAffordable) {
+      setError(`Choose a buy-in between ${formatChips(range.minBuyIn)} and ${formatChips(maxAffordable)}.`);
+      return;
+    }
+    setError(null);
+    setStarting(true);
+    api
+      .createPracticeTable({ bots, stakes, buyIn }, accessToken)
+      .then((res) => void navigate(`/table/${res.tableId}`))
+      .catch((err: unknown) => {
+        setStarting(false);
+        if (err instanceof ApiError && err.code === 'PRACTICE_TABLE_OPEN') {
+          void api.listTables(accessToken).then((res) => setOpenTableId(res.practiceTableId));
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Could not start the game.');
+      });
+  };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Create an account</h3>
-        <p>Keeps your chips and history under your Google account, instead of disappearing when you leave.</p>
-        {error && <div className="error-banner">{error}</div>}
-        <div className="google-signin-row">
-          <GoogleSignInButton onCredential={handleGoogleCredential} />
-        </div>
-        <div className="modal-actions">
-          <button type="button" onClick={onClose}>
-            Cancel
+    <div className="lobby-page">
+      <header className="lobby-header">
+        <h1 className="lobby-brand">pokerclause</h1>
+        <div className="lobby-user">
+          {user.avatarUrl && <img className="lobby-avatar" src={user.avatarUrl} alt="" referrerPolicy="no-referrer" />}
+          <div className="lobby-user-info">
+            <span className="lobby-user-name">{user.displayName}</span>
+            <span className="lobby-user-chips" data-testid="lobby-balance">
+              {formatChips(user.chips)}
+            </span>
+          </div>
+          <Link to="/profile" className="btn-ghost lobby-link-button">
+            My profile
+          </Link>
+          <button type="button" className="btn-logout" onClick={() => void logout()}>
+            Log out
           </button>
         </div>
-      </div>
+      </header>
+
+      {openTableId ? (
+        <section className="practice-card">
+          <h2>Your game is still open</h2>
+          <p className="profile-hint">Your seat and chips are waiting for you.</p>
+          <button type="button" className="btn-primary practice-start" onClick={() => void navigate(`/table/${openTableId}`)}>
+            Return to your table
+          </button>
+        </section>
+      ) : openTableId === null ? (
+        <section className="practice-card">
+          <h2>Start a game</h2>
+          <p className="profile-hint">Your own table against computer players. Leaving the table ends the game, and your chips go back to your balance.</p>
+
+          <div className="practice-field">
+            <span className="stat-label" id="practice-opponents-label">
+              Opponents
+            </span>
+            <div className="practice-choices" role="radiogroup" aria-labelledby="practice-opponents-label">
+              {OPPONENT_CHOICES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  role="radio"
+                  aria-checked={bots === n}
+                  className={`practice-choice${bots === n ? ' selected' : ''}`}
+                  onClick={() => setBots(n)}
+                >
+                  {n} {n === 1 ? 'bot' : 'bots'}
+                </button>
+              ))}
+            </div>
+            <span className="practice-field-note">
+              {bots + 1} seats — you plus {bots} computer {bots === 1 ? 'player' : 'players'}
+            </span>
+          </div>
+
+          <div className="practice-field">
+            <span className="stat-label" id="practice-stakes-label">
+              Stakes
+            </span>
+            <div className="practice-choices" role="radiogroup" aria-labelledby="practice-stakes-label">
+              {(Object.keys(PRACTICE_STAKES) as PracticeStakes[]).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={stakes === key}
+                  className={`practice-choice practice-choice-stakes${stakes === key ? ' selected' : ''}`}
+                  onClick={() => pickStakes(key)}
+                >
+                  <span>{PRACTICE_STAKES[key].label}</span>
+                  <span className="practice-choice-sub">
+                    {formatChips(PRACTICE_STAKES[key].minBuyIn)}–{formatChips(PRACTICE_STAKES[key].maxBuyIn)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="practice-field">
+            <span className="stat-label">Buy-in ($)</span>
+            <MoneyInput minCents={range.minBuyIn} maxCents={maxAffordable} cents={buyIn} onChange={setBuyIn} disabled={!affordable} />
+          </label>
+
+          {!affordable && (
+            <p className="practice-warning">
+              Your balance ({formatChips(user.chips)}) is below the {formatChips(range.minBuyIn)} minimum buy-in for these stakes.
+            </p>
+          )}
+          {error && <div className="error-banner">{error}</div>}
+          <button type="button" className="btn-primary practice-start" disabled={!affordable || starting} onClick={start}>
+            {starting ? 'Setting up…' : 'Start game'}
+          </button>
+        </section>
+      ) : (
+        <div className="page-centered">Loading...</div>
+      )}
     </div>
   );
 }

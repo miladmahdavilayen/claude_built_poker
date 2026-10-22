@@ -44,8 +44,8 @@ async function ensureTestPlayer(store: DrizzleStore, googleId: string, email: st
     console.log(`  ${displayName} already exists, skipping.`);
     return;
   }
-  await store.createGoogleAccount(googleId, email, displayName);
-  console.log(`  created test player: ${displayName} (0 chips — sign in as them and have the admin grant a buy-in from the dashboard)`);
+  await store.createGoogleAccount({ googleId, email, displayName, avatarUrl: null });
+  console.log(`  created test player: ${displayName} (0 chips — no welcome bonus for seeded players; the admin can grant chips from the dashboard)`);
 }
 
 async function main(): Promise<void> {

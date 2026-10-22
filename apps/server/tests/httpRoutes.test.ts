@@ -1,4 +1,5 @@
 import cookie from '@fastify/cookie';
+import type { TableSettings } from '@pokerclause/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { issueAccessToken } from '../src/auth/session.js';
@@ -9,6 +10,24 @@ import { registerTableRoutes } from '../src/http/routes/tables.js';
 import { registerUserRoutes } from '../src/http/routes/users.js';
 
 process.env.JWT_SECRET ??= 'test-secret-do-not-use-in-prod';
+
+const SETTINGS_FOR_LIST: TableSettings = {
+  smallBlind: 100,
+  bigBlind: 200,
+  ante: 0,
+  maxSeats: 6,
+  straddleEnabled: false,
+  minBuyIn: 4_000,
+  maxBuyIn: 20_000,
+  actionSeconds: 25,
+  timeBankSeconds: 60,
+  runItTwiceEnabled: false,
+  rakePercent: 0,
+  rakeCap: 0,
+  noFlopNoDrop: true,
+  isPrivate: false,
+  disableChatInHand: false,
+};
 
 /**
  * Lightweight `app.inject()` tests for the new authorization-sensitive
@@ -28,8 +47,13 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     app = Fastify();
     await app.register(cookie);
     registerTableRoutes(app, store, registry);
-    registerUserRoutes(app, store);
-    registerAdminRoutes(app, store, registry);
+    // The real one (socketServer.ts) also refunds the player's stack — covered in socketServer.test.ts.
+    const closePracticeTableOf = async (userId: string): Promise<void> => {
+      const table = registry.practiceTableOf(userId);
+      if (table) await registry.close(table.tableId);
+    };
+    registerUserRoutes(app, store, closePracticeTableOf);
+    registerAdminRoutes(app, store, registry, closePracticeTableOf);
   });
 
   afterEach(async () => {
@@ -41,7 +65,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
   }
 
   describe('POST /tables', () => {
-    it('rejects a guest — they would have nothing they could actually do with it', async () => {
+    it('rejects a guest', async () => {
       const guest = await store.createGuestUser('Gina');
       const res = await app.inject({
         method: 'POST',
@@ -50,20 +74,117 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
         payload: { name: 'Guest Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false },
       });
       expect(res.statusCode).toBe(403);
-      expect(res.json<{ code: string }>().code).toBe('GUEST_CANNOT_CREATE_TABLE');
+      expect(res.json<{ code: string }>().code).toBe('ADMIN_REQUIRED');
     });
 
-    it('allows a signed-in non-guest human, recording them as the table’s creator', async () => {
-      const user = await store.createGoogleAccount('g-1', 'a@gmail.com', 'Ann');
+    it('rejects a signed-in Google player — they open practice tables instead', async () => {
+      const user = await store.createGoogleAccount({ googleId: 'g-1', email: 'a@gmail.com', displayName: 'Ann', avatarUrl: null });
       const res = await app.inject({
         method: 'POST',
         url: '/tables',
         headers: auth(issueAccessToken(user)),
         payload: { name: 'Ann’s Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false },
       });
+      expect(res.statusCode).toBe(403);
+      expect(res.json<{ code: string }>().code).toBe('ADMIN_REQUIRED');
+    });
+
+    it('allows the admin, recording them as the table’s creator', async () => {
+      const admin = await store.createAccount('owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const res = await app.inject({
+        method: 'POST',
+        url: '/tables',
+        headers: auth(issueAccessToken({ ...admin, role: 'admin' })),
+        payload: { name: 'Owner Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false },
+      });
       expect(res.statusCode).toBe(201);
       const table = registry.get(res.json<{ tableId: string }>().tableId);
-      expect(table?.ownerId).toBe(user.id);
+      expect(table?.ownerId).toBe(admin.id);
+      expect(table?.isPractice).toBe(false);
+    });
+  });
+
+  describe('practice tables', () => {
+    let players = 0;
+    async function googlePlayer(chips: number): Promise<{ id: string; token: string }> {
+      players += 1;
+      const created = await store.createGoogleAccount({ googleId: `g-player-${String(players)}`, email: `player${String(players)}@gmail.com`, displayName: 'Pat', avatarUrl: null });
+      const user = await store.adjustUserChips(created.id, chips);
+      return { id: user.id, token: issueAccessToken(user) };
+    }
+
+    it('seats the player plus the bots they picked, at most 5 seats, and debits the buy-in from their balance', async () => {
+      const player = await googlePlayer(100_000);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/tables/practice',
+        headers: auth(player.token),
+        payload: { bots: 4, stakes: 'medium', buyIn: 15_000 },
+      });
+      expect(res.statusCode).toBe(201);
+      const table = registry.get(res.json<{ tableId: string }>().tableId)!;
+      expect(table.isPractice).toBe(true);
+      expect(table.ownerId).toBe(player.id);
+      expect(table.settings.isPrivate).toBe(true);
+      expect(table.visibleSeatCount).toBe(5);
+      expect(table.seatOfUser(player.id)).toBe(0);
+      expect(table.seats.filter((s) => s.botPolicyName !== null)).toHaveLength(4);
+      expect(new Set(table.seats.map((s) => s.botPolicyName).filter(Boolean)).size).toBe(4);
+      expect(table.state.seats.every((s) => s.stack === 15_000)).toBe(true);
+      expect((await store.findUserById(player.id))!.chips).toBe(85_000);
+      expect(await store.ledgerBalanceForUser(player.id)).toBe(-15_000);
+    });
+
+    it('refuses more than 4 bots, a buy-in outside the stakes, or more than the balance', async () => {
+      const player = await googlePlayer(10_000);
+      const open = (payload: object) => app.inject({ method: 'POST', url: '/tables/practice', headers: auth(player.token), payload });
+      expect((await open({ bots: 5, stakes: 'low', buyIn: 5_000 })).statusCode).toBe(400);
+      expect((await open({ bots: 0, stakes: 'low', buyIn: 5_000 })).statusCode).toBe(400);
+      expect((await open({ bots: 1, stakes: 'low', buyIn: 50_000 })).json<{ code: string }>().code).toBe('BUY_IN_OUT_OF_RANGE');
+      expect((await open({ bots: 1, stakes: 'medium', buyIn: 15_000 })).json<{ code: string }>().code).toBe('INSUFFICIENT_CHIPS');
+      expect(registry.list()).toHaveLength(0);
+    });
+
+    it('allows one practice table at a time, pointing back to the open one', async () => {
+      const player = await googlePlayer(100_000);
+      const open = () => app.inject({ method: 'POST', url: '/tables/practice', headers: auth(player.token), payload: { bots: 1, stakes: 'low', buyIn: 5_000 } });
+      const first = await open();
+      const second = await open();
+      expect(second.statusCode).toBe(409);
+      expect(second.json<{ tableId: string }>().tableId).toBe(first.json<{ tableId: string }>().tableId);
+    });
+
+    it('refuses a guest', async () => {
+      const guest = await store.createGuestUser('Gina');
+      await store.adjustUserChips(guest.id, 100_000);
+      const res = await app.inject({ method: 'POST', url: '/tables/practice', headers: auth(issueAccessToken(guest)), payload: { bots: 1, stakes: 'low', buyIn: 5_000 } });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('GET /tables shows a Google player no public tables — only their own practice table to return to', async () => {
+      await registry.createTable('Public', { ...SETTINGS_FOR_LIST }, null, null);
+      const player = await googlePlayer(100_000);
+      const empty = await app.inject({ method: 'GET', url: '/tables', headers: auth(player.token) });
+      expect(empty.json()).toEqual({ tables: [], practiceTableId: null });
+      const created = await app.inject({ method: 'POST', url: '/tables/practice', headers: auth(player.token), payload: { bots: 2, stakes: 'low', buyIn: 5_000 } });
+      const mine = await app.inject({ method: 'GET', url: '/tables', headers: auth(player.token) });
+      expect(mine.json()).toEqual({ tables: [], practiceTableId: created.json<{ tableId: string }>().tableId });
+      // Nobody else ever sees it listed, or can look it up.
+      const anonymous = await app.inject({ method: 'GET', url: '/tables' });
+      expect(anonymous.json<{ tables: { name: string }[] }>().tables.map((t) => t.name)).toEqual(['Public']);
+      const peek = await app.inject({ method: 'GET', url: `/tables/${created.json<{ tableId: string }>().tableId}` });
+      expect(peek.statusCode).toBe(404);
+    });
+
+    it('deleting the account closes the practice table and deletes every record of it', async () => {
+      const player = await googlePlayer(100_000);
+      const created = await app.inject({ method: 'POST', url: '/tables/practice', headers: auth(player.token), payload: { bots: 1, stakes: 'low', buyIn: 5_000 } });
+      const tableId = created.json<{ tableId: string }>().tableId;
+      const res = await app.inject({ method: 'DELETE', url: '/users/me', headers: auth(player.token) });
+      expect(res.statusCode).toBe(200);
+      expect(registry.get(tableId)).toBeNull();
+      expect(await store.getTable(tableId)).toBeNull();
     });
   });
 
@@ -84,33 +205,21 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     });
 
     it('permanently deletes a signed-in non-guest, non-admin account', async () => {
-      const user = await store.createGoogleAccount('g-2', 'b@gmail.com', 'Bob');
+      const user = await store.createGoogleAccount({ googleId: 'g-2', email: 'b@gmail.com', displayName: 'Bob', avatarUrl: null });
       const res = await app.inject({ method: 'DELETE', url: '/users/me', headers: auth(issueAccessToken(user)) });
       expect(res.statusCode).toBe(200);
       expect(await store.findUserById(user.id)).toBeNull();
     });
   });
 
-  describe('GET /users/me/summary', () => {
-    it("reports balance and net play result separately from raw ledger noise like admin grants", async () => {
-      const user = await store.createGoogleAccount('g-3', 'c@gmail.com', 'Cara');
-      await store.adjustUserChips(user.id, 500);
-      await store.recordLedgerEntries([
-        { userId: user.id, isHouse: false, amount: 500, reason: 'admin_adjust' },
-        { userId: null, isHouse: true, amount: -500, reason: 'admin_adjust' },
-      ]);
-      await store.recordLedgerEntries([
-        { userId: user.id, isHouse: false, amount: 120, reason: 'pot_win' },
-        { userId: null, isHouse: true, amount: -120, reason: 'pot_win' },
-      ]);
-      await store.adjustUserChips(user.id, 120);
-
-      const res = await app.inject({ method: 'GET', url: '/users/me/summary', headers: auth(issueAccessToken(user)) });
+  describe('GET /users/me/profile', () => {
+    it('shows only what the player registered with', async () => {
+      const user = await store.createGoogleAccount({ googleId: 'g-3', email: 'c@gmail.com', displayName: 'Cara', avatarUrl: 'https://example.com/c.png' });
+      const res = await app.inject({ method: 'GET', url: '/users/me/profile', headers: auth(issueAccessToken(user)) });
       expect(res.statusCode).toBe(200);
-      const body = res.json<{ balance: number; netPlayResult: number; recentEntries: unknown[] }>();
-      expect(body.balance).toBe(620);
-      expect(body.netPlayResult).toBe(120);
-      expect(body.recentEntries).toHaveLength(2);
+      const body = res.json<Record<string, unknown>>();
+      expect(Object.keys(body).sort()).toEqual(['avatarUrl', 'createdAt', 'displayName', 'email', 'lastLoginAt', 'signInMethod']);
+      expect(body).toMatchObject({ displayName: 'Cara', email: 'c@gmail.com', avatarUrl: 'https://example.com/c.png', signInMethod: 'google' });
     });
   });
 
@@ -119,7 +228,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const admin = await store.createAccount('admin2@x.com', 'hash', 'Owner');
       await store.setUserRole(admin.id, 'admin');
       const adminToken = issueAccessToken({ ...admin, role: 'admin' });
-      const regular = await store.createGoogleAccount('g-4', 'd@gmail.com', 'Dee');
+      const regular = await store.createGoogleAccount({ googleId: 'g-4', email: 'd@gmail.com', displayName: 'Dee', avatarUrl: null });
 
       const denied = await app.inject({ method: 'GET', url: '/admin/users', headers: auth(issueAccessToken(regular)) });
       expect(denied.statusCode).toBe(403);
@@ -133,7 +242,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     it('PATCH /admin/users/:id updates a display name', async () => {
       const admin = await store.createAccount('admin3@x.com', 'hash', 'Owner');
       await store.setUserRole(admin.id, 'admin');
-      const regular = await store.createGoogleAccount('g-5', 'e@gmail.com', 'Eli');
+      const regular = await store.createGoogleAccount({ googleId: 'g-5', email: 'e@gmail.com', displayName: 'Eli', avatarUrl: null });
 
       const res = await app.inject({
         method: 'PATCH',
@@ -149,7 +258,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const admin = await store.createAccount('admin4@x.com', 'hash', 'Owner');
       await store.setUserRole(admin.id, 'admin');
       const adminToken = issueAccessToken({ ...admin, role: 'admin' });
-      const regular = await store.createGoogleAccount('g-6', 'f@gmail.com', 'Fay');
+      const regular = await store.createGoogleAccount({ googleId: 'g-6', email: 'f@gmail.com', displayName: 'Fay', avatarUrl: null });
 
       const deletedRegular = await app.inject({ method: 'DELETE', url: `/admin/users/${regular.id}`, headers: auth(adminToken) });
       expect(deletedRegular.statusCode).toBe(200);
@@ -165,8 +274,8 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const admin = await store.createAccount('admin5@x.com', 'hash', 'Owner');
       await store.setUserRole(admin.id, 'admin');
       const adminToken = issueAccessToken({ ...admin, role: 'admin' });
-      const userA = await store.createGoogleAccount('g-a', 'a2@gmail.com', 'A');
-      const userB = await store.createGoogleAccount('g-b', 'b2@gmail.com', 'B');
+      const userA = await store.createGoogleAccount({ googleId: 'g-a', email: 'a2@gmail.com', displayName: 'A', avatarUrl: null });
+      const userB = await store.createGoogleAccount({ googleId: 'g-b', email: 'b2@gmail.com', displayName: 'B', avatarUrl: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -224,7 +333,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
     });
 
     it('is owner-only', async () => {
-      const user = await store.createGoogleAccount('g-9', 'p@gmail.com', 'Pat');
+      const user = await store.createGoogleAccount({ googleId: 'g-9', email: 'p@gmail.com', displayName: 'Pat', avatarUrl: null });
       const res = await app.inject({ method: 'POST', url: '/admin/chips/set', headers: auth(issueAccessToken(user)), payload: { userId: user.id, balance: 9_999_999, reason: 'x' } });
       expect(res.statusCode).toBe(403);
       expect((await store.findUserById(user.id))?.chips).toBe(0);

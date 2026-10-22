@@ -10,10 +10,12 @@ interface AuthState {
   /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: (idToken: string) => Promise<void>;
-  upgradeWithGoogle: (idToken: string) => Promise<void>;
+  /** Local development only — see api.devGoogleSignIn. */
+  loginWithDevGoogle: (email: string, displayName: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Permanently deletes the signed-in (non-guest, non-admin) user's own account. Clears local session state on success — the caller still owns navigating away. */
   deleteAccount: () => Promise<void>;
+  reloadUser: () => Promise<void>;
   /** Optimistically reflects a display-name change already sent to (and applied by) the server — e.g. the owner renaming themselves right before sitting down via 'take-seat'. No round trip of its own; the server is the actual source of truth. */
   setDisplayName: (displayName: string) => void;
 }
@@ -75,15 +77,18 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setAccessToken(res.accessToken);
   }, []);
 
-  const upgradeWithGoogle = useCallback(
-    async (idToken: string) => {
-      if (!accessToken) throw new Error('Not signed in.');
-      const res = await api.upgradeWithGoogle(idToken, accessToken);
-      setUser(res.user);
-      setAccessToken(res.accessToken);
-    },
-    [accessToken],
-  );
+  const loginWithDevGoogle = useCallback(async (email: string, displayName: string) => {
+    const res = await api.devGoogleSignIn(email, displayName);
+    setUser(res.user);
+    setAccessToken(res.accessToken);
+  }, []);
+
+  /** Re-reads the signed-in user (balance included) from the server — e.g. back in the lobby after a practice table returned its chips. */
+  const reloadUser = useCallback(async () => {
+    if (!accessToken) return;
+    const res = await api.getMe(accessToken);
+    setUser(res.user);
+  }, [accessToken]);
 
   const logout = useCallback(async () => {
     await api.logout();
@@ -103,8 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ user, accessToken, loading, signupGuest, login, loginWithGoogle, upgradeWithGoogle, logout, deleteAccount, setDisplayName }),
-    [user, accessToken, loading, signupGuest, login, loginWithGoogle, upgradeWithGoogle, logout, deleteAccount, setDisplayName],
+    () => ({ user, accessToken, loading, signupGuest, login, loginWithGoogle, loginWithDevGoogle, reloadUser, logout, deleteAccount, setDisplayName }),
+    [user, accessToken, loading, signupGuest, login, loginWithGoogle, loginWithDevGoogle, reloadUser, logout, deleteAccount, setDisplayName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

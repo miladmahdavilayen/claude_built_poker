@@ -501,7 +501,7 @@ describe('LiveTable: voluntary post-fold-win reveal', () => {
     expect(table.revealEligibleSeatId).toBeNull();
   });
 
-  it("revealHand() broadcasts the winner's real hole cards to every viewer and extends whatever's left of the break by a further 5 real seconds", () => {
+  it("revealHand() broadcasts the winner's real hole cards to every viewer and extends whatever's left of the break by a further 1.5 real seconds", () => {
     const { winnerSeatId, loserSeatId } = foldOutTheHand();
     const handId = table.handId!;
     const winnerHoleCards = table.state.seats[winnerSeatId]!.holeCards;
@@ -512,11 +512,11 @@ describe('LiveTable: voluntary post-fold-win reveal', () => {
     const result = table.revealHand(winnerSeatId, handId);
     expect(result).toEqual({ ok: true });
 
-    // Extends whatever was actually left, by a further 5s — never just
-    // resets to a flat 5s regardless of how much break time remained.
+    // Extends whatever was actually left, by a further 1.5s — never just
+    // resets to a flat 1.5s regardless of how much break time remained.
     const remainingAfter = table.nextHandAt! - Date.now();
-    expect(remainingAfter).toBeGreaterThan(remainingBefore + 4900);
-    expect(remainingAfter).toBeLessThan(remainingBefore + 5300);
+    expect(remainingAfter).toBeGreaterThan(remainingBefore + 1400);
+    expect(remainingAfter).toBeLessThan(remainingBefore + 1800);
 
     // Every viewer — not just the winner — now legitimately sees the real cards.
     expect(table.projectionFor(winnerSeatId).seats[winnerSeatId]?.holeCards).toEqual(winnerHoleCards);

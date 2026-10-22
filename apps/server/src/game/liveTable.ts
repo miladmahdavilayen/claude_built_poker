@@ -146,7 +146,7 @@ const DEFAULT_TIME_BANK_REFILL_MS = 15000;
 const HAND_BREAK_MS = Number(process.env.HAND_BREAK_MS ?? 5000);
 // Extra riffle time tacked onto the current break whenever a player
 // voluntarily reveals their hand after winning uncalled — see revealHand().
-const REVEAL_HAND_BREAK_EXTENSION_MS = 5000;
+const REVEAL_HAND_BREAK_EXTENSION_MS = 1500;
 
 export class LiveTable {
   readonly tableId: string;
@@ -1411,7 +1411,7 @@ export class LiveTable {
 
     // Extend whatever's actually left on the current break, never shorten
     // it (a reveal arriving right as the break was about to elapse still
-    // gets the dealer a full extra 5s, not "5s minus whatever's left").
+    // gets the dealer a full extra 1.5s, not "1.5s minus whatever's left").
     const now = this.callbacks.now();
     const remainingMs = this.nextHandAt !== null ? Math.max(0, this.nextHandAt - now) : 0;
     const extendedMs = remainingMs + REVEAL_HAND_BREAK_EXTENSION_MS;

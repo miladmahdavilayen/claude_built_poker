@@ -54,10 +54,14 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
   const mediumStakes: TableSettings = { ...lowStakes, smallBlind: 1_000, bigBlind: 2_000, minBuyIn: 80_000, maxBuyIn: 200_000 };
   // $100/$200, $8,000–$20,000 buy-in
   const highStakes: TableSettings = { ...lowStakes, smallBlind: 10_000, bigBlind: 20_000, minBuyIn: 800_000, maxBuyIn: 2_000_000 };
+  // Same stakes, two seats only.
+  const headsUpHighStakes: TableSettings = { ...highStakes, maxSeats: 2 };
+  // Lobby lists tables in creation order, so this one shows first.
+  await registry.createTable('Heads Up High Stakes $100/$200', headsUpHighStakes, null, null);
   await registry.createTable('High Stakes $100/$200', highStakes, null, null);
   await registry.createTable('Medium Stakes $10/$20', mediumStakes, null, null);
   await registry.createTable('Low Stakes $1/$2', lowStakes, null, null);
-  log.info('Seeded 3 default public tables (high, medium, low stakes).');
+  log.info('Seeded 4 default public tables (heads-up high, high, medium, low stakes).');
 }
 
 /**

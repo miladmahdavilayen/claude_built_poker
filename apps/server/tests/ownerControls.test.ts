@@ -160,8 +160,9 @@ describe('LiveTable: owner controls mid-hand', () => {
     expect(table.state.phase).toBe('hand-complete');
     expect(vacatedLog).toHaveLength(1);
     const finalStackOfFirst = vacatedLog[0]!.refund;
-    // Exactly one of them has everything.
-    expect([0, 2000]).toContain(finalStackOfFirst);
+    // One of them has everything — or, when the hands tie (the deck is
+    // really shuffled, so now and then they do), they split the pot.
+    expect([0, 1000, 2000]).toContain(finalStackOfFirst);
     expect(finalStackOfFirst + table.state.seats[caller]!.stack).toBe(2000);
   });
 

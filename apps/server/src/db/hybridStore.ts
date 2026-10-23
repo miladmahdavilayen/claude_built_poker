@@ -11,6 +11,8 @@ import type {
   UserRecord,
   GameReportRecord,
   GoogleAccountInput,
+  SignedWaiverRecord,
+  SignedWaiverSummary,
   SignupKeyRecord,
 } from './store.js';
 
@@ -89,6 +91,20 @@ export class HybridStore implements Store {
 
   revokeSignupKey(id: string): Promise<boolean> {
     return this.real.revokeSignupKey(id);
+  }
+
+  // --- Signed waivers: always persisted, kept forever ---
+
+  saveSignedWaiver(waiver: SignedWaiverRecord): Promise<void> {
+    return this.real.saveSignedWaiver(waiver);
+  }
+
+  listSignedWaivers(): Promise<SignedWaiverSummary[]> {
+    return this.real.listSignedWaivers();
+  }
+
+  getSignedWaiver(id: string): Promise<SignedWaiverRecord | null> {
+    return this.real.getSignedWaiver(id);
   }
 
   acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {

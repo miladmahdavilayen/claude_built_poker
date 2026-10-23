@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as api from '../api.js';
-import type { AdminUserDetailDto, AdminUserDto, GameReportSummaryDto, LedgerEntryDto, SignupKeyDto } from '../api.js';
+import type { AdminUserDetailDto, AdminUserDto, GameReportSummaryDto, LedgerEntryDto, SignedWaiverDto, SignupKeyDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { MAX_BALANCE_CENTS } from '@pokerclause/shared/money';
 import { formatChips } from '../chips.js';
@@ -165,6 +165,8 @@ export function AdminDashboardPage(): React.JSX.Element {
       <MyBalanceCard balance={users.find((u) => u.id === me?.id)?.chips ?? null} onChanged={refresh} />
 
       {accessToken && <AccessKeysPanel accessToken={accessToken} />}
+
+      {accessToken && <SignedWaiversPanel accessToken={accessToken} />}
 
       {accessToken && <GameReportsPanel accessToken={accessToken} />}
 
@@ -655,6 +657,112 @@ It works once and expires ${new Date(fresh.expiresAt).toLocaleDateString()}.`
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+/** "iPhone · Safari", "Windows · Chrome" — a readable gist of a user-agent string. The full string is in the PDF and record. */
+function deviceGist(ua: string | null): string {
+  if (!ua) return 'Unknown device';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Other';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return `${os} · ${browser}`;
+}
+
+/**
+ * Every signed copy of the friendly-game waiver — kept forever, including
+ * for accounts that have since been deleted (marked as such). View opens
+ * the signed PDF; the record is the authorization record (JSON) with the
+ * PDF's SHA-256, for proving the PDF hasn't been altered.
+ */
+function SignedWaiversPanel({ accessToken }: { accessToken: string }): React.JSX.Element {
+  const [waivers, setWaivers] = useState<SignedWaiverDto[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .adminListWaivers(accessToken)
+      .then((res) => setWaivers(res.waivers))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load signed waivers.'));
+  }, [accessToken]);
+
+  const save = (blob: Blob, filename: string): void => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+
+  const view = (id: string): void => {
+    // Opened now, inside the click, so it isn't blocked as a pop-up; filled in once the PDF arrives.
+    const tab = window.open('', '_blank');
+    api
+      .adminWaiverFile(id, 'pdf', accessToken)
+      .then(({ blob }) => {
+        const url = URL.createObjectURL(blob);
+        if (tab) tab.location.href = url;
+        else window.location.href = url;
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      })
+      .catch((err: unknown) => {
+        tab?.close();
+        setError(err instanceof Error ? err.message : 'Failed to open the waiver.');
+      });
+  };
+
+  const download = (id: string, kind: 'pdf' | 'record'): void => {
+    api
+      .adminWaiverFile(id, kind, accessToken)
+      .then(({ blob, filename }) => save(blob, filename))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Download failed.'));
+  };
+
+  const q = query.trim().toLowerCase();
+  const shown = (waivers ?? []).filter((w) => !q || w.displayName.toLowerCase().includes(q) || (w.email ?? '').toLowerCase().includes(q));
+
+  return (
+    <section className="admin-keys admin-waivers" data-testid="admin-signed-waivers">
+      <h2 className="admin-section-title">Signed waivers</h2>
+      <p className="profile-hint">Every signed copy is kept here for good — including for players who have deleted their account.</p>
+      {error && <div className="error-banner">{error}</div>}
+      {waivers && waivers.length > 0 && (
+        <input className="admin-search" placeholder="Search signed waivers by name or email..." value={query} onChange={(e) => setQuery(e.target.value)} />
+      )}
+      {waivers?.length === 0 && <p className="profile-hint">No one has signed yet.</p>}
+      <ul className="admin-key-list">
+        {shown.map((w) => (
+          <li key={w.id} className="admin-key-row admin-waiver-row" data-testid={`signed-waiver-${w.id}`}>
+            <div className="admin-key-info">
+              <span className="admin-key-label">
+                {w.displayName} <span className="admin-key-hint">({w.initials})</span>
+                {w.accountDeleted && <span className="admin-key-status admin-waiver-deleted">account deleted</span>}
+              </span>
+              <span className="admin-report-meta">
+                {w.email ?? 'no email'} · signed {new Date(w.signedAt).toLocaleString()} · v{w.version}
+              </span>
+              <span className="admin-report-meta">
+                IP {w.ipAddress ?? 'unknown'} · {deviceGist(w.userAgent)}
+              </span>
+            </div>
+            <div className="admin-waiver-actions">
+              <button type="button" onClick={() => view(w.id)}>
+                View
+              </button>
+              <button type="button" onClick={() => download(w.id, 'pdf')}>
+                PDF
+              </button>
+              <button type="button" className="btn-ghost" onClick={() => download(w.id, 'record')}>
+                Record
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

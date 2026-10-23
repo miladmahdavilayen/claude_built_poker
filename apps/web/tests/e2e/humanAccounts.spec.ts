@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addBot, adminLogin, createAccessKey, createTable, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
+import { addBot, adminLogin, createAccessKey, createTable, drawSignature, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
 
 // This sandbox has no real Google Cloud OAuth Client ID to drive an actual
 // "sign in with Google" click-through with (see googleSignIn.spec.ts's own
@@ -257,11 +257,11 @@ test('a returning player who logged out is greeted with Google sign-in, not the 
   await expect(page.getByLabel('Access key')).toBeVisible();
 });
 
-test('a new Google player must agree to the friendly-game waiver with their initials before playing — once', async ({ page, browser }) => {
+test('a new Google player signs the waiver — initials and a drawn signature — once; the owner can view and download the signed PDF', async ({ page, browser }) => {
   const email = `e2e.waiver.${String(Date.now())}@gmail.com`;
   const res = await page.request.post('http://localhost:4210/test-only/google-login', { data: { email, displayName: 'Wanda Waiver' } });
   expect(res.ok()).toBe(true);
-  // Every page leads to the waiver until they agree.
+  // Every page leads to the waiver until they sign.
   for (const path of ['/lobby', '/profile', '/table/anything']) {
     await page.goto(path);
     await expect(page).toHaveURL(/\/waiver/);
@@ -269,26 +269,50 @@ test('a new Google player must agree to the friendly-game waiver with their init
   await expect(page.getByText('Friendly game agreement')).toBeVisible();
   await expect(page.getByText('play money only')).toBeVisible();
   await expect(page.getByText('give up any right to sue')).toBeVisible();
-  const agree = page.getByRole('button', { name: 'I agree' });
+  await expect(page.getByText('stays with the app’s owner permanently, even if you delete your account')).toBeVisible();
+  const agree = page.getByRole('button', { name: 'I agree and sign' });
   await expect(agree).toBeDisabled();
   await page.getByLabel(/Your initials/).fill('w.w');
   await expect(agree).toBeDisabled();
   await page.getByLabel(/Your initials/).fill('ww');
   await expect(page.getByLabel(/Your initials/)).toHaveValue('WW');
+  // Initials alone aren't enough — it needs a signature, and a tap isn't one.
+  await expect(agree).toBeDisabled();
+  const pad = page.locator('.signature-pad-canvas');
+  await pad.scrollIntoViewIfNeeded();
+  const box = (await pad.boundingBox())!;
+  await page.mouse.click(box.x + 50, box.y + 50);
+  await expect(agree).toBeDisabled();
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await drawSignature(page);
+  await expect(agree).toBeEnabled();
   await agree.click();
   await expect(page.locator('.practice-card')).toBeVisible();
 
-  // Agreed for good: a reload goes straight to the lobby.
+  // Signed for good: a reload goes straight to the lobby.
   await page.reload();
   await expect(page.locator('.practice-card')).toBeVisible();
 
-  // And the owner can see it on the account.
+  // The owner sees it on the account, and the signed copy in Signed waivers.
   const ownerPage = await (await browser.newContext()).newPage();
   await adminLogin(ownerPage);
   await ownerPage.goto('/admin');
   await ownerPage.getByPlaceholder('Search by name or email...').fill('Wanda Waiver');
   await ownerPage.locator('.admin-user-row', { hasText: 'Wanda Waiver' }).click();
   await expect(ownerPage.locator('.admin-user-detail')).toContainText('Agreed (WW)');
+  const panel = ownerPage.getByTestId('admin-signed-waivers');
+  await panel.getByPlaceholder('Search signed waivers by name or email...').fill('Wanda Waiver');
+  const row = panel.locator('.admin-waiver-row', { hasText: 'Wanda Waiver' });
+  await expect(row).toContainText('(WW)');
+  await expect(row).toContainText(email);
+  await expect(row).toContainText('IP ');
+  const pdfDownload = ownerPage.waitForEvent('download');
+  await row.getByRole('button', { name: 'PDF' }).click();
+  const pdf = await pdfDownload;
+  expect(pdf.suggestedFilename()).toMatch(/^waiver-Wanda-Waiver-\d{4}-\d{2}-\d{2}\.pdf$/);
+  const recordDownload = ownerPage.waitForEvent('download');
+  await row.getByRole('button', { name: 'Record' }).click();
+  expect((await recordDownload).suggestedFilename()).toMatch(/-record\.json$/);
   await ownerPage.context().close();
 });
 

@@ -60,7 +60,8 @@ export async function googlePlayerLogin(page: Page, email: string, displayName: 
   await page.locator('.practice-card, .waiver-card').first().waitFor();
   if (await page.locator('.waiver-card').isVisible()) {
     await page.getByLabel(/Your initials/).fill(displayName.slice(0, 2));
-    await page.getByRole('button', { name: 'I agree' }).click();
+    await drawSignature(page);
+    await page.getByRole('button', { name: 'I agree and sign' }).click();
   }
   await expect(page.locator('.practice-card')).toBeVisible();
 }
@@ -79,6 +80,21 @@ export async function createAccessKey(label: string, email?: string): Promise<st
   const { key } = (await res.json()) as { key: string };
   await api.dispose();
   return key;
+}
+
+/** Signs the waiver's signature pad with the mouse — a looping scrawl, like a real signature. */
+export async function drawSignature(page: Page): Promise<void> {
+  const pad = page.locator('.signature-pad-canvas');
+  await pad.scrollIntoViewIfNeeded();
+  const box = (await pad.boundingBox())!;
+  const y0 = box.y + box.height * 0.55;
+  await page.mouse.move(box.x + 30, y0);
+  await page.mouse.down();
+  for (let i = 0; i <= 40; i++) {
+    const x = box.x + 30 + i * ((box.width - 60) / 40);
+    await page.mouse.move(x, y0 + Math.sin(i / 2.2) * 26);
+  }
+  await page.mouse.up();
 }
 
 export interface CreateTableOptions {

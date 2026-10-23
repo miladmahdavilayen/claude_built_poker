@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MAX_BALANCE_CENTS } from './money.js';
+import { MAX_SIGNATURE_DATA_URL_LENGTH } from './waiver.js';
 
 // .strict() everywhere: unknown fields are rejected, per spec.
 
@@ -216,13 +217,7 @@ export const CreateSignupKeySchema = z
   })
   .strict();
 
-/**
- * The friendly-game waiver every Google player agrees to before playing
- * (see apps/web's Waiver page for the text). Bump the version whenever the
- * text changes and everyone is asked to agree again.
- */
-export const WAIVER_VERSION = 1;
-
+/** Agreeing to the friendly-game waiver (see waiver.ts): initials, a drawn signature, and what the browser can tell about the device. */
 export const AcceptWaiverSchema = z
   .object({
     /** Letters only — e.g. "JD", or "J" for a one-name player. */
@@ -230,6 +225,23 @@ export const AcceptWaiverSchema = z
       .string()
       .trim()
       .regex(/^[A-Za-z]{1,5}$/),
+    /** The signature as drawn, a PNG data URL. */
+    signature: z
+      .string()
+      .max(MAX_SIGNATURE_DATA_URL_LENGTH)
+      .regex(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/),
+    /** Which version of the text was on screen — must be the current one. */
+    version: z.number().int().positive(),
+    /** Reported by the browser — kept with the signed copy as-is, labelled as reported. */
+    device: z
+      .object({
+        platform: z.string().max(100).optional(),
+        language: z.string().max(40).optional(),
+        timeZone: z.string().max(80).optional(),
+        screen: z.string().max(40).optional(),
+        touch: z.boolean().optional(),
+      })
+      .strict(),
   })
   .strict();
 

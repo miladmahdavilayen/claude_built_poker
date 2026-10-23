@@ -10,6 +10,8 @@ import type {
   UserRecord,
   GameReportRecord,
   GoogleAccountInput,
+  SignedWaiverRecord,
+  SignedWaiverSummary,
   SignupKeyRecord,
 } from './store.js';
 
@@ -180,6 +182,25 @@ export class MemoryStore implements Store {
     if (!k || k.usedAt || k.revokedAt) return Promise.resolve(false);
     k.revokedAt = new Date();
     return Promise.resolve(true);
+  }
+
+  private readonly signedWaivers: SignedWaiverRecord[] = [];
+
+  async saveSignedWaiver(waiver: SignedWaiverRecord): Promise<void> {
+    this.signedWaivers.push({ ...waiver });
+    return Promise.resolve();
+  }
+
+  async listSignedWaivers(): Promise<SignedWaiverSummary[]> {
+    return Promise.resolve(
+      [...this.signedWaivers]
+        .sort((a, b) => b.signedAt.getTime() - a.signedAt.getTime())
+        .map(({ googleId: _g, signaturePng: _s, pdf: _p, record: _r, ...summary }) => summary),
+    );
+  }
+
+  async getSignedWaiver(id: string): Promise<SignedWaiverRecord | null> {
+    return Promise.resolve(this.signedWaivers.find((w) => w.id === id) ?? null);
   }
 
   async acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {

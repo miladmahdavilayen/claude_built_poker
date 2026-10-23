@@ -42,6 +42,30 @@ export interface SignupKeyRecord {
   revokedAt: Date | null;
 }
 
+/** A signed waiver's listing details — everything but the PDF and signature (see getSignedWaiver). */
+export interface SignedWaiverSummary {
+  id: string;
+  userId: string | null;
+  displayName: string;
+  email: string | null;
+  version: number;
+  initials: string;
+  signedAt: Date;
+  ipAddress: string | null;
+  userAgent: string | null;
+  pdfSha256: string;
+}
+
+export interface SignedWaiverRecord extends SignedWaiverSummary {
+  googleId: string | null;
+  /** Base64. */
+  signaturePng: string;
+  /** Base64. */
+  pdf: string;
+  /** The authorization record (see waiverPdf.ts) — JSON. */
+  record: Record<string, unknown>;
+}
+
 export type LedgerReason = 'buy_in' | 'cash_out' | 'pot_win' | 'rake' | 'admin_adjust' | 'welcome_bonus' | 'balance_restored';
 
 export interface TableRecord {
@@ -234,6 +258,11 @@ export interface Store {
   attachSignupKeyUser(id: string, userId: string): Promise<void>;
   /** Revokes a key that hasn't been used. Returns false if there was nothing to revoke. */
   revokeSignupKey(id: string): Promise<boolean>;
+  /** Files a signed waiver — kept forever, whatever happens to the account. */
+  saveSignedWaiver(waiver: SignedWaiverRecord): Promise<void>;
+  /** Newest first, without the PDFs. */
+  listSignedWaivers(): Promise<SignedWaiverSummary[]>;
+  getSignedWaiver(id: string): Promise<SignedWaiverRecord | null>;
   /** Records that this player agreed to the friendly-game waiver: which version, with what initials, now. */
   acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord>;
   /** Links a Google identity onto an EXISTING guest account, converting it in place. */

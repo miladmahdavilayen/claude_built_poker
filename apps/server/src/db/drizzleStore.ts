@@ -15,6 +15,8 @@ import type {
   GameReportPlayerRecord,
   GameReportRecord,
   GoogleAccountInput,
+  SignedWaiverRecord,
+  SignedWaiverSummary,
   SignupKeyRecord,
 } from './store.js';
 
@@ -195,6 +197,34 @@ export class DrizzleStore implements Store {
       .where(and(eq(schema.signupKeys.id, id), isNull(schema.signupKeys.usedAt), isNull(schema.signupKeys.revokedAt)))
       .returning({ id: schema.signupKeys.id });
     return rows.length > 0;
+  }
+
+  async saveSignedWaiver(waiver: SignedWaiverRecord): Promise<void> {
+    await this.db.insert(schema.signedWaivers).values(waiver);
+  }
+
+  async listSignedWaivers(): Promise<SignedWaiverSummary[]> {
+    const w = schema.signedWaivers;
+    return this.db
+      .select({
+        id: w.id,
+        userId: w.userId,
+        displayName: w.displayName,
+        email: w.email,
+        version: w.version,
+        initials: w.initials,
+        signedAt: w.signedAt,
+        ipAddress: w.ipAddress,
+        userAgent: w.userAgent,
+        pdfSha256: w.pdfSha256,
+      })
+      .from(w)
+      .orderBy(desc(w.signedAt));
+  }
+
+  async getSignedWaiver(id: string): Promise<SignedWaiverRecord | null> {
+    const [row] = await this.db.select().from(schema.signedWaivers).where(eq(schema.signedWaivers.id, id)).limit(1);
+    return row ? { ...row, record: row.record as Record<string, unknown> } : null;
   }
 
   async acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {

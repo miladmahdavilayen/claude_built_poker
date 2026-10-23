@@ -128,8 +128,46 @@ export function refresh(): Promise<AuthResponse> {
   return fetch(`${API_BASE}/auth/refresh`, { method: 'POST', credentials: 'include' }).then((res) => parseOrThrow<AuthResponse>(res));
 }
 
-export function acceptWaiver(initials: string, accessToken: string): Promise<{ user: PublicUser }> {
-  return postJson('/users/me/waiver', { initials }, accessToken);
+export interface WaiverDevice {
+  platform?: string | undefined;
+  language?: string | undefined;
+  timeZone?: string | undefined;
+  screen?: string | undefined;
+  touch?: boolean | undefined;
+}
+
+/** Signs the friendly-game waiver: initials, the drawn signature (PNG data URL), the version read, and the device. */
+export function acceptWaiver(input: { initials: string; signature: string; version: number; device: WaiverDevice }, accessToken: string): Promise<{ user: PublicUser }> {
+  return postJson('/users/me/waiver', input, accessToken);
+}
+
+export interface SignedWaiverDto {
+  id: string;
+  displayName: string;
+  email: string | null;
+  version: number;
+  initials: string;
+  signedAt: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  pdfSha256: string;
+  accountDeleted: boolean;
+}
+
+/** Owner-only: every signed waiver ever, newest first — kept even after an account is deleted. */
+export function adminListWaivers(accessToken: string): Promise<{ waivers: SignedWaiverDto[] }> {
+  return getJson('/admin/waivers', accessToken);
+}
+
+/** Owner-only: fetches a signed waiver's PDF or authorization record as a Blob, with the server's filename. */
+export async function adminWaiverFile(id: string, kind: 'pdf' | 'record', accessToken: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${API_BASE}/admin/waivers/${encodeURIComponent(id)}/${kind}`, { headers: authHeaders(accessToken), credentials: 'include' });
+  if (!res.ok) {
+    await parseOrThrow(res);
+    throw new ApiError({ code: 'DOWNLOAD_FAILED', message: 'Download failed.' });
+  }
+  const filename = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? `waiver.${kind === 'pdf' ? 'pdf' : 'json'}`;
+  return { blob: await res.blob(), filename };
 }
 
 export function getMe(accessToken: string): Promise<{ user: PublicUser }> {

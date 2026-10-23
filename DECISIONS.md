@@ -2195,3 +2195,31 @@ the very first boot creates them and records it (`app_settings`, migration
 stopped (a shutdown cashes everyone out but leaves the table open on
 record). That first boot also closes any stale table left open from before.
 A side effect: tables the owner creates survive deploys too.
+
+## Signed waivers: a drawn signature, and a copy kept forever
+
+The waiver (version 2) is signed, not just initialled: initials plus a
+signature drawn on a pad (components/SignaturePad.tsx — finger or mouse,
+smoothed strokes that thin with speed, `touch-action: none`, a minimum
+amount of ink so a stray tap doesn't count, exported cropped to the ink).
+Its text lives in `@pokerclause/shared/waiver`, the single source for both
+the page and the signed PDF, and now says the signed copy stays with the
+owner even after the account is deleted. The version bump asks everyone,
+including earlier agreers, to sign once.
+
+Signing (`POST /users/me/waiver`, the only route with a larger body limit,
+512 KB) checks the version and that the signature is a real, non-empty
+PNG, then files a permanent copy in `signed_waivers` (migration 0011), with
+no foreign key to `users`, so deleting an account never deletes it:
+
+- the PDF as signed (reports/waiverPdf.ts: the full text, name, email,
+  initials, the signature, the time in UTC, the IP — `req.ip`, which is the
+  visitor's real address behind the proxy — the user agent, what the
+  browser reports about the device, the document id);
+- the signature PNG;
+- an authorization record (JSON): all of the above plus the SHA-256 of the
+  signature and of the PDF, so any later change to the PDF is detectable.
+
+The admin dashboard's "Signed waivers" panel lists every one (searchable,
+marked "account deleted" where it is), opens the PDF, and downloads the PDF
+or the record.

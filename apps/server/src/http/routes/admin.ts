@@ -219,6 +219,53 @@ export function registerAdminRoutes(
     return { ok: true };
   });
 
+  // --- Signed waivers: every one ever signed, kept forever (even after the
+  // account is deleted) — listed, viewable and downloadable here. ---
+
+  app.get('/admin/waivers', { preHandler: requireAdmin }, async () => {
+    const [waivers, users] = await Promise.all([store.listSignedWaivers(), store.listUsers()]);
+    const live = new Set(users.map((u) => u.id));
+    return {
+      waivers: waivers.map((w) => ({
+        id: w.id,
+        displayName: w.displayName,
+        email: w.email,
+        version: w.version,
+        initials: w.initials,
+        signedAt: w.signedAt.toISOString(),
+        ipAddress: w.ipAddress,
+        userAgent: w.userAgent,
+        pdfSha256: w.pdfSha256,
+        accountDeleted: w.userId === null || !live.has(w.userId),
+      })),
+    };
+  });
+
+  /** The signed PDF — inline to view in the browser, or `?download=1` to save it. */
+  app.get('/admin/waivers/:id/pdf', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const waiver = await store.getSignedWaiver(id);
+    if (!waiver) return reply.code(404).send({ code: 'WAIVER_NOT_FOUND', message: 'Signed waiver not found.' });
+    const download = (req.query as { download?: string }).download === '1';
+    const name = `waiver-${waiver.displayName.replace(/[^A-Za-z0-9]+/g, '-')}-${waiver.signedAt.toISOString().slice(0, 10)}.pdf`;
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${name}"`)
+      .send(Buffer.from(waiver.pdf, 'base64'));
+  });
+
+  /** The authorization record (JSON), with the PDF's and signature's SHA-256 — always a download. */
+  app.get('/admin/waivers/:id/record', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const waiver = await store.getSignedWaiver(id);
+    if (!waiver) return reply.code(404).send({ code: 'WAIVER_NOT_FOUND', message: 'Signed waiver not found.' });
+    const name = `waiver-${waiver.displayName.replace(/[^A-Za-z0-9]+/g, '-')}-${waiver.signedAt.toISOString().slice(0, 10)}-record.json`;
+    return reply
+      .header('Content-Type', 'application/json')
+      .header('Content-Disposition', `attachment; filename="${name}"`)
+      .send(JSON.stringify(waiver.record, null, 2));
+  });
+
   app.get('/admin/ledger/conservation', { preHandler: requireAdmin }, async () => {
     return store.ledgerConservationCheck();
   });

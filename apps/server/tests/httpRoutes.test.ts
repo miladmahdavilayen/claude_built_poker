@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import cookie from '@fastify/cookie';
 import { WAIVER_VERSION, type TableSettings } from '@pokerclause/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -10,6 +11,7 @@ import { registerAuthRoutes } from '../src/http/routes/auth.js';
 import { loginOrRegisterWithGoogle, WELCOME_BONUS } from '../src/auth/authService.js';
 import type { GoogleProfile } from '../src/auth/googleAuth.js';
 import { inviteLockout, signupKeyLockout } from '../src/security/lockouts.js';
+import { signaturePngDataUrl } from './pngFixture.js';
 import { registerTableRoutes } from '../src/http/routes/tables.js';
 import { registerUserRoutes } from '../src/http/routes/users.js';
 
@@ -128,25 +130,39 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       return { id: user.id, token: issueAccessToken(user) };
     }
 
-    it('a Google player can’t open a table until they agree to the waiver with their initials', async () => {
+    it('a Google player can’t open a table until they sign the waiver: initials, a real signature, the current version', async () => {
       const created = await store.createGoogleAccount({ googleId: 'g-w', email: 'w@gmail.com', displayName: 'Wade Wilson', avatarUrl: null });
       await store.adjustUserChips(created.id, 100_000);
       const token = issueAccessToken(created);
       const open = () => app.inject({ method: 'POST', url: '/tables/practice', headers: auth(token), payload: { bots: 1, stakes: 'low', buyIn: 5_000 } });
       const me = async () => (await app.inject({ method: 'GET', url: '/auth/me', headers: auth(token) })).json<{ user: { needsWaiver: boolean } }>().user;
+      const sign = (payload: object) => app.inject({ method: 'POST', url: '/users/me/waiver', headers: auth(token), payload });
+      const good = { initials: ' ww ', signature: signaturePngDataUrl(), version: WAIVER_VERSION, device: { platform: 'MacIntel', screen: '1440x900', touch: false } };
 
       expect((await me()).needsWaiver).toBe(true);
       expect((await open()).json<{ code: string }>().code).toBe('WAIVER_REQUIRED');
 
-      for (const initials of ['', 'J.D', '12', 'TOOLONG']) {
-        const bad = await app.inject({ method: 'POST', url: '/users/me/waiver', headers: auth(token), payload: { initials } });
-        expect(bad.statusCode).toBe(400);
-      }
-      const ok = await app.inject({ method: 'POST', url: '/users/me/waiver', headers: auth(token), payload: { initials: ' ww ' } });
+      for (const initials of ['', 'J.D', '12', 'TOOLONG']) expect((await sign({ ...good, initials })).statusCode).toBe(400);
+      expect((await sign({ initials: 'WW', version: WAIVER_VERSION, device: {} })).statusCode).toBe(400);
+      expect((await sign({ ...good, signature: 'data:image/png;base64,AAAA' })).json<{ code: string }>().code).toBe('INVALID_SIGNATURE');
+      expect((await sign({ ...good, version: WAIVER_VERSION - 1 })).json<{ code: string }>().code).toBe('WAIVER_OUTDATED');
+      expect(await store.listSignedWaivers()).toHaveLength(0);
+
+      const ok = await sign(good);
       expect(ok.json<{ user: { needsWaiver: boolean } }>().user.needsWaiver).toBe(false);
       expect((await store.findUserById(created.id))!.waiver).toMatchObject({ version: WAIVER_VERSION, initials: 'WW' });
       expect((await me()).needsWaiver).toBe(false);
       expect((await open()).statusCode).toBe(201);
+
+      // The signed copy: a real PDF whose fingerprint the record holds.
+      const [summary] = await store.listSignedWaivers();
+      const filed = (await store.getSignedWaiver(summary!.id))!;
+      const pdf = Buffer.from(filed.pdf, 'base64');
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(createHash('sha256').update(pdf).digest('hex')).toBe(filed.pdfSha256);
+      expect(filed.record).toMatchObject({ initials: 'WW', pdfSha256: filed.pdfSha256, signer: { email: 'w@gmail.com' }, deviceReportedByBrowser: { platform: 'MacIntel' } });
+      expect(filed.ipAddress).toBe('127.0.0.1');
+      expect(filed.version).toBe(WAIVER_VERSION);
     });
 
     it('the owner and guests are never asked for the waiver', async () => {
@@ -406,6 +422,45 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect(restored.inviteCode).toBe('code123');
       expect(restored.ownerId).toBe('owner-id');
       expect(restored.seats.every((s) => s.userId === null)).toBe(true);
+    });
+  });
+
+  describe('signed waivers: the owner can view and download every one, forever', () => {
+    it('lists, serves the PDF and the authorization record — to the owner only — and keeps them after the account is deleted', async () => {
+      const r = await loginOrRegisterWithGoogle(store, { googleId: 'g-sw', email: 'sig@gmail.com', emailVerified: true, displayName: 'Sigrid', avatarUrl: null }, 'open');
+      const signed = await app.inject({
+        method: 'POST',
+        url: '/users/me/waiver',
+        headers: { ...auth(r.accessToken), 'user-agent': 'Mozilla/5.0 (iPhone) TestBrowser' },
+        payload: { initials: 'SG', signature: signaturePngDataUrl(), version: WAIVER_VERSION, device: { platform: 'iPhone', touch: true } },
+      });
+      expect(signed.statusCode).toBe(200);
+
+      const admin = await store.createAccount('sw-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const ownerAuth = auth(issueAccessToken({ ...admin, role: 'admin' }));
+      expect((await app.inject({ method: 'GET', url: '/admin/waivers', headers: auth(r.accessToken) })).statusCode).toBe(403);
+
+      const list = (await app.inject({ method: 'GET', url: '/admin/waivers', headers: ownerAuth })).json<{ waivers: { id: string; displayName: string; userAgent: string; accountDeleted: boolean }[] }>().waivers;
+      expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({ displayName: 'Sigrid', userAgent: 'Mozilla/5.0 (iPhone) TestBrowser', accountDeleted: false });
+      const id = list[0]!.id;
+
+      // Deleting the account keeps the signed waiver.
+      expect((await app.inject({ method: 'DELETE', url: '/users/me', headers: auth(r.accessToken) })).statusCode).toBe(200);
+      const after = (await app.inject({ method: 'GET', url: '/admin/waivers', headers: ownerAuth })).json<{ waivers: { accountDeleted: boolean }[] }>().waivers;
+      expect(after).toEqual([expect.objectContaining({ accountDeleted: true })]);
+
+      const view = await app.inject({ method: 'GET', url: `/admin/waivers/${id}/pdf`, headers: ownerAuth });
+      expect(view.headers['content-type']).toBe('application/pdf');
+      expect(view.headers['content-disposition']).toMatch(/^inline; filename="waiver-Sigrid-/);
+      expect(view.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+      const download = await app.inject({ method: 'GET', url: `/admin/waivers/${id}/pdf?download=1`, headers: ownerAuth });
+      expect(download.headers['content-disposition']).toMatch(/^attachment;/);
+      const record = await app.inject({ method: 'GET', url: `/admin/waivers/${id}/record`, headers: ownerAuth });
+      expect(record.headers['content-disposition']).toMatch(/^attachment; filename=".*-record\.json"/);
+      expect(JSON.parse(record.body)).toMatchObject({ documentId: id, initials: 'SG', userAgent: 'Mozilla/5.0 (iPhone) TestBrowser' });
+      expect((await app.inject({ method: 'GET', url: '/admin/waivers/00000000-0000-0000-0000-000000000000/pdf', headers: ownerAuth })).statusCode).toBe(404);
     });
   });
 

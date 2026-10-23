@@ -18,8 +18,8 @@ interface AuthState {
   /** Permanently deletes the signed-in (non-guest, non-admin) user's own account. Clears local session state on success — the caller still owns navigating away. */
   deleteAccount: () => Promise<void>;
   reloadUser: () => Promise<void>;
-  /** Agrees to the friendly-game waiver with these initials — see pages/Waiver.tsx. */
-  acceptWaiver: (initials: string) => Promise<void>;
+  /** Signs the friendly-game waiver — see pages/Waiver.tsx. */
+  acceptWaiver: (input: Parameters<typeof api.acceptWaiver>[0]) => Promise<void>;
   /** Optimistically reflects a display-name change already sent to (and applied by) the server — e.g. the owner renaming themselves right before sitting down via 'take-seat'. No round trip of its own; the server is the actual source of truth. */
   setDisplayName: (displayName: string) => void;
 }
@@ -137,9 +137,9 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
   }, [accessToken]);
 
   const acceptWaiver = useCallback(
-    async (initials: string) => {
+    async (input: Parameters<typeof api.acceptWaiver>[0]) => {
       if (!accessToken) throw new Error('Not signed in.');
-      const res = await api.acceptWaiver(initials, accessToken);
+      const res = await api.acceptWaiver(input, accessToken);
       setUser(res.user);
     },
     [accessToken],

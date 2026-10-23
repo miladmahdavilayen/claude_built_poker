@@ -71,6 +71,34 @@ export const signupKeys = pgTable(
   (t) => [index('signup_keys_created_at_idx').on(t.createdAt)],
 );
 
+/**
+ * Every signed copy of the friendly-game waiver, kept forever. Deliberately
+ * no foreign key to `users`: deleting an account must never delete what it
+ * signed — the owner keeps it (the waiver itself says so). Holds the PDF as
+ * signed, the drawn signature, and the authorization record (who, when,
+ * from where, on what device, and the PDF's SHA-256), all base64/JSON.
+ */
+export const signedWaivers = pgTable(
+  'signed_waivers',
+  {
+    id: uuid('id').primaryKey(),
+    userId: text('user_id'),
+    displayName: text('display_name').notNull(),
+    email: text('email'),
+    googleId: text('google_id'),
+    version: integer('version').notNull(),
+    initials: text('initials').notNull(),
+    signedAt: timestamp('signed_at', { withTimezone: true }).notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    signaturePng: text('signature_png').notNull(),
+    pdf: text('pdf').notNull(),
+    pdfSha256: text('pdf_sha256').notNull(),
+    record: jsonb('record').notNull(),
+  },
+  (t) => [index('signed_waivers_signed_at_idx').on(t.signedAt), index('signed_waivers_user_id_idx').on(t.userId)],
+);
+
 /** Small server-wide facts that must survive restarts — e.g. that the default tables were created once (see index.ts). */
 export const appSettings = pgTable('app_settings', {
   key: text('key').primaryKey(),

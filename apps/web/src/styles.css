@@ -3013,3 +3013,75 @@ input[type='range']::-moz-range-thumb {
   transition: none;
   cursor: grabbing;
 }
+
+/* Signature pad (components/SignaturePad.tsx) on the waiver. */
+.waiver-card {
+  width: 480px;
+}
+.signature-pad {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.signature-pad-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.signature-pad-clear {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+}
+.signature-pad-surface {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  /* Paper: warm white with a faint ruled feel, so it reads as a place to sign. */
+  background:
+    linear-gradient(transparent calc(100% - 46px), rgba(20, 24, 42, 0.18) calc(100% - 46px), rgba(20, 24, 42, 0.18) calc(100% - 45px), transparent calc(100% - 45px)),
+    linear-gradient(160deg, #fffdf8, #f1ece0);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.signature-pad-canvas {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+.signature-pad-hint {
+  position: absolute;
+  inset: 0 0 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(20, 24, 42, 0.38);
+  font-size: 14px;
+  pointer-events: none;
+}
+.signature-pad-line {
+  position: absolute;
+  left: 14px;
+  bottom: 48px;
+  color: rgba(20, 24, 42, 0.45);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* Admin: signed waivers. */
+.admin-waiver-actions {
+  display: flex;
+  gap: 6px;
+}
+.admin-waiver-actions button {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+.admin-waiver-deleted {
+  margin-left: 8px;
+  border-color: var(--danger);
+  color: #ffb3ac;
+}

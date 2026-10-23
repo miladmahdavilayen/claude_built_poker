@@ -7,7 +7,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./money": "./src/money.ts"
+    "./money": "./src/money.ts",
+    "./waiver": "./src/waiver.ts"
   },
   "scripts": {
     "test": "vitest run",

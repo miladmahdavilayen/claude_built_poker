@@ -1,59 +1,71 @@
-import { useState } from 'react';
+import { WAIVER_INTRO, WAIVER_TERMS, WAIVER_TITLE, WAIVER_VERSION } from '@pokerclause/shared/waiver';
+import { useRef, useState } from 'react';
+import type { WaiverDevice } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { AnimatedBackground } from '../components/AnimatedBackground.js';
+import { SignaturePad, type SignaturePadHandle } from '../components/SignaturePad.js';
+
+/** What the browser can tell about this device — kept on the signed copy, labelled as reported by the browser. */
+function deviceInfo(): WaiverDevice {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return {
+    platform: (nav.userAgentData?.platform ?? navigator.platform).slice(0, 100) || undefined,
+    language: navigator.language.slice(0, 40) || undefined,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone.slice(0, 80) || undefined,
+    screen: `${String(window.screen.width)}x${String(window.screen.height)}`,
+    touch: navigator.maxTouchPoints > 0,
+  };
+}
 
 /**
- * The friendly-game waiver every Google player agrees to, by typing their
- * initials, before they can do anything else (App.tsx routes them here
- * until they have). Short on purpose: a quick read, then agree. Rewording
- * it means bumping WAIVER_VERSION (packages/shared), which asks everyone
- * to agree again. The owner and invited guests are never shown it.
+ * The friendly-game waiver every Google player signs — initials and a
+ * drawn signature — before they can do anything else (App.tsx routes them
+ * here until they have). The text comes from @pokerclause/shared/waiver,
+ * the same source the signed PDF is built from, so what's read is exactly
+ * what's kept. Signing files a permanent signed copy with the owner (see
+ * the server's POST /users/me/waiver). The owner and invited guests are
+ * never shown it.
  */
 export function WaiverPage(): React.JSX.Element {
   const { user, acceptWaiver, logout } = useAuth();
+  const pad = useRef<SignaturePadHandle>(null);
   const [initials, setInitials] = useState('');
+  const [signed, setSigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const valid = /^[A-Za-z]{1,5}$/.test(initials.trim());
+  const initialsOk = /^[A-Za-z]{1,5}$/.test(initials.trim());
 
   const agree = (): void => {
-    if (!valid) {
-      setError('Type your initials — letters only.');
+    const signature = pad.current?.toDataUrl() ?? null;
+    if (!initialsOk || !signature) {
+      setError(!initialsOk ? 'Type your initials — letters only.' : 'Please sign in the box.');
       return;
     }
     setError(null);
     setBusy(true);
-    acceptWaiver(initials.trim()).catch((err: unknown) => {
+    acceptWaiver({ initials: initials.trim(), signature, version: WAIVER_VERSION, device: deviceInfo() }).catch((err: unknown) => {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
       setBusy(false);
     });
   };
 
   return (
-    <div className="page-centered">
+    <div className="page-centered waiver-page">
       <AnimatedBackground variant="landing" />
       <div className="auth-card waiver-card">
         <h1>pokerclause</h1>
-        <h2>Friendly game agreement</h2>
-        <p className="waiver-lead">
-          PokerClause is a private app for a small circle of friends &mdash; a friendly home game, played only for fun.
-        </p>
-        <p className="waiver-lead">By typing your initials, you understand and agree that:</p>
+        <h2>{WAIVER_TITLE}</h2>
+        {WAIVER_INTRO.map((p) => (
+          <p key={p} className="waiver-lead">
+            {p}
+          </p>
+        ))}
         <ol className="waiver-terms">
-          <li>
-            <strong>It&rsquo;s play money only.</strong> Chips have no cash value and can&rsquo;t be bought, sold or cashed out. No one &mdash; including the
-            app&rsquo;s owner &mdash; makes any money or gains any benefit from it.
-          </li>
-          <li>
-            <strong>It&rsquo;s provided as is.</strong> There&rsquo;s no promise it works, stays online, or keeps your account or balance.
-          </li>
-          <li>
-            <strong>You play at your own risk</strong> and give up any right to sue or bring any claim against the app or its owner over anything to do with
-            it, to the fullest extent the law allows.
-          </li>
-          <li>
-            <strong>The owner may change, pause or remove</strong> the app or your account at any time.
-          </li>
+          {WAIVER_TERMS.map((term) => (
+            <li key={term.lead}>
+              <strong>{term.lead}</strong> {term.text}
+            </li>
+          ))}
         </ol>
         <form
           onSubmit={(e) => {
@@ -69,13 +81,13 @@ export function WaiverPage(): React.JSX.Element {
               onChange={(e) => setInitials(e.target.value.toUpperCase())}
               maxLength={5}
               autoComplete="off"
-              autoFocus
               placeholder="e.g. JD"
             />
           </label>
+          <SignaturePad ref={pad} label="Your signature" onChange={setSigned} />
           {error && <div className="error-banner">{error}</div>}
-          <button type="submit" className="btn-primary" disabled={!valid || busy}>
-            {busy ? 'Saving…' : 'I agree'}
+          <button type="submit" className="btn-primary" disabled={!initialsOk || !signed || busy}>
+            {busy ? 'Saving your signed copy…' : 'I agree and sign'}
           </button>
         </form>
         <button type="button" className="landing-link" onClick={() => void logout()}>

@@ -48,6 +48,13 @@ test('a blind change mid-hand is announced to everyone and only applies from the
 
 test('removing a player mid-hand: they are marked as leaving, folded on their turn, and gone with their chips once the hand ends', async ({ browser }) => {
   const { owner, alice } = await ownerAndAliceMidHand(browser, 'Remove Mid Hand');
+  // Remove her while it's the OWNER's turn: removed on her own turn, she's folded 400ms later, the hand
+  // ends and her seat empties — before a slow machine gets to look for the "leaving" tag.
+  const ownerTurn = owner.getByRole('button', { name: /^(Check|Call)/ });
+  const aliceCall = alice.getByRole('button', { name: /^Call/ });
+  await expect.poll(async () => (await ownerTurn.isVisible()) || (await aliceCall.isVisible()), { timeout: 10_000 }).toBe(true);
+  if (await aliceCall.isVisible()) await aliceCall.click();
+  await expect(ownerTurn).toBeVisible();
 
   await openOwnerMenu(owner);
   const aliceRow = owner.getByTestId('owner-seat-1');

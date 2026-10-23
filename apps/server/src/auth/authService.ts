@@ -29,8 +29,14 @@ async function grantStartingChips(store: Store, userId: string): Promise<UserRec
   return user;
 }
 
-export async function signUpGuest(store: Store, displayName: string): Promise<AuthResult> {
-  const created = await store.createGuestUser(displayName);
+/** A new session for a guest who already exists — coming back by their own seat invite link (see POST /auth/guest). */
+export function resumeGuest(store: Store, guest: UserRecord): Promise<AuthResult> {
+  return buildAuthResult(store, guest);
+}
+
+/** `id`: re-create a guest under the id they had before (see SeatInviteRecord) — a fresh guest otherwise. */
+export async function signUpGuest(store: Store, displayName: string, id?: string): Promise<AuthResult> {
+  const created = await store.createGuestUser(displayName, id);
   const user = await grantStartingChips(store, created.id);
   return buildAuthResult(store, user);
 }

@@ -11,6 +11,8 @@ export interface TableSummary {
   seatsFilled: number;
   maxSeats: number;
   isPrivate: boolean;
+  /** An open-invite table (one shareable link) — always private too. */
+  openSeating: boolean;
   isPractice: boolean;
   ownerId: string | null;
 }
@@ -31,6 +33,8 @@ export interface GuestInvite {
   tableId: string;
   tableName: string;
   adminNickname: string | null;
+  /** The guest a used seat invite belongs to — signing in by it again is that guest again (see POST /auth/guest). */
+  guestUserId: string | null;
 }
 
 export class TableRegistry {
@@ -88,6 +92,7 @@ export class TableRegistry {
       seatsFilled: t.seats.filter((s) => s.userId !== null).length,
       maxSeats: t.visibleSeatCount,
       isPrivate: t.settings.isPrivate,
+      openSeating: t.openSeating,
       isPractice: t.isPractice,
       ownerId: t.ownerId,
     }));
@@ -108,13 +113,13 @@ export class TableRegistry {
    */
   describeInvite(token: string): GuestInvite | null {
     const seat = this.tableForInvite(token);
-    if (seat) return { kind: 'seat-invite', tableId: seat.tableId, tableName: seat.name, adminNickname: seat.seatAssignmentNickname(token) };
+    if (seat) return { kind: 'seat-invite', tableId: seat.tableId, tableName: seat.name, adminNickname: seat.seatAssignmentNickname(token), guestUserId: seat.seatAssignmentGuest(token) };
     const open = this.tableForOpenCode(token);
-    if (open) return { kind: 'open-link', tableId: open.tableId, tableName: open.name, adminNickname: null };
+    if (open) return { kind: 'open-link', tableId: open.tableId, tableName: open.name, adminNickname: null, guestUserId: null };
     return null;
   }
 
-  /** The table an unused invite code belongs to, if any — see GET /invites/:token. */
+  /** The table a seat invite (used or not) belongs to, if it's open — see GET /invites/:token. */
   tableForInvite(token: string): LiveTable | null {
     for (const t of this.tables.values()) {
       if (t.hasSeatAssignment(token)) return t;

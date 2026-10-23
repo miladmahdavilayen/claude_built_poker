@@ -129,6 +129,26 @@ export const guestPlayers = pgTable(
 );
 
 /**
+ * An owner's seat invite links (see SeatInviteRecord in store.ts): kept for
+ * as long as the table is open, so a guest can always come back by the same
+ * link — even after a restart. Only the token's SHA-256 is stored.
+ */
+export const seatInvites = pgTable(
+  'seat_invites',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    tableId: text('table_id').notNull(),
+    seatId: integer('seat_id').notNull(),
+    buyIn: integer('buy_in').notNull(),
+    ownerNickname: text('owner_nickname'),
+    guestUserId: text('guest_user_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }),
+  },
+  (t) => [index('seat_invites_table_id_idx').on(t.tableId)],
+);
+
+/**
  * A registered player's account as it was when it was deleted — for the
  * owner only. Never blocks the same person registering again. Their signed
  * waivers and game history stay where they are (found by `id`); the ledger

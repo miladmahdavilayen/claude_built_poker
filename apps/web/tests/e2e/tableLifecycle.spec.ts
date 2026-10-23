@@ -95,7 +95,7 @@ test('the owner can terminate a table with confirmation, closing it for a seated
   await ctxAlice.close();
 });
 
-test('an invited guest leaving the table gets a confirm first, then a hard end to their session — never the lobby', async ({ browser }) => {
+test('an invited guest can leave (after a confirm) without closing the table — and rejoin by the same link, here or on another device, as the same guest', async ({ browser }) => {
   const ctxOwner = await browser.newContext();
   const ctxAlice = await browser.newContext();
   const ctxCarol = await browser.newContext();
@@ -130,21 +130,42 @@ test('an invited guest leaving the table gets a confirm first, then a hard end t
   await pageAlice.getByRole('button', { name: 'Leave table' }).click();
   await pageAlice.getByRole('button', { name: 'Yes, leave' }).click();
 
-  // Never the lobby — a dead-end page instead, with nothing that could
-  // take them to the lobby, login, or account creation.
+  // Never the lobby — a page with just the way back in.
   await expect(pageAlice).toHaveURL(/\/left/, { timeout: 10_000 });
-  await expect(pageAlice.getByText('left the table')).toBeVisible();
+  await expect(pageAlice.getByRole('heading', { name: /left “Guest Leave Table”/ })).toBeVisible();
   await expect(pageAlice.getByRole('link')).toHaveCount(0);
 
-  // The session is genuinely over — reloading (or any later navigation)
-  // can't recover it, since the refresh cookie was actually revoked.
-  await pageAlice.reload();
-  await expect(pageAlice).toHaveURL(/\/left/);
-
-  // The table's still alive (Carol's still seated) — just Alice's seat is
-  // free now, for the owner to bring in someone new.
+  // The table's still alive (Carol's still seated) — only Alice's seat is free.
   await expect(pageCarol.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'empty', { timeout: 10_000 });
   await expect(pageCarol.locator('[data-testid="seat-1"]')).toHaveAttribute('data-seat-status', 'active');
+
+  // Rejoin: back in her own seat, by her own invite link.
+  await pageAlice.getByRole('button', { name: 'Rejoin table' }).click();
+  await expect(pageAlice.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'active', { timeout: 10_000 });
+  await expect(pageCarol.locator('[data-testid="seat-0"]')).toContainText('Alice');
+
+  // Leaving again — and coming back on another device by the same link: the same Alice.
+  const link = await pageAlice.evaluate((): string => {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) ?? '';
+      if (k.startsWith('pokerclause-rejoin:')) return localStorage.getItem(k) ?? '';
+    }
+    return '';
+  });
+  expect(link).toMatch(/\?assign=/);
+  await pageAlice.getByRole('button', { name: 'Leave table' }).click();
+  await pageAlice.getByRole('button', { name: 'Yes, leave' }).click();
+  await expect(pageAlice).toHaveURL(/\/left/, { timeout: 10_000 });
+  const phone = await (await browser.newContext()).newPage();
+  await phone.goto(link);
+  await phone.getByLabel('Display name').fill('Someone Else');
+  await phone.getByLabel('I’ve read and agree to the guest terms').check();
+  await phone.getByRole('button', { name: 'Play now' }).click();
+  await expect(phone.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'active', { timeout: 10_000 });
+  await expect(phone.locator('[data-testid="seat-0"]')).toContainText('Alice');
+  // Nobody else can take her link.
+  await expect(pageCarol.locator('[data-testid="seat-1"]')).toHaveAttribute('data-seat-status', 'active');
+  await phone.context().close();
 
   await ctxOwner.close();
   await ctxAlice.close();
@@ -256,4 +277,30 @@ test('tapping Join on an owner’s swipeable card still joins the table', async 
   await page.goto('/lobby');
   await page.locator('.swipe-delete', { hasText: 'Tap To Join' }).getByRole('button', { name: 'Join table' }).click();
   await expect(page).toHaveURL(tableUrl);
+});
+
+test('a private table the owner leaves stays in their lobby, under Private tables — and only theirs', async ({ browser }) => {
+  const owner = await (await browser.newContext()).newPage();
+  await adminLogin(owner);
+  await createTable(owner, { name: 'Homegame Private', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: true });
+  await takeSeat(owner, 0, 100);
+  await owner.getByRole('button', { name: 'Leave table' }).click();
+  await expect(owner).toHaveURL(/\/lobby/);
+
+  const privateSection = owner.getByTestId('lobby-private-tables');
+  const card = privateSection.locator('.table-card', { hasText: 'Homegame Private' });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('Private');
+  // Not mixed in with the public tables above.
+  await expect(owner.locator('.table-grid').first().locator('.table-card', { hasText: 'Homegame Private' })).toHaveCount(0);
+  // Still one tap away.
+  await card.getByRole('button', { name: 'Join table' }).click();
+  await expect(owner).toHaveURL(/\/table\//);
+  await expect(owner.locator('[data-testid="seat-0"]')).toBeVisible();
+
+  // Anyone else's lobby doesn't list it.
+  const other = await (await browser.newContext()).newPage();
+  await guestSignup(other, 'Nosy');
+  await expect(other.locator('.table-card', { hasText: 'Homegame Private' })).toHaveCount(0);
+  await expect(other.getByTestId('lobby-private-tables')).toHaveCount(0);
 });

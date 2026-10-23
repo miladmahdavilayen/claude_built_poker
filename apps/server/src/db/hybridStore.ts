@@ -15,6 +15,7 @@ import type {
   SignedWaiverSummary,
   SignupKeyRecord,
   GuestPlayerRecord,
+  SeatInviteRecord,
   DeletedUserRecord,
   PlayerGameRecord,
 } from './store.js';
@@ -56,8 +57,8 @@ export class HybridStore implements Store {
 
   // --- Creation ---
 
-  createGuestUser(displayName: string): Promise<UserRecord> {
-    return this.guestStore.createGuestUser(displayName);
+  createGuestUser(displayName: string, id?: string): Promise<UserRecord> {
+    return this.guestStore.createGuestUser(displayName, id);
   }
 
   createAccount(email: string, passwordHash: string, displayName: string): Promise<UserRecord> {
@@ -114,6 +115,19 @@ export class HybridStore implements Store {
 
   // --- Guest records and deleted accounts: always persisted, kept for good.
   // A guest's session stays in memory (guestStore); this is the record of them. ---
+
+  // A practice table never has seat invites; every real table's are persisted.
+  saveSeatInvite(invite: SeatInviteRecord): Promise<void> {
+    return this.real.saveSeatInvite(invite);
+  }
+
+  listSeatInvites(tableId: string): Promise<SeatInviteRecord[]> {
+    return this.real.listSeatInvites(tableId);
+  }
+
+  deleteSeatInvite(tokenHash: string): Promise<void> {
+    return this.real.deleteSeatInvite(tokenHash);
+  }
 
   recordGuestPlayer(guest: GuestPlayerRecord): Promise<void> {
     return this.real.recordGuestPlayer(guest);

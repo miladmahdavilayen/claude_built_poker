@@ -44,6 +44,24 @@ export interface GuestPlayerRecord {
   termsAcceptedAt: Date;
 }
 
+/**
+ * An owner's seat invite link, kept for as long as its table is open (see
+ * schema.ts's seatInvites). Only the token's SHA-256 is stored. Once used,
+ * it belongs to the guest who used it (`guestUserId`): the same link brings
+ * that guest back to the table — after leaving, on another device, or
+ * after a server restart.
+ */
+export interface SeatInviteRecord {
+  tokenHash: string;
+  tableId: string;
+  seatId: number;
+  buyIn: number;
+  ownerNickname: string | null;
+  guestUserId: string | null;
+  createdAt: Date;
+  redeemedAt: Date | null;
+}
+
 /** Everything else about a deleted account, kept as it was (see DeletedUserRecord). */
 export interface DeletedUserSnapshot {
   avatarUrl: string | null;
@@ -293,7 +311,8 @@ export interface ChatMessageRecord {
  * interface, so the game logic above never knows which one it's talking to.
  */
 export interface Store {
-  createGuestUser(displayName: string): Promise<UserRecord>;
+  /** `id` re-creates a guest under the id they had before (see SeatInviteRecord) — a fresh one otherwise. */
+  createGuestUser(displayName: string, id?: string): Promise<UserRecord>;
   createAccount(email: string, passwordHash: string, displayName: string): Promise<UserRecord>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   findUserById(id: string): Promise<UserRecord | null>;
@@ -337,6 +356,12 @@ export interface Store {
   /** Newest first. */
   listGuestPlayers(): Promise<GuestPlayerRecord[]>;
   getGuestPlayer(id: string): Promise<GuestPlayerRecord | null>;
+  /** Inserts or updates a seat invite (by token hash). */
+  saveSeatInvite(invite: SeatInviteRecord): Promise<void>;
+  /** Every seat invite for a table — restored with it on boot. */
+  listSeatInvites(tableId: string): Promise<SeatInviteRecord[]>;
+  /** Voids a seat invite for good. */
+  deleteSeatInvite(tokenHash: string): Promise<void>;
   /** Files a deleted account's record — call before deleteUser, which it never replaces. */
   archiveDeletedUser(record: DeletedUserRecord): Promise<void>;
   /** Most recently deleted first. */

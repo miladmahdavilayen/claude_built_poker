@@ -825,7 +825,7 @@ describe('socketServer: live signaling and access control', () => {
     });
   });
 
-  it('assign-seat + redeem-seat-assignment: a one-time, seat-and-amount-specific invite link, ignoring anything the redeemer tries to supply themselves, consumed on use', async () => {
+  it('assign-seat + redeem-seat-assignment: a seat-and-amount-specific invite link, ignoring anything the redeemer tries to supply themselves, that belongs to whoever used it', async () => {
     const admin = await makeAdminUser('Owner');
     const alice = await makeUser('Alice');
     const table = await registry.createTable('Invite Link Table', SETTINGS, null, null);
@@ -857,7 +857,7 @@ describe('socketServer: live signaling and access control', () => {
     expect(seat2?.playerId).toBe(alice.userId);
     expect(seat2?.stack).toBe(75);
 
-    // Single-use: redeeming the SAME token again fails.
+    // Alice's now: anyone else redeeming the SAME token is refused.
     const bob = await makeUser('Bob');
     const bobSocket = connect(bob.token);
     await waitFor(bobSocket, 'connect');
@@ -865,7 +865,7 @@ describe('socketServer: live signaling and access control', () => {
     await waitFor(bobSocket, 'state');
     const reuseError = waitFor<{ code: string }>(bobSocket, 'error');
     bobSocket.emit('redeem-seat-assignment', { token });
-    expect((await reuseError).code).toBe('INVALID_ASSIGNMENT');
+    expect((await reuseError).code).toBe('INVITE_TAKEN');
 
     adminSocket.close();
     aliceSocket.close();

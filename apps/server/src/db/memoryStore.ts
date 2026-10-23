@@ -14,6 +14,7 @@ import type {
   SignedWaiverSummary,
   SignupKeyRecord,
   GuestPlayerRecord,
+  SeatInviteRecord,
   DeletedUserRecord,
   PlayerGameRecord,
 } from './store.js';
@@ -38,9 +39,9 @@ export class MemoryStore implements Store {
   /** Never cleared by deleteUser — outlives the account, like schema.ts's welcomeBonusClaims. */
   private readonly bonusClaims: { emailKey: string; googleId: string | null; carriedBalance: number | null }[] = [];
 
-  async createGuestUser(displayName: string): Promise<UserRecord> {
+  async createGuestUser(displayName: string, id: string = randomUUID()): Promise<UserRecord> {
     const user: UserRecord = {
-      id: randomUUID(),
+      id,
       email: null,
       passwordHash: null,
       googleId: null,
@@ -182,6 +183,22 @@ export class MemoryStore implements Store {
     if (k) k.usedBy = userId;
     const user = this.users.get(userId);
     if (k && user) user.accessKeyLabel = k.label;
+    return Promise.resolve();
+  }
+
+  private readonly seatInvites = new Map<string, SeatInviteRecord>();
+
+  async saveSeatInvite(invite: SeatInviteRecord): Promise<void> {
+    this.seatInvites.set(invite.tokenHash, { ...invite });
+    return Promise.resolve();
+  }
+
+  async listSeatInvites(tableId: string): Promise<SeatInviteRecord[]> {
+    return Promise.resolve([...this.seatInvites.values()].filter((i) => i.tableId === tableId).map((i) => ({ ...i })));
+  }
+
+  async deleteSeatInvite(tokenHash: string): Promise<void> {
+    this.seatInvites.delete(tokenHash);
     return Promise.resolve();
   }
 

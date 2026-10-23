@@ -60,6 +60,48 @@ function TablesLobby(): React.JSX.Element {
     return () => clearInterval(id);
   }, [accessToken, refreshTick]);
 
+  const publicTables = tables.filter((t) => !t.isPrivate);
+  const privateTables = tables.filter((t) => t.isPrivate);
+
+  const renderTable = (t: TableSummaryDto): React.JSX.Element => {
+    const card = (
+      <div className="table-card">
+        <div className="table-card-top">
+          <h3 className="table-card-name">{t.name}</h3>
+          <span className="table-card-seats" title="Seats filled">
+            {t.seatsFilled}/{t.maxSeats}
+          </span>
+        </div>
+        {t.isPrivate && <span className="table-card-private">{t.openSeating ? 'Open invite' : 'Private'}</span>}
+        <div className="table-card-stats">
+          <div className="table-card-stat">
+            <span className="stat-label">Stakes</span>
+            <span className="stat-value">
+              {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
+            </span>
+          </div>
+          <div className="table-card-stat">
+            <span className="stat-label">Buy-in</span>
+            <span className="stat-value">
+              {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
+            </span>
+          </div>
+        </div>
+        <button type="button" className="btn-primary table-card-join" onClick={() => void navigate(`/table/${t.tableId}`)}>
+          Join table
+        </button>
+      </div>
+    );
+    // The owner can swipe a table left to delete it (after confirming).
+    return isAdmin ? (
+      <SwipeToDelete key={t.tableId} label={t.name} onDelete={() => setDeleteTarget(t)}>
+        {card}
+      </SwipeToDelete>
+    ) : (
+      <Fragment key={t.tableId}>{card}</Fragment>
+    );
+  };
+
   return (
     <div className="lobby-page">
       <header className="lobby-header">
@@ -103,45 +145,20 @@ function TablesLobby(): React.JSX.Element {
       </div>
 
       <div className="table-grid">
-        {tables.map((t) => {
-          const card = (
-            <div className="table-card">
-              <div className="table-card-top">
-                <h3 className="table-card-name">{t.name}</h3>
-                <span className="table-card-seats" title="Seats filled">
-                  {t.seatsFilled}/{t.maxSeats}
-                </span>
-              </div>
-              <div className="table-card-stats">
-                <div className="table-card-stat">
-                  <span className="stat-label">Stakes</span>
-                  <span className="stat-value">
-                    {formatChips(t.settings.smallBlind)}/{formatChips(t.settings.bigBlind)}
-                  </span>
-                </div>
-                <div className="table-card-stat">
-                  <span className="stat-label">Buy-in</span>
-                  <span className="stat-value">
-                    {formatChips(t.settings.minBuyIn)}&ndash;{formatChips(t.settings.maxBuyIn)}
-                  </span>
-                </div>
-              </div>
-              <button type="button" className="btn-primary table-card-join" onClick={() => void navigate(`/table/${t.tableId}`)}>
-                Join table
-              </button>
-            </div>
-          );
-          // The owner can swipe a table left to delete it (after confirming).
-          return isAdmin ? (
-            <SwipeToDelete key={t.tableId} label={t.name} onDelete={() => setDeleteTarget(t)}>
-              {card}
-            </SwipeToDelete>
-          ) : (
-            <Fragment key={t.tableId}>{card}</Fragment>
-          );
-        })}
-        {tables.length === 0 && <div className="table-grid-empty">No tables open right now.</div>}
+        {publicTables.map(renderTable)}
+        {publicTables.length === 0 && <div className="table-grid-empty">No tables open right now.</div>}
       </div>
+
+      {/* Only the owner is ever sent private tables (and open-invite ones,
+          which are private too): listed here so one they've left — empty or
+          not — is always one tap away. Everyone else gets in by its link. */}
+      {privateTables.length > 0 && (
+        <section className="lobby-private" data-testid="lobby-private-tables">
+          <h2 className="lobby-section-title">Private tables</h2>
+          <p className="lobby-section-hint">Only you see these here — players join by the link you share.</p>
+          <div className="table-grid">{privateTables.map(renderTable)}</div>
+        </section>
+      )}
 
       {deleteTarget && (
         <div className="modal-backdrop" onClick={() => !deleting && setDeleteTarget(null)}>

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   applyAction,
   createTableState,
@@ -29,7 +29,7 @@ import {
   type WaitlistEntry,
 } from '@pokerclause/shared';
 import { ALL_BOT_POLICIES, projectSeatView, type BotPolicy } from '@pokerclause/sim';
-import type { Store } from '../db/store.js';
+import type { SeatInviteRecord, Store } from '../db/store.js';
 import { commitmentFor, deriveDeckForHand, generateServerSeed } from '../rng/commitReveal.js';
 import { GameBook, type PlayerKind } from './gameBook.js';
 
@@ -154,6 +154,11 @@ const HAND_BREAK_MS = Number(process.env.HAND_BREAK_MS ?? 5000);
 // voluntarily reveals their hand after winning uncalled — see revealHand().
 const REVEAL_HAND_BREAK_EXTENSION_MS = 1500;
 
+/** Invite tokens are stored and looked up by their SHA-256 — never the token itself. */
+export function hashInviteToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 export class LiveTable {
   readonly tableId: string;
   name: string;
@@ -187,8 +192,14 @@ export class LiveTable {
   private waitlist: WaitlistEntry[] = [];
   /** Open-invite tables only: the free seat held for the waitlist's first person — see syncSeatOffer. */
   private seatOffer: SeatOffer | null = null;
-  /** token -> pending owner-generated seat assignment. See createSeatAssignment/redeemSeatAssignment. */
-  private readonly seatAssignments = new Map<string, { seatId: number; buyIn: number; ownerNickname: string | null }>();
+  /**
+   * The owner's seat invites, by the SHA-256 of their token — unused, or
+   * used and now belonging to a guest (`guestUserId`), who can come back by
+   * the same link for as long as the table is open. Persisted (see
+   * SeatInviteRecord), so they survive a restart along with the table.
+   * See createSeatAssignment/redeemSeatAssignment.
+   */
+  private readonly seatAssignments = new Map<string, SeatInviteRecord>();
   private botMoveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly botRng: RandomSource = cryptoSource();
   private readonly botPolicies = new Map<string, BotPolicy>(SELECTABLE_BOT_POLICIES.map((p) => [p.name, p]));
@@ -417,12 +428,11 @@ export class LiveTable {
 
   /**
    * Owner-only chip economy (see DECISIONS.md): the owner picks an empty
-   * seat and a buy-in, generating a one-time token instead of seating
-   * anyone directly — the human it's sent to redeems it themselves via
-   * redeemSeatAssignment, which is what actually calls takeSeat. Kept as
-   * simple in-memory bookkeeping on the table itself, consistent with
-   * everything else about a live table (no DB row — these don't need to
-   * survive a restart any more than an in-progress hand does).
+   * seat and a buy-in, generating an invite link instead of seating anyone
+   * directly — the human it's sent to redeems it themselves via
+   * redeemSeatAssignment, which is what actually calls takeSeat. The link
+   * then belongs to them: it brings them back to this table whenever they
+   * use it again, for as long as the table is open.
    */
   createSeatAssignment(
     seatId: number,
@@ -434,32 +444,71 @@ export class LiveTable {
     const range = this.checkBuyInRange(buyIn);
     if (!range.ok) return range;
     const token = randomUUID();
-    this.seatAssignments.set(token, { seatId, buyIn, ownerNickname });
+    const invite: SeatInviteRecord = { tokenHash: hashInviteToken(token), tableId: this.tableId, seatId, buyIn, ownerNickname, guestUserId: null, createdAt: this.nowDate(), redeemedAt: null };
+    this.seatAssignments.set(invite.tokenHash, invite);
+    this.persistInvite(invite);
     return { ok: true, token };
   }
 
-  /** Whether this table has an unused invite with this token — for looking up which table a pasted invite code belongs to. */
+  private persistInvite(invite: SeatInviteRecord): void {
+    if (this.isPractice) return;
+    void this.store.saveSeatInvite(invite).catch(() => undefined);
+  }
+
+  private voidInvite(tokenHash: string): void {
+    this.seatAssignments.delete(tokenHash);
+    if (!this.isPractice) void this.store.deleteSeatInvite(tokenHash).catch(() => undefined);
+  }
+
+  /** A restored table's invites (see TableRegistry.restore) — used ones keep working for their guests. */
+  loadSeatInvites(invites: readonly SeatInviteRecord[]): void {
+    for (const invite of invites) this.seatAssignments.set(invite.tokenHash, { ...invite });
+  }
+
+  /** Whether this table has an invite with this token, used or not — for looking up which table a pasted invite code belongs to. */
   hasSeatAssignment(token: string): boolean {
-    return this.seatAssignments.has(token);
+    return this.seatAssignments.has(hashInviteToken(token));
   }
 
-  /** The name the owner gave an unused invite (null if none), without using it up — kept on the guest's record (see GuestPlayerRecord). */
+  /** The name the owner gave an invite (null if none) — kept on the guest's record (see GuestPlayerRecord). */
   seatAssignmentNickname(token: string): string | null {
-    return this.seatAssignments.get(token)?.ownerNickname ?? null;
+    return this.seatAssignments.get(hashInviteToken(token))?.ownerNickname ?? null;
   }
 
-  /** Validates and consumes a seat-assignment token — the caller (socketServer.ts) still does the actual takeSeat + chip-ledger work, exactly like a normal take-seat, just sourcing seatId/buyIn/ownerNickname from here instead of the client's own say-so. */
+  /** The guest an invite belongs to once used — null while unused. */
+  seatAssignmentGuest(token: string): string | null {
+    return this.seatAssignments.get(hashInviteToken(token))?.guestUserId ?? null;
+  }
+
+  /**
+   * Seats `userId` by an invite: the first time, it becomes theirs; after
+   * that it seats them again whenever they come back by it. Their own seat
+   * if it's free, otherwise any free seat. Someone else can't use an
+   * invite that's already someone's. The caller (socketServer.ts) still
+   * does the actual takeSeat + chip-ledger work, exactly like a normal
+   * take-seat, sourcing seatId/buyIn/ownerNickname from here instead of
+   * the client's own say-so.
+   */
   redeemSeatAssignment(
     token: string,
-  ): { ok: true; seatId: number; buyIn: number; ownerNickname: string | null } | { ok: false; code: string; message: string } {
-    const assignment = this.seatAssignments.get(token);
-    if (!assignment) return { ok: false, code: 'INVALID_ASSIGNMENT', message: 'This invite link is invalid or has already been used.' };
-    if (!this.checkSeatUsable(assignment.seatId).ok) {
-      this.seatAssignments.delete(token);
-      return { ok: false, code: 'SEAT_TAKEN', message: 'That seat was taken or removed before this link was used.' };
+    userId: string,
+  ): { ok: true; seatId: number; buyIn: number; ownerNickname: string | null; returning: boolean } | { ok: false; code: string; message: string } {
+    const assignment = this.seatAssignments.get(hashInviteToken(token));
+    if (!assignment) return { ok: false, code: 'INVALID_ASSIGNMENT', message: 'This invite link isn’t valid for this table any more.' };
+    if (assignment.guestUserId !== null && assignment.guestUserId !== userId) {
+      return { ok: false, code: 'INVITE_TAKEN', message: 'This invite link belongs to another player.' };
     }
-    this.seatAssignments.delete(token);
-    return { ok: true, seatId: assignment.seatId, buyIn: assignment.buyIn, ownerNickname: assignment.ownerNickname };
+    const seatId = this.checkSeatUsable(assignment.seatId).ok
+      ? assignment.seatId
+      : this.state.seats.map((s) => s.seatId).find((id) => this.checkSeatUsable(id).ok);
+    if (seatId === undefined) return { ok: false, code: 'NO_FREE_SEAT', message: 'Every seat is taken right now — you can watch until one opens.' };
+    const returning = assignment.guestUserId !== null;
+    if (!returning) {
+      assignment.guestUserId = userId;
+      assignment.redeemedAt = this.nowDate();
+      this.persistInvite(assignment);
+    }
+    return { ok: true, seatId, buyIn: assignment.buyIn, ownerNickname: assignment.ownerNickname, returning };
   }
 
   /**
@@ -583,7 +632,8 @@ export class LiveTable {
 
   private markSeatRemoved(seatId: number): void {
     this.removedSeatIds.add(seatId);
-    for (const [token, a] of this.seatAssignments) if (a.seatId === seatId) this.seatAssignments.delete(token);
+    // An unused invite to this seat is void; a used one still brings its guest back (to another seat).
+    for (const [hash, a] of this.seatAssignments) if (a.seatId === seatId && a.guestUserId === null) this.voidInvite(hash);
   }
 
   /** Empties a seat right now and returns what its occupant is owed. Only ever called when the seat isn't in a hand in progress. */
@@ -782,7 +832,8 @@ export class LiveTable {
     this.clearBotMove();
     this.clearNextHandTimer();
     this.nextHandAt = null;
-    this.seatAssignments.clear(); // any not-yet-redeemed invite links are void once the table's reset
+    // Any not-yet-used invite links are void once the table's reset; used ones still bring their guests back.
+    for (const [hash, a] of this.seatAssignments) if (a.guestUserId === null) this.voidInvite(hash);
     // A reset ends the game: everyone is cashed out, so this game's books
     // close here and the next buy-in starts a new one.
     void this.closeBook('table reset by the owner');

@@ -76,7 +76,7 @@ export function TablePage(): React.JSX.Element {
   const { tableId } = useParams<{ tableId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const inviteCode = searchParams.get('code') ?? undefined;
-  const { user, accessToken, setDisplayName, logout } = useAuth();
+  const { user, accessToken, setDisplayName } = useAuth();
   const { socket, connected } = useSocket(accessToken);
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
@@ -140,6 +140,21 @@ export function TablePage(): React.JSX.Element {
   const [assignError, setAssignError] = useState<string | null>(null);
   const assignToken = searchParams.get('assign');
   const [redeemedTokens, setRedeemedTokens] = useState<Set<string>>(new Set());
+  // A guest's own way back in: the invite link they came by (their seat
+  // invite, or the table's open-invite link) keeps working for as long as
+  // the table is open — remembered here, since the seat invite's token is
+  // cleaned out of the address bar once used. See Left.tsx.
+  const [rejoinPath] = useState<string | null>(() => {
+    if (!tableId) return null;
+    const key = `pokerclause-rejoin:${tableId}`;
+    const fromUrl = assignToken ? `/table/${tableId}?assign=${encodeURIComponent(assignToken)}` : inviteCode ? `/table/${tableId}?code=${encodeURIComponent(inviteCode)}` : null;
+    try {
+      if (fromUrl) localStorage.setItem(key, fromUrl);
+      return fromUrl ?? localStorage.getItem(key);
+    } catch {
+      return fromUrl;
+    }
+  });
 
   useEffect(() => {
     if (connected && tableId) sock.joinTable(tableId, inviteCode);
@@ -155,9 +170,9 @@ export function TablePage(): React.JSX.Element {
     if (sock.state?.viewerSeatId !== null) return;
     setRedeemedTokens((prev) => new Set(prev).add(assignToken));
     sock.redeemSeatAssignment(assignToken);
-    // The token is single-use regardless of outcome, so the URL is
-    // cleaned up right away rather than waiting on a result — a page
-    // refresh shouldn't carry a now-dead token in the address bar.
+    // The URL is cleaned up right away rather than waiting on a result —
+    // a page refresh shouldn't redeem it again (the link itself is kept as
+    // rejoinPath, above, for coming back after leaving).
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -497,10 +512,9 @@ export function TablePage(): React.JSX.Element {
     <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
       <div className="table-header">
         {/* Any real account (admin or a signed-in non-guest human) has a
-            lobby to go back to — an invited GUEST doesn't (self-serve
-            seating doesn't exist for them; the only way back in is a
-            fresh invite link from the owner). See the leave-table
-            confirm modal below and DECISIONS.md. */}
+            lobby to go back to — an invited GUEST doesn't: their way back
+            is the invite link they came by, which keeps working while the
+            table is open. See the leave-table confirm modal below. */}
         {!user.isGuest && <Link to="/lobby">&larr; Lobby</Link>}
         <div className="table-header-name">
           {state.tableName}
@@ -508,15 +522,15 @@ export function TablePage(): React.JSX.Element {
         </div>
         <div className="table-header-right">
           {!mySeat && myWaitlistIndex === 0 && hasEmptySeat && <span className="seat-tag seat-tag-allin">A seat is open!</span>}
-          {mySeat && (
+          {(mySeat || user.isGuest) && (
             <button
               type="button"
               onClick={() => {
                 // Any real account (admin, or a signed-in non-guest human)
                 // always has a lobby to go back to, so their own "Leave
                 // table" stays the simple, immediate action it always was.
-                // An invited guest gets a confirm first — see the modal
-                // below and DECISIONS.md.
+                // An invited guest — seated, waiting or watching — gets a
+                // confirm first: see the modal below.
                 if (!user.isGuest) {
                   void sock.leaveTable().then(() => navigate('/lobby'));
                 } else {
@@ -994,16 +1008,17 @@ export function TablePage(): React.JSX.Element {
       )}
 
       {/* Guest-only (see the "Leave table" button above — the owner's own
-          click never opens this): an invited guest has no lobby/login/
-          account page to land on, so leaving fully ends their (ephemeral,
-          password-less) session instead. See Left.tsx, DECISIONS.md. */}
+          click never opens this): an invited guest has no lobby to land
+          on, so they go to Left.tsx, which offers the way back in — the
+          same invite link, for as long as the table is open. Leaving never
+          closes the table. */}
       {leaveConfirmOpen && (
         <div className="modal-backdrop" onClick={() => setLeaveConfirmOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Leave this table?</h3>
             <p>
-              You won&rsquo;t be able to get back in unless the table owner sends you a new invite link &mdash; this ends your
-              session entirely. If you just want a break, close this and use &ldquo;Sit out next hand&rdquo; instead.
+              {mySeat ? 'Your seat is freed and your chips are set aside for you. ' : ''}You can come back any time while the table is open,
+              with the same invite link. If you just want a short break, use &ldquo;Sit out next hand&rdquo; instead.
             </p>
             <div className="modal-actions">
               <button type="button" onClick={() => setLeaveConfirmOpen(false)}>
@@ -1015,17 +1030,9 @@ export function TablePage(): React.JSX.Element {
                 onClick={() => {
                   setLeaveConfirmOpen(false);
                   leavingIntentionallyRef.current = true;
-                  // Navigate to the ungated /left route BEFORE logging
-                  // out, not after — /table/:tableId's own route element
-                  // is `user ? <TablePage/> : <RedirectToLogin/>`, so
-                  // clearing `user` first (via logout) while still on
-                  // that route swaps straight to <RedirectToLogin/> (a
-                  // trip through /login this whole flow exists to avoid)
-                  // before this component's own navigate ever gets a
-                  // chance to run.
-                  void sock.leaveTable()
-                    .then(() => navigate('/left', { replace: true }))
-                    .then(() => logout());
+                  // The guest's session stays: their invite link brings
+                  // them straight back (Left.tsx's "Rejoin table").
+                  void sock.leaveTable().then(() => navigate('/left', { replace: true, state: { rejoin: rejoinPath, tableName: state.tableName } }));
                 }}
               >
                 Yes, leave

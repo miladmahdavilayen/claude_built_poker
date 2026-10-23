@@ -92,6 +92,13 @@
       "when": 1792700000000,
       "tag": "0012_player_records",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0013_seat_invites",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { GoogleSignInSchema, GUEST_TERMS_VERSION, GuestSignupSchema, LoginSchema, SignupKeySchema } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
-import { AuthError, login, loginOrRegisterWithGoogle, signUpGuest } from '../../auth/authService.js';
+import { AuthError, login, loginOrRegisterWithGoogle, resumeGuest, signUpGuest } from '../../auth/authService.js';
 import { isGoogleSignInConfigured, verifyGoogleIdToken } from '../../auth/googleAuth.js';
 import { hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
 import { inviteLockout, lockedOutReply, signupKeyLockout } from '../../security/lockouts.js';
@@ -82,7 +82,15 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store, describeI
       inviteLockout.recordFailure(req.ip);
       return reply.code(403).send({ code: 'INVALID_ASSIGNMENT', message: 'This invitation is invalid or has already been used.' });
     }
-    const result = await signUpGuest(store, body.data.displayName);
+    // A used seat invite belongs to its guest: signing in by it again — on
+    // another device, after leaving, or after a restart cleared the
+    // in-memory session — is that same guest, not a new one.
+    // (An invite a registered player used is theirs — a guest by it is just
+    // a new guest, whom the table then refuses the seat: INVITE_TAKEN.)
+    const owner = invite.guestUserId ? await store.findUserById(invite.guestUserId) : null;
+    const result = owner?.isGuest
+      ? await resumeGuest(store, owner)
+      : await signUpGuest(store, body.data.displayName, invite.guestUserId && !owner ? invite.guestUserId : undefined);
     const now = new Date();
     await store.recordGuestPlayer({
       id: result.user.id,

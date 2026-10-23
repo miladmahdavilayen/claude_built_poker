@@ -186,7 +186,9 @@ export interface TableSummaryDto {
   };
   seatsFilled: number;
   maxSeats: number;
+  /** Only the owner is ever sent a private table — see the lobby's Private tables section. */
   isPrivate: boolean;
+  openSeating: boolean;
 }
 
 /** For a practice-only player, `tables` is always empty and `practiceTableId` is their open practice table, if any. */

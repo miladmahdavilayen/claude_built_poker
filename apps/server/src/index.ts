@@ -78,7 +78,8 @@ async function openTables(store: Store, registry: TableRegistry, log: FastifyBas
   const SEEDED = 'default_tables_seeded';
   if (await store.getSetting(SEEDED)) {
     const open = await store.listTables();
-    for (const record of open) registry.restore(record);
+    // Each with its seat invites, so a guest's link still brings them back.
+    for (const record of open) registry.restore(record).loadSeatInvites(await store.listSeatInvites(record.id));
     log.info(`Restored ${String(open.length)} open table(s).`);
     return;
   }

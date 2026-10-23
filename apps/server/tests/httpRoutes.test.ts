@@ -391,15 +391,69 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect((await app.inject({ method: 'GET', url: '/admin/guests/00000000-0000-4000-8000-000000000000', headers: ownerAuth })).statusCode).toBe(404);
     });
 
-    it('GET /invites/:token finds the table an unused invite belongs to, and nothing once it is used', async () => {
+    it('GET /invites/:token finds the table an invite belongs to — used or not — for as long as the table is open', async () => {
       const table = await registry.createTable('Real', { ...SETTINGS_FOR_LIST }, null, null);
       const created = table.createSeatAssignment(1, 10_000);
       if (!created.ok) throw new Error('unreachable');
       const found = await app.inject({ method: 'GET', url: `/invites/${created.token}` });
       expect(found.json()).toEqual({ tableId: table.tableId });
-      table.redeemSeatAssignment(created.token);
-      expect((await app.inject({ method: 'GET', url: `/invites/${created.token}` })).statusCode).toBe(404);
+      table.redeemSeatAssignment(created.token, 'guest-1');
+      expect((await app.inject({ method: 'GET', url: `/invites/${created.token}` })).json()).toEqual({ tableId: table.tableId });
       expect((await app.inject({ method: 'GET', url: '/invites/not-a-token' })).statusCode).toBe(404);
+      await registry.close(table.tableId);
+      expect((await app.inject({ method: 'GET', url: `/invites/${created.token}` })).statusCode).toBe(404);
+    });
+
+    it('a seat invite belongs to the guest who used it: the same link brings them back — the same guest, even after their session is gone — and no one else', async () => {
+      const table = await registry.createTable('Comeback', { ...SETTINGS_FOR_LIST }, null, null);
+      const created = table.createSeatAssignment(1, 10_000, 'Cousin Vinny');
+      if (!created.ok) throw new Error('unreachable');
+      const signIn = (name: string) =>
+        app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: name, inviteToken: created.token, acceptTerms: true, termsVersion: GUEST_TERMS_VERSION } });
+
+      const first = (await signIn('Vin')).json<{ user: { id: string } }>().user;
+      expect(table.redeemSeatAssignment(created.token, first.id)).toMatchObject({ ok: true, seatId: 1, returning: false });
+      // Someone else (any other account) can't use it now.
+      expect(table.redeemSeatAssignment(created.token, 'someone-else')).toMatchObject({ ok: false, code: 'INVITE_TAKEN' });
+      // Back by the same link: the same guest, seated again.
+      const again = (await signIn('Vin again')).json<{ user: { id: string; displayName: string } }>().user;
+      expect(again).toMatchObject({ id: first.id, displayName: 'Vin' });
+      expect(table.redeemSeatAssignment(created.token, first.id)).toMatchObject({ ok: true, seatId: 1, returning: true });
+      // Their session gone (a restart clears guests from memory): the link re-creates them under the same id.
+      await store.deleteUser(first.id);
+      const recreated = (await signIn('Vin')).json<{ user: { id: string } }>().user;
+      expect(recreated.id).toBe(first.id);
+      // One guest record throughout.
+      expect((await store.listGuestPlayers()).filter((g) => g.id === first.id)).toHaveLength(1);
+    });
+
+    it('a used invite outlives a restart and a seat change; an unused one is voided by a reset', async () => {
+      const table = await registry.createTable('Survivor', { ...SETTINGS_FOR_LIST }, null, null);
+      const used = table.createSeatAssignment(1, 10_000);
+      const unused = table.createSeatAssignment(2, 10_000);
+      if (!used.ok || !unused.ok) throw new Error('unreachable');
+      table.redeemSeatAssignment(used.token, 'guest-s');
+      await new Promise((r) => setTimeout(r, 10)); // persisted in the background
+
+      // A restart: the table comes back with its invites.
+      await registry.close(table.tableId, true);
+      const [record] = (await store.listTables()).filter((t) => t.id === table.tableId);
+      const restored = registry.restore(record!);
+      restored.loadSeatInvites(await store.listSeatInvites(record!.id));
+      expect(restored.seatAssignmentGuest(used.token)).toBe('guest-s');
+      expect(restored.hasSeatAssignment(unused.token)).toBe(true);
+
+      // Their seat taken meanwhile: the link seats them somewhere free instead.
+      restored.takeSeat(1, 'someone', { displayName: 'S', isGuest: false, avatarSeed: 'a', clientSeed: 'b' }, 10_000);
+      const back = restored.redeemSeatAssignment(used.token, 'guest-s');
+      expect(back.ok && back.seatId !== 1).toBe(true);
+
+      // A reset voids unused invites — for good — but not a guest's own.
+      restored.resetTable();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(restored.hasSeatAssignment(unused.token)).toBe(false);
+      expect(restored.hasSeatAssignment(used.token)).toBe(true);
+      expect((await store.listSeatInvites(record!.id)).map((i) => i.guestUserId)).toEqual(['guest-s']);
     });
 
     it('an open-invite table: private, a long shareable code that finds the table, and lets a guest in', async () => {
@@ -514,6 +568,26 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
   });
 
   describe('tables: deleting from the lobby, and surviving a restart', () => {
+    it('the owner’s lobby lists private and open-invite tables too (marked) — nobody else’s does', async () => {
+      await registry.createTable('Public Game', { ...SETTINGS_FOR_LIST }, null, null);
+      await registry.createTable('Homegame', { ...SETTINGS_FOR_LIST, isPrivate: true }, null, 'private-code-1');
+      await registry.createTable('Group Chat', { ...SETTINGS_FOR_LIST, isPrivate: true, openSeating: true }, null, 'open-code-12345');
+      const admin = await store.createAccount('lobby-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const list = async (headers: Record<string, string>) =>
+        (await app.inject({ method: 'GET', url: '/tables', headers })).json<{ tables: { name: string; isPrivate: boolean; openSeating: boolean }[] }>().tables;
+
+      const owners = await list(auth(issueAccessToken({ ...admin, role: 'admin' })));
+      expect(owners.map((t) => [t.name, t.isPrivate, t.openSeating]).sort()).toEqual([
+        ['Group Chat', true, true],
+        ['Homegame', true, false],
+        ['Public Game', false, false],
+      ]);
+      expect((await list({})).map((t) => t.name)).toEqual(['Public Game']);
+      const guest = await store.createGuestUser('G');
+      expect((await list(auth(issueAccessToken(guest)))).map((t) => t.name)).toEqual(['Public Game']);
+    });
+
     it('the owner deletes a table (DELETE /admin/tables/:id): gone from the lobby and closed for good; nobody else can', async () => {
       const table = await registry.createTable('Doomed', { ...SETTINGS_FOR_LIST }, null, null);
       const player = await store.createGoogleAccount({ googleId: 'g-tbl', email: 'tbl@gmail.com', displayName: 'P', avatarUrl: null });

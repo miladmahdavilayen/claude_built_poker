@@ -19,6 +19,7 @@ import type {
   SignedWaiverSummary,
   SignupKeyRecord,
   GuestPlayerRecord,
+  SeatInviteRecord,
   DeletedUserRecord,
   DeletedUserSnapshot,
   PlayerGameRecord,
@@ -97,10 +98,11 @@ function toTableRecord(row: typeof schema.tables.$inferSelect): TableRecord {
 export class DrizzleStore implements Store {
   constructor(private readonly db: NodePgDatabase<typeof schema>) {}
 
-  async createGuestUser(displayName: string): Promise<UserRecord> {
+  async createGuestUser(displayName: string, id?: string): Promise<UserRecord> {
     const [row] = await this.db
       .insert(schema.users)
       .values({
+        ...(id ? { id } : {}),
         displayName,
         isGuest: true,
         avatarSeed: randomBytes(8).toString('hex'),
@@ -198,6 +200,21 @@ export class DrizzleStore implements Store {
   async attachSignupKeyUser(id: string, userId: string): Promise<void> {
     const [key] = await this.db.update(schema.signupKeys).set({ usedBy: userId }).where(eq(schema.signupKeys.id, id)).returning({ label: schema.signupKeys.label });
     if (key) await this.db.update(schema.users).set({ accessKeyLabel: key.label }).where(eq(schema.users.id, userId));
+  }
+
+  async saveSeatInvite(invite: SeatInviteRecord): Promise<void> {
+    await this.db
+      .insert(schema.seatInvites)
+      .values(invite)
+      .onConflictDoUpdate({ target: schema.seatInvites.tokenHash, set: { guestUserId: invite.guestUserId, redeemedAt: invite.redeemedAt } });
+  }
+
+  async listSeatInvites(tableId: string): Promise<SeatInviteRecord[]> {
+    return this.db.select().from(schema.seatInvites).where(eq(schema.seatInvites.tableId, tableId));
+  }
+
+  async deleteSeatInvite(tokenHash: string): Promise<void> {
+    await this.db.delete(schema.seatInvites).where(eq(schema.seatInvites.tokenHash, tokenHash));
   }
 
   async recordGuestPlayer(guest: GuestPlayerRecord): Promise<void> {

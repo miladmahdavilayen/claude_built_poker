@@ -15,7 +15,10 @@ export function isPracticeOnly(user: { isGuest: boolean; role: 'player' | 'admin
 /** `watchPracticeTable` closes a new practice table if its player never connects to it — see socketServer.ts. */
 export function registerTableRoutes(app: FastifyInstance, store: Store, registry: TableRegistry, watchPracticeTable: (tableId: string) => void = () => undefined): void {
   // A practice-only player sees no public tables at all — only their own
-  // practice table, if they have one open, to get back to.
+  // practice table, if they have one open, to get back to. The owner sees
+  // every real table, private ones too (the lobby lists those separately),
+  // so a private table they've left is never lost; everyone else sees the
+  // public ones only. Practice tables are never listed here.
   app.get('/tables', async (req) => {
     attachAuthIfPresent(req);
     const viewer = req.userId ? await store.findUserById(req.userId) : null;
@@ -23,7 +26,8 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
       const mine = registry.practiceTableOf(viewer.id);
       return { tables: [], practiceTableId: mine?.tableId ?? null };
     }
-    return { tables: registry.list().filter((t) => !t.isPrivate), practiceTableId: null };
+    if (viewer?.role === 'admin') return { tables: registry.list().filter((t) => !t.isPractice), practiceTableId: null };
+    return { tables: registry.list().filter((t) => !t.isPrivate && !t.isPractice), practiceTableId: null };
   });
 
   app.get('/tables/:tableId', async (req, reply) => {

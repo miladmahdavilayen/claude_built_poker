@@ -656,7 +656,7 @@ export function attachSocketServer(
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed redeem payload.');
       if (table.isPractice) return emitError('PRACTICE_TABLE', 'Only computer players can join this table.');
       if (table.seatOfUser(data.userId) !== null) return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
-      const redeemed = table.redeemSeatAssignment(parsed.data.token);
+      const redeemed = table.redeemSeatAssignment(parsed.data.token, data.userId);
       if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
       const userId = data.userId;
       // The owner chose this seat AND this amount — anything the invitee

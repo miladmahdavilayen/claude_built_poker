@@ -152,11 +152,11 @@ describe('Game book: accurate after every hand', () => {
     expect(saved?.status).toBe('live');
     expect(saved?.lastHandNumber).toBe(1);
     expect((parse(saved!.reportYaml) as GameReport).summary.books_balance).toBe(true);
-    // ...with the structured summary the dashboard lists by: cents, ranked, account ids for registered players only.
+    // ...with the structured summary the dashboard lists by: cents, ranked, user ids for registered players and guests alike (a guest's is their guest record's).
     expect(saved?.summary).toMatchObject({ gameNumber: 1, stakes: '$0.10/$0.20', playerCount: 2, totalBoughtIn: 2000, totalCashedOut: 0, stillOnTable: 2000, booksBalance: true });
     expect(saved?.summary?.players.map((p) => [p.rank, p.playerName, p.userId, p.playerType, p.net])).toEqual([
-      [1, winner === 0 ? 'Ann' : 'Ben', winner === 0 ? 'ann' : null, winner === 0 ? 'registered' : 'guest', 10],
-      [2, folder === 0 ? 'Ann' : 'Ben', folder === 0 ? 'ann' : null, folder === 0 ? 'registered' : 'guest', -10],
+      [1, winner === 0 ? 'Ann' : 'Ben', winner === 0 ? 'ann' : 'ben', winner === 0 ? 'registered' : 'guest', 10],
+      [2, folder === 0 ? 'Ann' : 'Ben', folder === 0 ? 'ann' : 'ben', folder === 0 ? 'registered' : 'guest', -10],
     ]);
 
     // Closing the table cashes everyone out in the book and marks it final.

@@ -191,6 +191,9 @@ export const GuestSignupSchema = z
       .min(8)
       .max(64)
       .regex(/^[A-Za-z0-9_-]+$/),
+    /** The guest ticked "I agree" to the guest terms (see GUEST_TERMS in waiver.ts) — required, and of the version they were shown. */
+    acceptTerms: z.literal(true),
+    termsVersion: z.number().int().min(1),
   })
   .strict();
 export type GuestSignupInput = z.infer<typeof GuestSignupSchema>;

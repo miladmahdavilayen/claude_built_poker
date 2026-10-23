@@ -13,6 +13,9 @@ import type {
   SignedWaiverRecord,
   SignedWaiverSummary,
   SignupKeyRecord,
+  GuestPlayerRecord,
+  DeletedUserRecord,
+  PlayerGameRecord,
 } from './store.js';
 
 interface LedgerRow extends LedgerEntryInput {
@@ -51,6 +54,7 @@ export class MemoryStore implements Store {
       createdAt: new Date(),
       lastLoginAt: null,
       waiver: null,
+      accessKeyLabel: null,
     };
     this.users.set(user.id, user);
     return Promise.resolve(user);
@@ -73,6 +77,7 @@ export class MemoryStore implements Store {
       createdAt: new Date(),
       lastLoginAt: null,
       waiver: null,
+      accessKeyLabel: null,
     };
     this.users.set(user.id, user);
     this.usersByEmail.set(email, user.id);
@@ -112,6 +117,7 @@ export class MemoryStore implements Store {
       createdAt: now,
       lastLoginAt: now,
       waiver: null,
+      accessKeyLabel: null,
     };
     this.users.set(user.id, user);
     this.usersByGoogleId.set(input.googleId, user.id);
@@ -174,7 +180,41 @@ export class MemoryStore implements Store {
   async attachSignupKeyUser(id: string, userId: string): Promise<void> {
     const k = this.signupKeys.get(id);
     if (k) k.usedBy = userId;
+    const user = this.users.get(userId);
+    if (k && user) user.accessKeyLabel = k.label;
     return Promise.resolve();
+  }
+
+  private readonly guestPlayers = new Map<string, GuestPlayerRecord>();
+
+  async recordGuestPlayer(guest: GuestPlayerRecord): Promise<void> {
+    this.guestPlayers.set(guest.id, { ...guest });
+    return Promise.resolve();
+  }
+
+  async listGuestPlayers(): Promise<GuestPlayerRecord[]> {
+    return Promise.resolve([...this.guestPlayers.values()].sort((a, b) => b.joinedAt.getTime() - a.joinedAt.getTime()).map((g) => ({ ...g })));
+  }
+
+  async getGuestPlayer(id: string): Promise<GuestPlayerRecord | null> {
+    const g = this.guestPlayers.get(id);
+    return Promise.resolve(g ? { ...g } : null);
+  }
+
+  private readonly deletedUsers = new Map<string, DeletedUserRecord>();
+
+  async archiveDeletedUser(record: DeletedUserRecord): Promise<void> {
+    this.deletedUsers.set(record.id, structuredClone(record));
+    return Promise.resolve();
+  }
+
+  async listDeletedUsers(): Promise<DeletedUserRecord[]> {
+    return Promise.resolve([...this.deletedUsers.values()].sort((a, b) => b.deletedAt.getTime() - a.deletedAt.getTime()).map((d) => structuredClone(d)));
+  }
+
+  async getDeletedUser(id: string): Promise<DeletedUserRecord | null> {
+    const d = this.deletedUsers.get(id);
+    return Promise.resolve(d ? structuredClone(d) : null);
   }
 
   async revokeSignupKey(id: string): Promise<boolean> {
@@ -262,6 +302,7 @@ export class MemoryStore implements Store {
       createdAt: new Date(),
       lastLoginAt: null,
       waiver: null,
+      accessKeyLabel: null,
     };
     this.users.set(user.id, user);
     this.usersByGoogleId.set(input.googleId, user.id);
@@ -456,6 +497,31 @@ export class MemoryStore implements Store {
   async saveGameReport(record: GameReportRecord): Promise<void> {
     this.gameReports.set(record.id, { ...record });
     return Promise.resolve();
+  }
+
+  async gameHistoryForUser(userId: string): Promise<PlayerGameRecord[]> {
+    const games: PlayerGameRecord[] = [];
+    for (const r of this.gameReports.values()) {
+      const line = r.summary?.players.find((p) => p.userId === userId);
+      if (!line) continue;
+      games.push({
+        reportId: r.id,
+        tableName: r.tableName,
+        status: r.status,
+        startedAt: r.startedAt,
+        endedAt: r.endedAt,
+        stakes: r.summary?.stakes ?? null,
+        rank: line.rank,
+        playerName: line.playerName,
+        boughtIn: line.boughtIn,
+        cashedOut: line.cashedOut,
+        onTable: line.onTable,
+        net: line.net,
+        handsPlayed: line.handsPlayed,
+        handsWon: line.handsWon,
+      });
+    }
+    return Promise.resolve(games.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime()));
   }
 
   async listGameReports(): Promise<Omit<GameReportRecord, 'reportYaml'>[]> {

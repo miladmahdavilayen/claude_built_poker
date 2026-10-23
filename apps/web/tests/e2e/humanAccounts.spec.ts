@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addBot, adminLogin, createAccessKey, createTable, drawSignature, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat } from './helpers.js';
+import { addBot, adminLogin, createAccessKey, createTable, drawSignature, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat, openAdminSection } from './helpers.js';
 
 // This sandbox has no real Google Cloud OAuth Client ID to drive an actual
 // "sign in with Google" click-through with (see googleSignIn.spec.ts's own
@@ -161,30 +161,14 @@ test('admin dashboard lists a real account and can adjust their balance and rena
   await expect(page.locator('.admin-user-row', { hasText: 'Wendy Updated' })).toBeVisible();
 });
 
-test('a guest never appears in the admin dashboard — nothing about them is ever persisted', async ({ browser }) => {
-  const guestCtx = await browser.newContext();
-  const guestPage = await guestCtx.newPage();
-  await guestSignup(guestPage, 'ExcludedGuest');
-  await guestCtx.close();
-
-  const adminCtx = await browser.newContext();
-  const adminPage = await adminCtx.newPage();
-  await adminLogin(adminPage);
-  await adminPage.goto('/admin');
-  await adminPage.getByPlaceholder('Search by name or email...').fill('ExcludedGuest');
-  await expect(adminPage.getByText('No users match.')).toBeVisible();
-  await expect(adminPage.locator('.admin-user-row')).toHaveCount(0);
-  await adminCtx.close();
-});
-
 test('admin can swipe a row left to reveal and use a per-row delete action', async ({ page }) => {
   await adminLogin(page);
   await seedRealAccount(page, 'SwipeTarget');
   await page.goto('/admin');
   await page.getByPlaceholder('Search by name or email...').fill('SwipeTarget');
-  // The game reports panel above loads on its own; let it settle so the row
-  // isn't pushed down between measuring it and dragging it.
-  await expect(page.locator('.admin-reports')).not.toContainText('Loading…');
+  // Let the list settle (players and guests load separately) so the row
+  // isn't moved between measuring it and dragging it.
+  await expect(page.locator('.admin-user-row', { hasText: 'SwipeTarget' })).toHaveCount(1);
 
   const rowWrap = page.locator('.admin-user-row-wrap', { has: page.locator('.admin-user-row', { hasText: 'SwipeTarget' }) });
   const row = rowWrap.locator('.admin-user-row');
@@ -293,18 +277,16 @@ test('a new Google player signs the waiver — initials and a drawn signature �
   await page.reload();
   await expect(page.locator('.practice-card')).toBeVisible();
 
-  // The owner sees it on the account, and the signed copy in Signed waivers.
+  // The owner sees it on the account — the signed copy right under the player.
   const ownerPage = await (await browser.newContext()).newPage();
   await adminLogin(ownerPage);
   await ownerPage.goto('/admin');
   await ownerPage.getByPlaceholder('Search by name or email...').fill('Wanda Waiver');
   await ownerPage.locator('.admin-user-row', { hasText: 'Wanda Waiver' }).click();
   await expect(ownerPage.locator('.admin-user-detail')).toContainText('Agreed (WW)');
-  const panel = ownerPage.getByTestId('admin-signed-waivers');
-  await panel.getByPlaceholder('Search signed waivers by name or email...').fill('Wanda Waiver');
-  const row = panel.locator('.admin-waiver-row', { hasText: 'Wanda Waiver' });
-  await expect(row).toContainText('(WW)');
-  await expect(row).toContainText(email);
+  await expect(ownerPage.locator('.admin-user-detail')).toContainText(email);
+  const row = ownerPage.getByTestId('player-agreements').locator('.admin-waiver-row');
+  await expect(row).toContainText('initials WW');
   await expect(row).toContainText('IP ');
   const pdfDownload = ownerPage.waitForEvent('download');
   await row.getByRole('button', { name: 'PDF' }).click();
@@ -326,9 +308,10 @@ test('declining the waiver logs the player out', async ({ page }) => {
   await expect(page.getByText('Welcome back')).toBeVisible();
 });
 
-test('the owner generates a one-time access key; it registers exactly one new player, and then shows as used', async ({ page, browser }) => {
+test('the owner generates a one-time access key; it registers exactly one new player, and then moves under that player', async ({ page, browser }) => {
   await adminLogin(page);
   await page.goto('/admin');
+  await openAdminSection(page, 'Access keys');
   const panel = page.getByTestId('admin-access-keys');
   await panel.getByLabel('Who it’s for').fill('Kim from work');
   await panel.getByRole('button', { name: 'Generate key' }).click();
@@ -349,9 +332,16 @@ test('the owner generates a one-time access key; it registers exactly one new pl
   const signup = await visitor.request.post('http://localhost:4210/test-only/google-login', { data: { email, displayName: 'Kim', signupKey: key } });
   expect(signup.ok()).toBe(true);
 
+  // Used: gone from the keys list, and kept under Kim — with the name the owner gave it.
   await page.reload();
-  await expect(page.getByTestId('admin-access-keys').locator('.admin-key-row', { hasText: 'Kim from work' })).toContainText('Used');
-  await expect(page.getByTestId('admin-access-keys').locator('.admin-key-row', { hasText: 'Kim from work' })).toContainText('registered Kim');
+  await expect(page.getByTestId('admin-access-keys').locator('.admin-key-row', { hasText: 'Kim from work' })).toHaveCount(0);
+  await page.getByPlaceholder('Search by name or email...').fill('Kim from work');
+  const kim = page.locator('.admin-user-row', { hasText: email });
+  await expect(kim).toContainText('“Kim from work”');
+  await expect(kim).toContainText('Registered');
+  await kim.click();
+  await expect(page.getByTestId('player-access-key')).toContainText('Kim from work');
+  await expect(page.getByTestId('player-access-key')).toContainText(`…${key.slice(-4)}`);
 
   // Spent: nobody else gets in with it.
   const second = await (await browser.newContext()).newPage();
@@ -366,6 +356,7 @@ test('the owner generates a one-time access key; it registers exactly one new pl
 test('a revoked access key stops working straight away', async ({ page, browser }) => {
   await adminLogin(page);
   await page.goto('/admin');
+  await openAdminSection(page, 'Access keys');
   const panel = page.getByTestId('admin-access-keys');
   await panel.getByLabel('Who it’s for').fill('Revoke me');
   await panel.getByRole('button', { name: 'Generate key' }).click();

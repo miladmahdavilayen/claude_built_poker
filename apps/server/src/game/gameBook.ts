@@ -274,7 +274,8 @@ export class GameBook {
       players: ranked.map((p, i) => ({
         rank: i + 1,
         playerName: label.get(p.key) ?? p.key,
-        userId: p.kind === 'registered' ? p.key : null,
+        // A guest's too — it's the id of their guest record (see GuestPlayerRecord), so the owner sees their games under them.
+        userId: p.kind === 'bot' ? null : p.key,
         playerType: p.kind,
         boughtIn: p.buyIns,
         buyInCount: p.buyInCount,

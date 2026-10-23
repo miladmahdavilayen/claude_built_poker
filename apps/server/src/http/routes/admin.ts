@@ -7,13 +7,37 @@ import {
   formatMoney,
   MAX_BALANCE_CENTS,
 } from '@pokerclause/shared';
+import { archiveAndDeleteUser } from '../../auth/accountDeletion.js';
 import { normalizeEmailKey } from '../../auth/authService.js';
 import { generateSignupKey, hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
-import type { SignupKeyRecord } from '../../db/store.js';
+import type { PlayerGameRecord, SignedWaiverSummary, SignupKeyRecord } from '../../db/store.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
 import { requireAdmin } from '../middleware.js';
+
+/** A signed waiver as listed under its player (the PDF and record are fetched separately, by id). */
+function waiverDto(w: SignedWaiverSummary) {
+  return {
+    id: w.id,
+    displayName: w.displayName,
+    email: w.email,
+    version: w.version,
+    initials: w.initials,
+    signedAt: w.signedAt.toISOString(),
+    ipAddress: w.ipAddress,
+    userAgent: w.userAgent,
+    pdfSha256: w.pdfSha256,
+  };
+}
+
+function gameDto(g: PlayerGameRecord) {
+  return { ...g, startedAt: g.startedAt.toISOString(), endedAt: g.endedAt?.toISOString() ?? null };
+}
+
+function keyDto(k: SignupKeyRecord) {
+  return { id: k.id, hint: k.hint, label: k.label, email: k.email, createdAt: k.createdAt.toISOString(), expiresAt: k.expiresAt.toISOString(), usedAt: k.usedAt?.toISOString() ?? null };
+}
 
 export function registerAdminRoutes(
   app: FastifyInstance,
@@ -30,6 +54,7 @@ export function registerAdminRoutes(
     const users = await store.listUsers();
     return {
       users: users.map((u) => ({
+        accessKeyLabel: u.accessKeyLabel,
         id: u.id,
         displayName: u.displayName,
         email: u.email,
@@ -44,16 +69,29 @@ export function registerAdminRoutes(
     };
   });
 
-  /** Full detail for one user — everything the list above has, plus their net play result and recent ledger history, for the dashboard's per-user view. */
+  /**
+   * Full detail for one user — everything the list above has, plus their
+   * net play result, recent ledger history, the access key they registered
+   * with, every agreement they signed, and every game they played: the
+   * dashboard's per-player view.
+   */
   app.get('/admin/users/:userId', { preHandler: requireAdmin }, async (req, reply) => {
     const { userId } = req.params as { userId: string };
     const user = await store.findUserById(userId);
     if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
-    const [netPlayResult, recentEntries] = await Promise.all([
+    const [netPlayResult, recentEntries, keys, waivers, games] = await Promise.all([
       store.ledgerPlayNetForUser(user.id),
       store.ledgerEntriesForUser(user.id, 50),
+      store.listSignupKeys(),
+      store.listSignedWaivers(),
+      store.gameHistoryForUser(user.id),
     ]);
+    const key = keys.find((k) => k.usedBy === user.id);
     return {
+      accessKeyLabel: user.accessKeyLabel,
+      accessKey: key ? keyDto(key) : null,
+      signedWaivers: waivers.filter((w) => w.userId === user.id).map(waiverDto),
+      games: games.map(gameDto),
       id: user.id,
       displayName: user.displayName,
       email: user.email,
@@ -95,7 +133,7 @@ export function registerAdminRoutes(
     if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
     if (user.role === 'admin') return reply.code(400).send({ code: 'CANNOT_DELETE_ADMIN', message: 'The admin account cannot be deleted.' });
     await closePracticeTableOf(userId);
-    await store.deleteUser(userId);
+    await archiveAndDeleteUser(store, (await store.findUserById(userId)) ?? user, 'admin');
     return { ok: true };
   });
 
@@ -112,7 +150,7 @@ export function registerAdminRoutes(
         continue;
       }
       await closePracticeTableOf(userId);
-      await store.deleteUser(userId);
+      await archiveAndDeleteUser(store, (await store.findUserById(userId)) ?? user, 'admin');
       deleted.push(userId);
     }
     return { ok: true, deleted, skipped };
@@ -170,27 +208,28 @@ export function registerAdminRoutes(
 
   // --- Access keys: one per new player (see auth/signupKeys.ts). ---
 
-  function keyStatus(k: SignupKeyRecord): 'active' | 'used' | 'revoked' | 'expired' {
-    if (k.usedAt) return 'used';
+  function keyStatus(k: SignupKeyRecord): 'active' | 'revoked' | 'expired' {
     if (k.revokedAt) return 'revoked';
     return k.expiresAt.getTime() <= Date.now() ? 'expired' : 'active';
   }
 
+  // Keys not yet used — active, expired or revoked. A used key lives on
+  // under the player it registered (see GET /admin/users/:userId, and the
+  // deleted account's record if they've since deleted it).
   app.get('/admin/signup-keys', { preHandler: requireAdmin }, async () => {
-    const [keys, users] = await Promise.all([store.listSignupKeys(), store.listUsers()]);
-    const names = new Map(users.map((u) => [u.id, u.displayName]));
+    const keys = await store.listSignupKeys();
     return {
-      keys: keys.map((k) => ({
-        id: k.id,
-        hint: k.hint,
-        label: k.label,
-        email: k.email,
-        status: keyStatus(k),
-        createdAt: k.createdAt.toISOString(),
-        expiresAt: k.expiresAt.toISOString(),
-        usedAt: k.usedAt?.toISOString() ?? null,
-        usedByName: k.usedBy ? (names.get(k.usedBy) ?? null) : null,
-      })),
+      keys: keys
+        .filter((k) => !k.usedAt)
+        .map((k) => ({
+          id: k.id,
+          hint: k.hint,
+          label: k.label,
+          email: k.email,
+          status: keyStatus(k),
+          createdAt: k.createdAt.toISOString(),
+          expiresAt: k.expiresAt.toISOString(),
+        })),
     };
   });
 
@@ -219,27 +258,70 @@ export function registerAdminRoutes(
     return { ok: true };
   });
 
-  // --- Signed waivers: every one ever signed, kept forever (even after the
-  // account is deleted) — listed, viewable and downloadable here. ---
+  // --- Guests: everyone who joined a table by an owner's invite, with
+  // their acceptance of the guest terms — kept for good. ---
 
-  app.get('/admin/waivers', { preHandler: requireAdmin }, async () => {
-    const [waivers, users] = await Promise.all([store.listSignedWaivers(), store.listUsers()]);
-    const live = new Set(users.map((u) => u.id));
+  app.get('/admin/guests', { preHandler: requireAdmin }, async () => {
+    const guests = await store.listGuestPlayers();
+    return { guests: guests.map((g) => ({ ...g, joinedAt: g.joinedAt.toISOString(), termsAcceptedAt: g.termsAcceptedAt.toISOString() })) };
+  });
+
+  app.get('/admin/guests/:id', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const guest = await store.getGuestPlayer(id);
+    if (!guest) return reply.code(404).send({ code: 'GUEST_NOT_FOUND', message: 'Guest not found.' });
+    const games = await store.gameHistoryForUser(guest.id);
+    return { ...guest, joinedAt: guest.joinedAt.toISOString(), termsAcceptedAt: guest.termsAcceptedAt.toISOString(), games: games.map(gameDto) };
+  });
+
+  // --- Deleted accounts: everything about a registered player's account
+  // as it was when it was deleted, for the owner only. ---
+
+  app.get('/admin/deleted-users', { preHandler: requireAdmin }, async () => {
+    const deleted = await store.listDeletedUsers();
     return {
-      waivers: waivers.map((w) => ({
-        id: w.id,
-        displayName: w.displayName,
-        email: w.email,
-        version: w.version,
-        initials: w.initials,
-        signedAt: w.signedAt.toISOString(),
-        ipAddress: w.ipAddress,
-        userAgent: w.userAgent,
-        pdfSha256: w.pdfSha256,
-        accountDeleted: w.userId === null || !live.has(w.userId),
+      users: deleted.map((d) => ({
+        id: d.id,
+        displayName: d.displayName,
+        email: d.email,
+        accessKeyLabel: d.accessKeyLabel,
+        balance: d.balance,
+        createdAt: d.createdAt.toISOString(),
+        deletedAt: d.deletedAt.toISOString(),
+        deletedBy: d.deletedBy,
       })),
     };
   });
+
+  app.get('/admin/deleted-users/:id', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const d = await store.getDeletedUser(id);
+    if (!d) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'Deleted account not found.' });
+    const [waivers, games] = await Promise.all([store.listSignedWaivers(), store.gameHistoryForUser(d.id)]);
+    return {
+      id: d.id,
+      displayName: d.displayName,
+      email: d.email,
+      hasGoogle: d.googleId !== null,
+      accessKeyLabel: d.accessKeyLabel,
+      role: d.role,
+      balance: d.balance,
+      netPlayResult: d.netPlayResult,
+      createdAt: d.createdAt.toISOString(),
+      lastLoginAt: d.lastLoginAt?.toISOString() ?? null,
+      deletedAt: d.deletedAt.toISOString(),
+      deletedBy: d.deletedBy,
+      avatarUrl: d.snapshot.avatarUrl,
+      waiver: d.snapshot.waiver,
+      accessKey: d.snapshot.accessKey,
+      ledger: d.snapshot.ledger,
+      signedWaivers: waivers.filter((w) => w.userId === d.id).map(waiverDto),
+      games: games.map(gameDto),
+    };
+  });
+
+  // --- A signed waiver's files (listed under its player above): every one
+  // ever signed is kept forever, even after the account is deleted. ---
 
   /** The signed PDF — inline to view in the browser, or `?download=1` to save it. */
   app.get('/admin/waivers/:id/pdf', { preHandler: requireAdmin }, async (req, reply) => {

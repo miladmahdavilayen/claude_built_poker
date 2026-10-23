@@ -19,6 +19,75 @@ export interface UserRecord {
   lastLoginAt: Date | null;
   /** The friendly-game waiver this player agreed to (see WAIVER_VERSION) — all three null until they agree. */
   waiver: { version: number; initials: string; acceptedAt: Date } | null;
+  /** The name the owner gave the access key this player registered with (see attachSignupKeyUser). Null if none. */
+  accessKeyLabel: string | null;
+}
+
+/**
+ * A guest who joined a table by an owner's invite, and their acceptance of
+ * the guest terms — kept for good (see schema.ts's guestPlayers). `id` is
+ * the guest's (in-memory) user id, which their game-report rows carry too.
+ */
+export interface GuestPlayerRecord {
+  id: string;
+  /** The name they typed. */
+  displayName: string;
+  /** The name the owner gave the seat invite — null for an open-invite link, or a seat invite given no name. */
+  adminNickname: string | null;
+  inviteKind: 'seat-invite' | 'open-link';
+  tableId: string | null;
+  tableName: string | null;
+  joinedAt: Date;
+  ipAddress: string | null;
+  userAgent: string | null;
+  termsVersion: number;
+  termsAcceptedAt: Date;
+}
+
+/** Everything else about a deleted account, kept as it was (see DeletedUserRecord). */
+export interface DeletedUserSnapshot {
+  avatarUrl: string | null;
+  waiver: { version: number; initials: string; acceptedAt: string } | null;
+  accessKey: { id: string; hint: string; label: string; email: string | null; createdAt: string; usedAt: string | null } | null;
+  /** Their whole ledger history, newest first — its rows in chip_ledger lose their user id with the account. */
+  ledger: { id: string; amount: number; reason: LedgerReason; tableId: string | null; handId: string | null; createdAt: string }[];
+}
+
+/** A registered player's account as it was when it was deleted — kept for the owner (see schema.ts's deletedUsers). */
+export interface DeletedUserRecord {
+  /** The deleted account's id — its signed waivers and game history are still found by it. */
+  id: string;
+  email: string | null;
+  googleId: string | null;
+  displayName: string;
+  accessKeyLabel: string | null;
+  role: 'player' | 'admin';
+  /** The balance when it was deleted. */
+  balance: number;
+  netPlayResult: number;
+  createdAt: Date;
+  lastLoginAt: Date | null;
+  deletedAt: Date;
+  deletedBy: 'self' | 'admin';
+  snapshot: DeletedUserSnapshot;
+}
+
+/** One game a player (registered or guest) took part in — their line from its report. Amounts in cents. */
+export interface PlayerGameRecord {
+  reportId: string;
+  tableName: string;
+  status: 'live' | 'final';
+  startedAt: Date;
+  endedAt: Date | null;
+  stakes: string | null;
+  rank: number;
+  playerName: string;
+  boughtIn: number;
+  cashedOut: number;
+  onTable: number;
+  net: number;
+  handsPlayed: number;
+  handsWon: number;
 }
 
 /** What a verified Google sign-in tells us about a new account — see googleAuth.ts. */
@@ -163,7 +232,7 @@ export interface HandRecordForVerification {
 export interface GameReportPlayerRecord {
   rank: number;
   playerName: string;
-  /** The account's id for registered players; null for guests and computer players. */
+  /** The player's user id — a registered account's, or a guest's (see GuestPlayerRecord); null for computer players. */
   userId: string | null;
   playerType: 'registered' | 'guest' | 'bot';
   boughtIn: number;
@@ -254,7 +323,7 @@ export interface Store {
    * used — so two registrations racing for one key can't both win.
    */
   consumeSignupKey(keyHash: string, emailKey: string): Promise<string | null>;
-  /** Records which account a consumed key registered. */
+  /** Records which account a consumed key registered — and keeps the key's name (who it was for, in the owner's words) on that account. */
   attachSignupKeyUser(id: string, userId: string): Promise<void>;
   /** Revokes a key that hasn't been used. Returns false if there was nothing to revoke. */
   revokeSignupKey(id: string): Promise<boolean>;
@@ -263,6 +332,18 @@ export interface Store {
   /** Newest first, without the PDFs. */
   listSignedWaivers(): Promise<SignedWaiverSummary[]>;
   getSignedWaiver(id: string): Promise<SignedWaiverRecord | null>;
+  /** Files a guest's record (see GuestPlayerRecord) — kept for good. */
+  recordGuestPlayer(guest: GuestPlayerRecord): Promise<void>;
+  /** Newest first. */
+  listGuestPlayers(): Promise<GuestPlayerRecord[]>;
+  getGuestPlayer(id: string): Promise<GuestPlayerRecord | null>;
+  /** Files a deleted account's record — call before deleteUser, which it never replaces. */
+  archiveDeletedUser(record: DeletedUserRecord): Promise<void>;
+  /** Most recently deleted first. */
+  listDeletedUsers(): Promise<DeletedUserRecord[]>;
+  getDeletedUser(id: string): Promise<DeletedUserRecord | null>;
+  /** Every game this player (by user id — registered or guest) has a line in, most recently started first. */
+  gameHistoryForUser(userId: string): Promise<PlayerGameRecord[]>;
   /** Records that this player agreed to the friendly-game waiver: which version, with what initials, now. */
   acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord>;
   /** Links a Google identity onto an EXISTING guest account, converting it in place. */

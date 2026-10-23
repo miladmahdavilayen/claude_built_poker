@@ -2286,3 +2286,36 @@ a phone may still sit behind the translucent raise rail. Covered by
 **Holding a seat for its menu** swallows the click that lifting the finger
 produces, so it can't also tap whatever is under the finger (an empty seat's
 "Sit here").
+
+**Guest terms.** A guest who joins by an owner's invite (a seat invite or an
+open-invite table's link) reads a short version of the agreement
+(`GUEST_TERMS` in `@pokerclause/shared`) and ticks one box before playing.
+The server refuses a guest sign-up without it, or for an out-of-date version.
+Each guest is now kept on record in `guest_players`: the name they typed,
+the name the owner gave the seat invite, which table, and when, from which
+IP address and on what device they agreed. The guest's session still lives
+only in memory. Their game-report lines carry their guest id, so their games
+show under them.
+
+**The admin dashboard folds into four sections:**
+- **Players:** registered and guests, tagged by kind, searchable (including
+  by the name the owner gave someone) and filterable.
+- **Game reports.**
+- **Access keys:** unused keys only.
+- **Deleted users.**
+
+Players starts open; each section remembers per browser whether it was open.
+Everything about a player sits on their own page: the access key they
+registered with, their signed agreements (PDF and record), their games,
+their balance and their activity. There is no separate waivers list. A
+used access key moves under its player, and its name is copied onto the
+account (`users.access_key_label`). The key keeps its link after the
+account is deleted (no foreign key on `signup_keys.used_by`).
+
+**Deleted accounts are archived, not lost.** Deleting a registered account,
+whether by the player or by the owner, first files a whole snapshot in
+`deleted_users`: the balance, the access key and its name, the waiver, and
+the full ledger history (whose rows lose their user id with the account).
+Signed waivers and game history stay where they are, found by the same id.
+Only the owner sees it. It never blocks re-registering, and the welcome
+bonus and kept-balance rules (`welcome_bonus_claims`) are unchanged.

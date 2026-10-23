@@ -443,6 +443,11 @@ export class LiveTable {
     return this.seatAssignments.has(token);
   }
 
+  /** The name the owner gave an unused invite (null if none), without using it up — kept on the guest's record (see GuestPlayerRecord). */
+  seatAssignmentNickname(token: string): string | null {
+    return this.seatAssignments.get(token)?.ownerNickname ?? null;
+  }
+
   /** Validates and consumes a seat-assignment token — the caller (socketServer.ts) still does the actual takeSeat + chip-ledger work, exactly like a normal take-seat, just sourcing seatId/buyIn/ownerNickname from here instead of the client's own say-so. */
   redeemSeatAssignment(
     token: string,

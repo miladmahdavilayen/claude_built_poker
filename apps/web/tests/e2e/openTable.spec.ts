@@ -7,6 +7,7 @@ async function arriveByLink(browser: Browser, link: string, name: string): Promi
   const page = await ctx.newPage();
   await page.goto(link);
   await page.getByLabel('Display name').fill(name);
+  await page.getByLabel('I’ve read and agree to the guest terms').check();
   await page.getByRole('button', { name: 'Play now' }).click();
   await expect(page.locator('[data-testid="seat-0"]')).toBeVisible();
   return page;
@@ -57,6 +58,7 @@ test('an open-invite table: one link for everyone — pick a seat, a waitlist wh
   const stranger = await (await browser.newContext()).newPage();
   await stranger.goto(link.replace(/code=.*/, 'code=AAAAAAAAAAAAAAAA'));
   await stranger.getByLabel('Display name').fill('Mallory');
+  await stranger.getByLabel('I’ve read and agree to the guest terms').check();
   await stranger.getByRole('button', { name: 'Play now' }).click();
   await expect(stranger.getByText(/invalid or has already been used/)).toBeVisible();
 });

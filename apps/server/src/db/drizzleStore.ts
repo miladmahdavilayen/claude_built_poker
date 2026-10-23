@@ -18,6 +18,10 @@ import type {
   SignedWaiverRecord,
   SignedWaiverSummary,
   SignupKeyRecord,
+  GuestPlayerRecord,
+  DeletedUserRecord,
+  DeletedUserSnapshot,
+  PlayerGameRecord,
 } from './store.js';
 
 type GameReportRow = Omit<typeof schema.gameReports.$inferSelect, 'reportYaml'>;
@@ -51,7 +55,12 @@ function toUserRecord(row: typeof schema.users.$inferSelect): UserRecord {
       row.waiverVersion !== null && row.waiverInitials !== null && row.waiverAcceptedAt !== null
         ? { version: row.waiverVersion, initials: row.waiverInitials, acceptedAt: row.waiverAcceptedAt }
         : null,
+    accessKeyLabel: row.accessKeyLabel,
   };
+}
+
+function toDeletedUserRecord(row: typeof schema.deletedUsers.$inferSelect): DeletedUserRecord {
+  return { ...row, role: row.role === 'admin' ? 'admin' : 'player', snapshot: row.snapshot as DeletedUserSnapshot };
 }
 
 function toSignupKeyRecord(row: typeof schema.signupKeys.$inferSelect): SignupKeyRecord {
@@ -187,7 +196,61 @@ export class DrizzleStore implements Store {
   }
 
   async attachSignupKeyUser(id: string, userId: string): Promise<void> {
-    await this.db.update(schema.signupKeys).set({ usedBy: userId }).where(eq(schema.signupKeys.id, id));
+    const [key] = await this.db.update(schema.signupKeys).set({ usedBy: userId }).where(eq(schema.signupKeys.id, id)).returning({ label: schema.signupKeys.label });
+    if (key) await this.db.update(schema.users).set({ accessKeyLabel: key.label }).where(eq(schema.users.id, userId));
+  }
+
+  async recordGuestPlayer(guest: GuestPlayerRecord): Promise<void> {
+    await this.db.insert(schema.guestPlayers).values(guest).onConflictDoNothing();
+  }
+
+  async listGuestPlayers(): Promise<GuestPlayerRecord[]> {
+    return this.db.select().from(schema.guestPlayers).orderBy(desc(schema.guestPlayers.joinedAt));
+  }
+
+  async getGuestPlayer(id: string): Promise<GuestPlayerRecord | null> {
+    const [row] = await this.db.select().from(schema.guestPlayers).where(eq(schema.guestPlayers.id, id));
+    return row ?? null;
+  }
+
+  async archiveDeletedUser(record: DeletedUserRecord): Promise<void> {
+    await this.db.insert(schema.deletedUsers).values(record).onConflictDoNothing();
+  }
+
+  async listDeletedUsers(): Promise<DeletedUserRecord[]> {
+    const rows = await this.db.select().from(schema.deletedUsers).orderBy(desc(schema.deletedUsers.deletedAt));
+    return rows.map(toDeletedUserRecord);
+  }
+
+  async getDeletedUser(id: string): Promise<DeletedUserRecord | null> {
+    const [row] = await this.db.select().from(schema.deletedUsers).where(eq(schema.deletedUsers.id, id));
+    return row ? toDeletedUserRecord(row) : null;
+  }
+
+  async gameHistoryForUser(userId: string): Promise<PlayerGameRecord[]> {
+    const p = schema.gameReportPlayers;
+    const r = schema.gameReports;
+    return this.db
+      .select({
+        reportId: r.id,
+        tableName: r.tableName,
+        status: r.status,
+        startedAt: r.startedAt,
+        endedAt: r.endedAt,
+        stakes: r.stakes,
+        rank: p.rank,
+        playerName: p.playerName,
+        boughtIn: p.boughtIn,
+        cashedOut: p.cashedOut,
+        onTable: p.onTable,
+        net: p.net,
+        handsPlayed: p.handsPlayed,
+        handsWon: p.handsWon,
+      })
+      .from(p)
+      .innerJoin(r, eq(r.id, p.reportId))
+      .where(eq(p.userId, userId))
+      .orderBy(desc(r.startedAt));
   }
 
   async revokeSignupKey(id: string): Promise<boolean> {

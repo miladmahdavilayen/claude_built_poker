@@ -3,6 +3,7 @@ import { AcceptWaiverSchema, WAIVER_INTRO, WAIVER_TERMS, WAIVER_TITLE, WAIVER_VE
 import type { FastifyInstance } from 'fastify';
 import { renderSignedWaiverPdf } from '../../reports/waiverPdf.js';
 import { REFRESH_COOKIE_NAME } from '../../auth/session.js';
+import { archiveAndDeleteUser } from '../../auth/accountDeletion.js';
 import type { Store } from '../../db/store.js';
 import { requireAuth } from '../middleware.js';
 import { normalizeEmailKey } from '../../auth/authService.js';
@@ -126,11 +127,11 @@ export function registerUserRoutes(app: FastifyInstance, store: Store, closePrac
     if (user.isGuest) return reply.code(400).send({ code: 'GUEST_ACCOUNT', message: 'Guest sessions have nothing to delete — just leave the table.' });
     if (user.role === 'admin') return reply.code(400).send({ code: 'CANNOT_DELETE_ADMIN', message: 'The admin account cannot be deleted this way.' });
     await closePracticeTableOf(user.id);
+    const refunded = (await store.findUserById(user.id)) ?? user;
     if (user.googleId && user.email) {
-      const refunded = await store.findUserById(user.id);
-      await store.keepBalanceForReturn(normalizeEmailKey(user.email), user.googleId, refunded?.chips ?? user.chips);
+      await store.keepBalanceForReturn(normalizeEmailKey(user.email), user.googleId, refunded.chips);
     }
-    await store.deleteUser(user.id);
+    await archiveAndDeleteUser(store, refunded, 'self');
     reply.clearCookie(REFRESH_COOKIE_NAME, { path: '/' });
     return { ok: true };
   });

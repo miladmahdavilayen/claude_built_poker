@@ -1,4 +1,4 @@
-import { GoogleSignInSchema, GuestSignupSchema, LoginSchema, SignupKeySchema } from '@pokerclause/shared';
+import { GoogleSignInSchema, GUEST_TERMS_VERSION, GuestSignupSchema, LoginSchema, SignupKeySchema } from '@pokerclause/shared';
 import type { FastifyInstance } from 'fastify';
 import { AuthError, login, loginOrRegisterWithGoogle, signUpGuest } from '../../auth/authService.js';
 import { isGoogleSignInConfigured, verifyGoogleIdToken } from '../../auth/googleAuth.js';
@@ -7,6 +7,7 @@ import { inviteLockout, lockedOutReply, signupKeyLockout } from '../../security/
 import { needsWaiver } from '../../auth/waiver.js';
 import { REFRESH_COOKIE_MAX_AGE_SECONDS, REFRESH_COOKIE_NAME, revokeRefreshToken, rotateRefreshToken } from '../../auth/session.js';
 import type { Store, UserRecord } from '../../db/store.js';
+import type { GuestInvite } from '../../game/tableRegistry.js';
 import { requireAuth } from '../middleware.js';
 
 export function publicUser(user: UserRecord) {
@@ -39,12 +40,12 @@ const SIGNUP_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_LIMIT ?? 20), ti
 const SIGNUP_KEY_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_KEY_LIMIT ?? 10), timeWindow: '15 minutes' };
 
 /**
- * `isOpenInvite` answers whether an invite token — a one-time seat invite,
- * or an open-invite table's shareable code — belongs to a live table (see
- * TableRegistry.tableForInvite / tableForOpenCode): a guest session only exists to
- * redeem one, so none is created without it.
+ * `describeInvite` says what an invite token is — a live table's one-time
+ * seat invite (with the name the owner gave it), or an open-invite table's
+ * shareable code — or null (see TableRegistry.describeInvite): a guest
+ * session only exists to redeem one, so none is created without it.
  */
-export function registerAuthRoutes(app: FastifyInstance, store: Store, isOpenInvite: (token: string) => boolean): void {
+export function registerAuthRoutes(app: FastifyInstance, store: Store, describeInvite: (token: string) => GuestInvite | null): void {
   const isProd = process.env.NODE_ENV === 'production';
 
   function setRefreshCookie(reply: { setCookie: (name: string, value: string, opts: Record<string, unknown>) => void }, token: string): void {
@@ -60,16 +61,42 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store, isOpenInv
   // A guest session only ever exists to redeem an owner's invite, so it
   // takes one: anyone (or anything) without a live invite can't mint
   // sessions at all. The invite itself is redeemed later, at the table.
+  // The guest must also tick "I agree" to the guest terms; their record —
+  // name, the invite they came by, and that agreement (when, IP, device) —
+  // is kept for good, under them in the admin dashboard.
   app.post('/auth/guest', { config: { rateLimit: SIGNUP_RATE_LIMIT } }, async (req, reply) => {
     const wait = inviteLockout.retryAfterMs(req.ip);
     if (wait > 0) return reply.code(429).send(lockedOutReply(wait));
     const body = GuestSignupSchema.safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid guest signup payload.' });
-    if (!isOpenInvite(body.data.inviteToken)) {
+    if (!body.success) {
+      const unagreed = (req.body as { acceptTerms?: unknown } | null)?.acceptTerms !== true;
+      return reply
+        .code(400)
+        .send(unagreed ? { code: 'TERMS_REQUIRED', message: 'Please agree to the guest terms to play.' } : { code: 'INVALID_PAYLOAD', message: 'Invalid guest signup payload.' });
+    }
+    if (body.data.termsVersion !== GUEST_TERMS_VERSION) {
+      return reply.code(409).send({ code: 'TERMS_CHANGED', message: 'The guest terms have just been updated — reload the page to read them.' });
+    }
+    const invite = describeInvite(body.data.inviteToken);
+    if (!invite) {
       inviteLockout.recordFailure(req.ip);
       return reply.code(403).send({ code: 'INVALID_ASSIGNMENT', message: 'This invitation is invalid or has already been used.' });
     }
     const result = await signUpGuest(store, body.data.displayName);
+    const now = new Date();
+    await store.recordGuestPlayer({
+      id: result.user.id,
+      displayName: result.user.displayName,
+      adminNickname: invite.adminNickname,
+      inviteKind: invite.kind,
+      tableId: invite.tableId,
+      tableName: invite.tableName,
+      joinedAt: now,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']?.slice(0, 500) ?? null,
+      termsVersion: GUEST_TERMS_VERSION,
+      termsAcceptedAt: now,
+    });
     setRefreshCookie(reply, result.refreshToken);
     return { user: publicUser(result.user), accessToken: result.accessToken };
   });

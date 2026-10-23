@@ -85,6 +85,13 @@
       "when": 1792600000000,
       "tag": "0011_signed_waivers",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792700000000,
+      "tag": "0012_player_records",
+      "breakpoints": true
     }
   ]
 }

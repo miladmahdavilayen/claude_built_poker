@@ -23,6 +23,8 @@ export const users = pgTable('users', {
   waiverVersion: integer('waiver_version'),
   waiverInitials: text('waiver_initials'),
   waiverAcceptedAt: timestamp('waiver_accepted_at', { withTimezone: true }),
+  /** The name the owner gave the access key this player registered with — who they are, in the owner's words. Null if they registered without one. */
+  accessKeyLabel: text('access_key_label'),
 });
 
 /**
@@ -65,7 +67,8 @@ export const signupKeys = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     usedAt: timestamp('used_at', { withTimezone: true }),
-    usedBy: uuid('used_by').references(() => users.id, { onDelete: 'set null' }),
+    /** The account it registered. No foreign key: the link stays after that account is deleted (see deletedUsers). */
+    usedBy: uuid('used_by'),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (t) => [index('signup_keys_created_at_idx').on(t.createdAt)],
@@ -97,6 +100,58 @@ export const signedWaivers = pgTable(
     record: jsonb('record').notNull(),
   },
   (t) => [index('signed_waivers_signed_at_idx').on(t.signedAt), index('signed_waivers_user_id_idx').on(t.userId)],
+);
+
+/**
+ * Every guest who joined a table by an owner's invite — a seat invite (with
+ * the name the owner gave it) or an open-invite table's link — and their
+ * acceptance of the guest terms (see GUEST_TERMS in @pokerclause/shared):
+ * when, from which IP address, on what device. The guest's session lives
+ * only in memory (see HybridStore); this is the permanent record. `id` is
+ * the guest's user id, which their game-report rows carry too.
+ */
+export const guestPlayers = pgTable(
+  'guest_players',
+  {
+    id: uuid('id').primaryKey(),
+    displayName: text('display_name').notNull(),
+    adminNickname: text('admin_nickname'),
+    inviteKind: text('invite_kind').notNull().$type<'seat-invite' | 'open-link'>(),
+    tableId: text('table_id'),
+    tableName: text('table_name'),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    termsVersion: integer('terms_version').notNull(),
+    termsAcceptedAt: timestamp('terms_accepted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('guest_players_joined_at_idx').on(t.joinedAt)],
+);
+
+/**
+ * A registered player's account as it was when it was deleted — for the
+ * owner only. Never blocks the same person registering again. Their signed
+ * waivers and game history stay where they are (found by `id`); the ledger
+ * history is copied into `snapshot`, since its rows lose their user id.
+ */
+export const deletedUsers = pgTable(
+  'deleted_users',
+  {
+    id: uuid('id').primaryKey(),
+    email: text('email'),
+    googleId: text('google_id'),
+    displayName: text('display_name').notNull(),
+    accessKeyLabel: text('access_key_label'),
+    role: text('role').notNull(),
+    balance: integer('balance').notNull(),
+    netPlayResult: integer('net_play_result').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull(),
+    deletedBy: text('deleted_by').notNull().$type<'self' | 'admin'>(),
+    snapshot: jsonb('snapshot').notNull(),
+  },
+  (t) => [index('deleted_users_deleted_at_idx').on(t.deletedAt)],
 );
 
 /** Small server-wide facts that must survive restarts — e.g. that the default tables were created once (see index.ts). */

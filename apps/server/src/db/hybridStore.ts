@@ -14,6 +14,9 @@ import type {
   SignedWaiverRecord,
   SignedWaiverSummary,
   SignupKeyRecord,
+  GuestPlayerRecord,
+  DeletedUserRecord,
+  PlayerGameRecord,
 } from './store.js';
 
 /**
@@ -21,8 +24,10 @@ import type {
  * local dev without one) so that a GUEST'S data never reaches it at all —
  * a guest's user row, session, and any ledger/hand-seat/chat rows they're
  * party to live only in this process's memory, for exactly as long as
- * their table lasts. Only a signed-in (Google) account is ever persisted.
- * See DECISIONS.md.
+ * their table lasts. Only a signed-in (Google) account is ever persisted
+ * as an account; a guest who joined by an invite is kept only as a record
+ * (who they said they were, the invite, their acceptance of the guest
+ * terms — see recordGuestPlayer). See DECISIONS.md.
  *
  * The internal `guestStore` is a plain `MemoryStore` — it already
  * implements every guest-relevant operation correctly (creation,
@@ -105,6 +110,37 @@ export class HybridStore implements Store {
 
   getSignedWaiver(id: string): Promise<SignedWaiverRecord | null> {
     return this.real.getSignedWaiver(id);
+  }
+
+  // --- Guest records and deleted accounts: always persisted, kept for good.
+  // A guest's session stays in memory (guestStore); this is the record of them. ---
+
+  recordGuestPlayer(guest: GuestPlayerRecord): Promise<void> {
+    return this.real.recordGuestPlayer(guest);
+  }
+
+  listGuestPlayers(): Promise<GuestPlayerRecord[]> {
+    return this.real.listGuestPlayers();
+  }
+
+  getGuestPlayer(id: string): Promise<GuestPlayerRecord | null> {
+    return this.real.getGuestPlayer(id);
+  }
+
+  archiveDeletedUser(record: DeletedUserRecord): Promise<void> {
+    return this.real.archiveDeletedUser(record);
+  }
+
+  listDeletedUsers(): Promise<DeletedUserRecord[]> {
+    return this.real.listDeletedUsers();
+  }
+
+  getDeletedUser(id: string): Promise<DeletedUserRecord | null> {
+    return this.real.getDeletedUser(id);
+  }
+
+  gameHistoryForUser(userId: string): Promise<PlayerGameRecord[]> {
+    return this.real.gameHistoryForUser(userId);
   }
 
   acceptWaiver(userId: string, version: number, initials: string): Promise<UserRecord> {

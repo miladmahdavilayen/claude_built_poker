@@ -80,6 +80,7 @@ test('a fresh visitor (not yet signed in) opening an invite link lands directly 
   await expect(pageVisitor).toHaveURL(/\/login/);
 
   await pageVisitor.getByLabel('Display name').fill('Fresh Visitor');
+  await pageVisitor.getByLabel('I’ve read and agree to the guest terms').check();
   await pageVisitor.getByRole('button', { name: 'Play now' }).click();
 
   // Lands directly on the invited table — never the lobby — and the
@@ -115,6 +116,7 @@ for (const form of ['link', 'code'] as const) {
     await pageVisitor.getByRole('button', { name: 'Join table' }).click();
 
     await pageVisitor.getByLabel('Display name').fill(`Pasted ${form} Guest`);
+    await pageVisitor.getByLabel('I’ve read and agree to the guest terms').check();
     await pageVisitor.getByRole('button', { name: 'Play now' }).click();
     await expect(pageVisitor).toHaveURL(tableUrl);
     await expect(pageVisitor.locator('[data-testid="seat-2"] .seat-stack')).toHaveText('$90');

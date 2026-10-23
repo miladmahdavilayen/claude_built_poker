@@ -218,3 +218,10 @@ export async function openOwnerMenu(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Table menu' }).click();
   await expect(page.getByRole('dialog', { name: 'Table controls' })).toBeVisible();
 }
+
+/** Opens one of the admin dashboard's folding sections ("Game reports", "Access keys", "Deleted users") if it isn't already. Players starts open. */
+export async function openAdminSection(page: Page, title: string): Promise<void> {
+  const toggle = page.locator('.admin-section-toggle', { hasText: title });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+}

@@ -237,6 +237,52 @@ input[type='range']::-moz-range-thumb {
 .waiver-card .btn-primary {
   min-height: 48px;
 }
+/* A guest's quick terms on the invite page: a short read in a small
+   scrolling box, then one checkbox (see Login.tsx and GUEST_TERMS). */
+.guest-terms {
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.guest-terms-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.guest-terms-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.auth-card label.guest-terms-agree {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 44px;
+  padding-top: 4px;
+}
+.guest-terms-agree input {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  margin: 1px 0 0;
+  flex: none;
+  accent-color: var(--accent);
+}
 
 /* Landing page: the two ways in (an invitation, or an access key). */
 .landing-option {
@@ -718,6 +764,12 @@ input[type='range']::-moz-range-thumb {
      reason. */
   overflow-x: visible;
 }
+/* A scrolling flex column would otherwise squash its rows (a row's
+   wrapper clips its overflow, so it has no minimum height) once the list
+   outgrows its max-height. */
+.admin-user-list > * {
+  flex-shrink: 0;
+}
 /* Positions the revealed Delete action BEHIND the row, so dragging the
    row's own top layer left uncovers it — the standard swipe-to-delete
    list-item shape. */
@@ -728,8 +780,8 @@ input[type='range']::-moz-range-thumb {
 }
 .admin-user-row-delete-action {
   position: absolute;
-  inset: 0;
-  left: auto;
+  /* Inset a pixel, so it can't bleed red past the row's rounded edge while hidden behind it. */
+  inset: 1px 1px 1px auto;
   width: 84px;
   background: var(--danger);
   color: #fff;
@@ -2782,13 +2834,16 @@ input[type='range']::-moz-range-thumb {
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
-.admin-report-standings .net-up {
+.admin-report-standings .net-up,
+.admin-game-net.net-up {
   color: var(--good);
 }
-.admin-report-standings .net-down {
+.admin-report-standings .net-down,
+.admin-game-net.net-down {
   color: var(--danger);
 }
-.admin-report-standings .net-even {
+.admin-report-standings .net-even,
+.admin-game-net.net-even {
   color: var(--muted);
 }
 
@@ -3212,4 +3267,310 @@ input[type='range']::-moz-range-thumb {
 .seat-offer-clock {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+}
+
+/* Admin dashboard: four folding sections — Players, Game reports, Access
+   keys, Deleted users (see AdminDashboard.tsx). A big tappable header with
+   the count; the body only exists while open. */
+.admin-section {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.admin-section-heading {
+  margin: 0;
+}
+.admin-section-toggle {
+  width: 100%;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: transparent;
+  border-radius: 12px;
+  text-align: left;
+}
+.admin-section-toggle:hover:not(:disabled) {
+  filter: none;
+  background: var(--panel-2);
+}
+.admin-section-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.admin-section-open .admin-section-toggle {
+  border-radius: 12px 12px 0 0;
+}
+.admin-section-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.admin-section-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.admin-section-count {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 24px;
+  text-align: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+}
+.admin-section-hint {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.admin-section-chevron {
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+.admin-section-open .admin-section-chevron {
+  transform: rotate(180deg);
+}
+.admin-section-body {
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--panel-border);
+}
+.admin-section-body .admin-keys {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.admin-section-body .admin-search {
+  margin: 0 0 12px;
+}
+.admin-section-body .admin-reports-controls {
+  margin-bottom: 8px;
+}
+
+/* Players: search + sort, then filter chips by kind. */
+.admin-players-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.admin-players-controls .admin-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.admin-players-controls select {
+  flex: none;
+  min-height: 40px;
+}
+.admin-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.admin-filter-chip {
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  font-size: 13px;
+}
+.admin-filter-chip-on {
+  border-color: var(--accent);
+  background: rgba(224, 167, 48, 0.14);
+  color: var(--accent-strong);
+}
+.admin-filter-count {
+  margin-left: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.admin-filter-chip-on .admin-filter-count {
+  color: inherit;
+}
+.admin-players-hint {
+  margin: 4px 0 10px;
+  font-size: 12px;
+}
+
+/* A player row: name + kind tag, then the name you gave them and email/table. */
+button.admin-user-row {
+  font-weight: 400;
+}
+button.admin-user-row:hover:not(:disabled) {
+  filter: none;
+  border-color: #3d4a5e;
+}
+.admin-user-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.admin-user-row-sub {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-given-name {
+  color: var(--accent-strong);
+  margin-right: 6px;
+}
+.player-tag {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  white-space: nowrap;
+}
+.player-tag-registered {
+  color: #7fd99a;
+  border-color: rgba(63, 174, 92, 0.6);
+  background: rgba(63, 174, 92, 0.12);
+}
+.player-tag-guest {
+  color: #a9c6ff;
+  border-color: rgba(96, 140, 220, 0.6);
+  background: rgba(96, 140, 220, 0.14);
+}
+.player-tag-admin {
+  color: #ffb3ac;
+  border-color: var(--danger);
+  background: rgba(216, 84, 75, 0.14);
+}
+.player-tag-deleted {
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
+/* A player's page. */
+.admin-detail-slot {
+  min-width: 0;
+}
+.admin-detail-placeholder {
+  margin: 0;
+  padding: 28px 16px;
+  text-align: center;
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius);
+}
+.admin-user-detail h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.admin-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+.admin-field dt {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.admin-field dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.admin-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+.admin-detail-section-title {
+  margin: 0;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.admin-record-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.admin-record-card .admin-key-status {
+  margin-left: 6px;
+}
+.admin-record-list {
+  margin-top: 0;
+}
+.admin-user-agent {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.admin-games {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admin-game-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.admin-game-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.admin-game-net {
+  flex: none;
+  font-weight: 700;
+}
+.admin-deleted .admin-search {
+  margin-top: 0;
+}
+@media (max-width: 767px) {
+  .admin-section-toggle {
+    padding: 12px;
+  }
+  .admin-section-body {
+    padding: 12px;
+  }
+  .admin-user-list {
+    max-height: none;
+  }
 }

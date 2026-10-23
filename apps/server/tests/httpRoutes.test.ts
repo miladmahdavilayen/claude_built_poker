@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import cookie from '@fastify/cookie';
-import { WAIVER_VERSION, type TableSettings } from '@pokerclause/shared';
+import { GUEST_TERMS_VERSION, WAIVER_VERSION, type TableSettings } from '@pokerclause/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { issueAccessToken } from '../src/auth/session.js';
@@ -59,7 +59,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       if (table) await registry.close(table.tableId);
     };
     registerUserRoutes(app, store, closePracticeTableOf);
-    registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null || registry.tableForOpenCode(token) !== null);
+    registerAuthRoutes(app, store, (token) => registry.describeInvite(token));
     signupKeyLockout.reset();
     inviteLockout.reset();
     // The real one (socketServer.ts) also refunds and notifies everyone at the table.
@@ -302,6 +302,24 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect(after[0]!.status).toBe('revoked');
     });
 
+    it('a used key moves under the player it registered — its name kept on their account — and stays there after they delete it', async () => {
+      const token = await adminToken();
+      const { key, id } = (await app.inject({ method: 'POST', url: '/admin/signup-keys', headers: auth(token), payload: { label: 'Dave from work' } })).json<{ key: string; id: string }>();
+      const r = await loginOrRegisterWithGoogle(store, { googleId: 'g-dave', email: 'dave.w@gmail.com', emailVerified: true, displayName: 'David Walker', avatarUrl: null }, { signupKey: key });
+      expect((await store.findUserById(r.user.id))?.accessKeyLabel).toBe('Dave from work');
+
+      const keys = (await app.inject({ method: 'GET', url: '/admin/signup-keys', headers: auth(token) })).json<{ keys: { id: string }[] }>().keys;
+      expect(keys.map((k) => k.id)).not.toContain(id);
+      const users = (await app.inject({ method: 'GET', url: '/admin/users', headers: auth(token) })).json<{ users: { id: string; accessKeyLabel: string | null }[] }>().users;
+      expect(users.find((u) => u.id === r.user.id)?.accessKeyLabel).toBe('Dave from work');
+      const detail = (await app.inject({ method: 'GET', url: `/admin/users/${r.user.id}`, headers: auth(token) })).json<{ accessKey: Record<string, unknown> }>();
+      expect(detail.accessKey).toMatchObject({ id, label: 'Dave from work', hint: key.slice(-4) });
+
+      expect((await app.inject({ method: 'DELETE', url: '/users/me', headers: auth(r.accessToken) })).statusCode).toBe(200);
+      const gone = (await app.inject({ method: 'GET', url: `/admin/deleted-users/${r.user.id}`, headers: auth(token) })).json<Record<string, unknown>>();
+      expect(gone).toMatchObject({ displayName: 'David Walker', email: 'dave.w@gmail.com', accessKeyLabel: 'Dave from work', accessKey: { id, label: 'Dave from work' }, deletedBy: 'self' });
+    });
+
     it('only the owner can generate or list keys', async () => {
       const player = await store.createGoogleAccount({ googleId: 'g-np', email: 'np@gmail.com', displayName: 'Nope', avatarUrl: null });
       expect((await app.inject({ method: 'POST', url: '/admin/signup-keys', headers: auth(issueAccessToken(player)), payload: { label: 'x' } })).statusCode).toBe(403);
@@ -323,12 +341,54 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const table = await registry.createTable('Real', { ...SETTINGS_FOR_LIST }, null, null);
       const created = table.createSeatAssignment(1, 10_000);
       if (!created.ok) throw new Error('unreachable');
-      const guest = (inviteToken: string) => app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Gus', inviteToken } });
-      expect((await app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Gus' } })).statusCode).toBe(400);
+      const guest = (inviteToken: string) =>
+        app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Gus', inviteToken, acceptTerms: true, termsVersion: GUEST_TERMS_VERSION } });
+      expect((await app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Gus', acceptTerms: true, termsVersion: GUEST_TERMS_VERSION } })).statusCode).toBe(400);
       expect((await guest('00000000-0000-4000-8000-000000000000')).json<{ code: string }>().code).toBe('INVALID_ASSIGNMENT');
       const ok = await guest(created.token);
       expect(ok.statusCode).toBe(200);
       expect(ok.json<{ user: { isGuest: boolean } }>().user.isGuest).toBe(true);
+    });
+
+    it('a guest must tick "I agree" to the guest terms — and the agreement is kept on their record, with the name the owner gave the invite', async () => {
+      const table = await registry.createTable('Friday Game', { ...SETTINGS_FOR_LIST }, null, null);
+      const created = table.createSeatAssignment(1, 10_000, 'Cousin Vinny');
+      if (!created.ok) throw new Error('unreachable');
+      const signUp = (extra: Record<string, unknown>) =>
+        app.inject({ method: 'POST', url: '/auth/guest', headers: { 'user-agent': 'Mozilla/5.0 (Android) GuestBrowser' }, payload: { displayName: 'Vin', inviteToken: created.token, ...extra } });
+      const unticked = await signUp({ acceptTerms: false, termsVersion: GUEST_TERMS_VERSION });
+      expect(unticked.statusCode).toBe(400);
+      expect(unticked.json<{ code: string }>().code).toBe('TERMS_REQUIRED');
+      expect((await signUp({ termsVersion: GUEST_TERMS_VERSION })).json<{ code: string }>().code).toBe('TERMS_REQUIRED');
+      expect((await signUp({ acceptTerms: true, termsVersion: GUEST_TERMS_VERSION + 1 })).json<{ code: string }>().code).toBe('TERMS_CHANGED');
+      expect(await store.listGuestPlayers()).toEqual([]);
+
+      const ok = await signUp({ acceptTerms: true, termsVersion: GUEST_TERMS_VERSION });
+      expect(ok.statusCode).toBe(200);
+      const guestId = ok.json<{ user: { id: string } }>().user.id;
+
+      const admin = await store.createAccount('guest-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const ownerAuth = auth(issueAccessToken({ ...admin, role: 'admin' }));
+      expect((await app.inject({ method: 'GET', url: '/admin/guests', headers: auth(ok.json<{ accessToken: string }>().accessToken) })).statusCode).toBe(403);
+      const listed = (await app.inject({ method: 'GET', url: '/admin/guests', headers: ownerAuth })).json<{ guests: Record<string, unknown>[] }>().guests;
+      expect(listed).toEqual([
+        expect.objectContaining({
+          id: guestId,
+          displayName: 'Vin',
+          adminNickname: 'Cousin Vinny',
+          inviteKind: 'seat-invite',
+          tableId: table.tableId,
+          tableName: 'Friday Game',
+          userAgent: 'Mozilla/5.0 (Android) GuestBrowser',
+          termsVersion: GUEST_TERMS_VERSION,
+        }),
+      ]);
+      expect(listed[0]!.ipAddress).toBeTruthy();
+      expect(Date.parse(listed[0]!.termsAcceptedAt as string)).toBeGreaterThan(Date.now() - 60_000);
+      const detail = await app.inject({ method: 'GET', url: `/admin/guests/${guestId}`, headers: ownerAuth });
+      expect(detail.json()).toMatchObject({ id: guestId, adminNickname: 'Cousin Vinny', games: [] });
+      expect((await app.inject({ method: 'GET', url: '/admin/guests/00000000-0000-4000-8000-000000000000', headers: ownerAuth })).statusCode).toBe(404);
     });
 
     it('GET /invites/:token finds the table an unused invite belongs to, and nothing once it is used', async () => {
@@ -360,8 +420,9 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect((await app.inject({ method: 'GET', url: '/tables' })).json<{ tables: unknown[] }>().tables).toHaveLength(0);
 
       expect((await app.inject({ method: 'GET', url: `/invites/${inviteCode}` })).json()).toEqual({ tableId, code: inviteCode });
-      const guest = await app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Group Chat Gary', inviteToken: inviteCode } });
+      const guest = await app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Group Chat Gary', inviteToken: inviteCode, acceptTerms: true, termsVersion: GUEST_TERMS_VERSION } });
       expect(guest.statusCode).toBe(200);
+      expect(await store.listGuestPlayers()).toEqual([expect.objectContaining({ displayName: 'Group Chat Gary', inviteKind: 'open-link', adminNickname: null, tableId })]);
     });
 
     it('ten invite codes that match nothing lock the address out', async () => {
@@ -391,6 +452,46 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       await store.adjustUserChips(again.id, -WELCOME_BONUS);
       await deleteMe(again.token);
       expect((await register('a')).chips).toBe(0);
+    });
+
+    it('a deleted account is kept, whole, for the owner — and never stops the same person registering again', async () => {
+      const first = await register('k');
+      await store.acceptWaiver(first.id, WAIVER_VERSION, 'DK');
+      await store.adjustUserChips(first.id, -25_000);
+      await store.recordLedgerEntries([
+        { userId: first.id, isHouse: false, amount: -25_000, reason: 'admin_adjust' },
+        { userId: null, isHouse: true, amount: 25_000, reason: 'admin_adjust' },
+      ]);
+      expect((await deleteMe(first.token)).statusCode).toBe(200);
+
+      const admin = await store.createAccount('del-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const ownerAuth = auth(issueAccessToken({ ...admin, role: 'admin' }));
+      const listed = (await app.inject({ method: 'GET', url: '/admin/deleted-users', headers: ownerAuth })).json<{ users: Record<string, unknown>[] }>().users;
+      expect(listed).toEqual([expect.objectContaining({ id: first.id, email: 'del.k@gmail.com', balance: WELCOME_BONUS - 25_000, deletedBy: 'self' })]);
+      const detail = (await app.inject({ method: 'GET', url: `/admin/deleted-users/${first.id}`, headers: ownerAuth })).json<{ waiver: unknown; ledger: { reason: string; amount: number }[] }>();
+      expect(detail.waiver).toMatchObject({ version: WAIVER_VERSION, initials: 'DK' });
+      expect(detail.ledger.map((e) => [e.reason, e.amount])).toEqual(expect.arrayContaining([['welcome_bonus', WELCOME_BONUS], ['admin_adjust', -25_000]]));
+
+      // Same person, back again: a normal new account, with what they left with — not a second bonus.
+      const again = await register('k');
+      expect(again.id).not.toBe(first.id);
+      expect(again.chips).toBe(WELCOME_BONUS - 25_000);
+      const users = (await app.inject({ method: 'GET', url: '/admin/users', headers: ownerAuth })).json<{ users: { id: string }[] }>().users;
+      expect(users.map((u) => u.id)).toContain(again.id);
+      expect(users.map((u) => u.id)).not.toContain(first.id);
+      expect((await app.inject({ method: 'GET', url: '/admin/deleted-users', headers: auth(again.token) })).statusCode).toBe(403);
+
+      // Deleted again — by the owner this time: both deletions are kept.
+      expect((await app.inject({ method: 'DELETE', url: `/admin/users/${again.id}`, headers: ownerAuth })).statusCode).toBe(200);
+      const both = (await app.inject({ method: 'GET', url: '/admin/deleted-users', headers: ownerAuth })).json<{ users: { id: string; deletedBy: string }[] }>().users;
+      expect(both.map((u) => [u.id, u.deletedBy])).toEqual(
+        expect.arrayContaining([
+          [again.id, 'admin'],
+          [first.id, 'self'],
+        ]),
+      );
+      expect(both).toHaveLength(2);
     });
 
     it('lost $400 at the tables: comes back with $600 — what they actually had', async () => {
@@ -461,17 +562,18 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const admin = await store.createAccount('sw-owner@x.com', 'hash', 'Owner');
       await store.setUserRole(admin.id, 'admin');
       const ownerAuth = auth(issueAccessToken({ ...admin, role: 'admin' }));
-      expect((await app.inject({ method: 'GET', url: '/admin/waivers', headers: auth(r.accessToken) })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'GET', url: `/admin/users/${r.user.id}`, headers: auth(r.accessToken) })).statusCode).toBe(403);
 
-      const list = (await app.inject({ method: 'GET', url: '/admin/waivers', headers: ownerAuth })).json<{ waivers: { id: string; displayName: string; userAgent: string; accountDeleted: boolean }[] }>().waivers;
+      // Listed under the player who signed it.
+      const list = (await app.inject({ method: 'GET', url: `/admin/users/${r.user.id}`, headers: ownerAuth })).json<{ signedWaivers: { id: string; displayName: string; userAgent: string }[] }>().signedWaivers;
       expect(list).toHaveLength(1);
-      expect(list[0]).toMatchObject({ displayName: 'Sigrid', userAgent: 'Mozilla/5.0 (iPhone) TestBrowser', accountDeleted: false });
+      expect(list[0]).toMatchObject({ displayName: 'Sigrid', userAgent: 'Mozilla/5.0 (iPhone) TestBrowser' });
       const id = list[0]!.id;
 
-      // Deleting the account keeps the signed waiver.
+      // Deleting the account keeps the signed waiver — under the deleted account now.
       expect((await app.inject({ method: 'DELETE', url: '/users/me', headers: auth(r.accessToken) })).statusCode).toBe(200);
-      const after = (await app.inject({ method: 'GET', url: '/admin/waivers', headers: ownerAuth })).json<{ waivers: { accountDeleted: boolean }[] }>().waivers;
-      expect(after).toEqual([expect.objectContaining({ accountDeleted: true })]);
+      const after = (await app.inject({ method: 'GET', url: `/admin/deleted-users/${r.user.id}`, headers: ownerAuth })).json<{ signedWaivers: { id: string }[] }>().signedWaivers;
+      expect(after.map((w) => w.id)).toEqual([id]);
 
       const view = await app.inject({ method: 'GET', url: `/admin/waivers/${id}/pdf`, headers: ownerAuth });
       expect(view.headers['content-type']).toBe('application/pdf');

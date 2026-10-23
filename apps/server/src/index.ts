@@ -206,7 +206,7 @@ async function main(): Promise<void> {
   registerTestSeedRoutes(app, store);
 
   const { io, registry, closeAllTables, terminateTable, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
-  registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null || registry.tableForOpenCode(token) !== null);
+  registerAuthRoutes(app, store, (token) => registry.describeInvite(token));
   registerUserRoutes(app, store, closePracticeTableOf);
   registerTableRoutes(app, store, registry, watchPracticeTable);
   registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable);

@@ -25,6 +25,14 @@ export type SeatsVacatedHandler = (tableId: string, vacated: readonly VacatedSea
  * only ever lives on this one event loop, and Node's single-threaded
  * execution already serializes every mutation to it.
  */
+/** The invite a guest signs up through — see TableRegistry.describeInvite. */
+export interface GuestInvite {
+  kind: 'seat-invite' | 'open-link';
+  tableId: string;
+  tableName: string;
+  adminNickname: string | null;
+}
+
 export class TableRegistry {
   private readonly tables = new Map<string, LiveTable>();
 
@@ -90,6 +98,19 @@ export class TableRegistry {
     for (const t of this.tables.values()) {
       if (t.openSeating && t.inviteCode === code) return t;
     }
+    return null;
+  }
+
+  /**
+   * What a guest is signing up through: a live table's unused seat invite
+   * (with the name the owner gave it), or an open-invite table's link —
+   * null for anything else. See POST /auth/guest.
+   */
+  describeInvite(token: string): GuestInvite | null {
+    const seat = this.tableForInvite(token);
+    if (seat) return { kind: 'seat-invite', tableId: seat.tableId, tableName: seat.name, adminNickname: seat.seatAssignmentNickname(token) };
+    const open = this.tableForOpenCode(token);
+    if (open) return { kind: 'open-link', tableId: open.tableId, tableName: open.name, adminNickname: null };
     return null;
   }
 

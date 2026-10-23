@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Download, type Page } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, playHandToCompletion, startHand, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, playHandToCompletion, startHand, takeSeat, openAdminSection } from './helpers.js';
 
 // The admin's game report (apps/server/src/game/gameBook.ts): downloadable
 // any time from the table's own menu — mid-hand included — as YAML or PDF,
@@ -55,6 +55,7 @@ test('the owner downloads the live game report mid-hand, as YAML and PDF, and fi
   const dashboard = await (await browser.newContext()).newPage();
   await adminLogin(dashboard);
   await dashboard.goto('/admin');
+  await openAdminSection(dashboard, 'Game reports');
   const row = dashboard.locator('.admin-report-row', { hasText: 'Report Night' });
   await expect(row).toContainText('live');
   await expect(row).toContainText('1 hand');

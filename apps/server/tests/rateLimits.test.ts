@@ -26,7 +26,7 @@ describe('abuse limits', () => {
     app = Fastify();
     await app.register(cookie);
     await app.register(rateLimit, { max: 1000, timeWindow: '1 minute' });
-    registerAuthRoutes(app, store, () => false);
+    registerAuthRoutes(app, store, () => null);
 
     const attempt = (password: string) =>
       app!.inject({ method: 'POST', url: '/auth/login', payload: { email: 'owner@example.com', password } });
@@ -40,7 +40,7 @@ describe('abuse limits', () => {
     app = Fastify();
     await app.register(cookie);
     await app.register(rateLimit, { max: 1000, timeWindow: '1 minute' });
-    registerAuthRoutes(app, store, () => false);
+    registerAuthRoutes(app, store, () => null);
     signupKeyLockout.reset();
     const statuses: number[] = [];
     for (let i = 0; i < 12; i++) {

@@ -1,3 +1,4 @@
+import { GUEST_TERMS, GUEST_TERMS_TITLE, GUEST_TERMS_VERSION } from '@pokerclause/shared/waiver';
 import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
@@ -70,6 +71,7 @@ export function LoginPage(): React.JSX.Element {
   const [accessKey, setAccessKey] = useState('');
   const [signupKey, setSignupKey] = useState<string | undefined>(undefined);
   const [displayName, setDisplayName] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +134,7 @@ export function LoginPage(): React.JSX.Element {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              void run(() => (mode === 'admin-login' ? login(email, password) : signupGuest(displayName || 'Guest', inviteToken)));
+              void run(() => (mode === 'admin-login' ? login(email, password) : signupGuest(displayName || 'Guest', inviteToken, GUEST_TERMS_VERSION)));
             }}
           >
             {mode === 'admin-login' ? (
@@ -147,13 +149,29 @@ export function LoginPage(): React.JSX.Element {
                 </label>
               </>
             ) : (
-              <label>
-                Display name
-                <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
-              </label>
+              <>
+                <label>
+                  Display name
+                  <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={24} />
+                </label>
+                <section className="guest-terms" aria-labelledby="guest-terms-title">
+                  <h2 id="guest-terms-title" className="guest-terms-title">
+                    {GUEST_TERMS_TITLE}
+                  </h2>
+                  <ul className="guest-terms-list">
+                    {GUEST_TERMS.map((term) => (
+                      <li key={term}>{term}</li>
+                    ))}
+                  </ul>
+                </section>
+                <label className="guest-terms-agree">
+                  <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)} />
+                  <span>I&rsquo;ve read and agree to the guest terms</span>
+                </label>
+              </>
             )}
             {error && <div className="error-banner">{error}</div>}
-            <button type="submit" disabled={busy}>
+            <button type="submit" disabled={busy || (mode !== 'admin-login' && !agreedToTerms)}>
               {mode === 'admin-login' ? 'Log in' : 'Play now'}
             </button>
             {mode === 'admin-login' && (

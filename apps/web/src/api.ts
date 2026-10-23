@@ -82,9 +82,9 @@ function deleteJson<T>(path: string, accessToken: string): Promise<T> {
   );
 }
 
-/** A guest session exists only to redeem an owner's invite, so it takes the invite's token. */
-export function signupGuest(displayName: string, inviteToken: string): Promise<AuthResponse> {
-  return postJson('/auth/guest', { displayName, inviteToken });
+/** A guest session exists only to redeem an owner's invite, so it takes the invite's token — and the guest's agreement to the guest terms (the version they were shown). */
+export function signupGuest(displayName: string, inviteToken: string, termsVersion: number): Promise<AuthResponse> {
+  return postJson('/auth/guest', { displayName, inviteToken, acceptTerms: true, termsVersion });
 }
 
 /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
@@ -152,12 +152,6 @@ export interface SignedWaiverDto {
   ipAddress: string | null;
   userAgent: string | null;
   pdfSha256: string;
-  accountDeleted: boolean;
-}
-
-/** Owner-only: every signed waiver ever, newest first — kept even after an account is deleted. */
-export function adminListWaivers(accessToken: string): Promise<{ waivers: SignedWaiverDto[] }> {
-  return getJson('/admin/waivers', accessToken);
 }
 
 /** Owner-only: fetches a signed waiver's PDF or authorization record as a Blob, with the server's filename. */
@@ -269,12 +263,103 @@ export interface AdminUserDto {
   chips: number;
   hasGoogle: boolean;
   createdAt: string;
+  lastLoginAt: string | null;
   waiver: { version: number; initials: string; acceptedAt: string } | null;
+  /** The name the owner gave the access key they registered with. */
+  accessKeyLabel: string | null;
+}
+
+/** The access key a player registered with — kept under them once used. */
+export interface UsedAccessKeyDto {
+  id: string;
+  hint: string;
+  label: string;
+  email: string | null;
+  createdAt: string;
+  usedAt: string | null;
+}
+
+/** One game a player took part in — their line from its report. Amounts in cents. */
+export interface PlayerGameDto {
+  reportId: string;
+  tableName: string;
+  status: 'live' | 'final';
+  startedAt: string;
+  endedAt: string | null;
+  stakes: string | null;
+  rank: number;
+  playerName: string;
+  boughtIn: number;
+  cashedOut: number;
+  onTable: number;
+  net: number;
+  handsPlayed: number;
+  handsWon: number;
 }
 
 export interface AdminUserDetailDto extends AdminUserDto {
   netPlayResult: number;
   recentEntries: LedgerEntryDto[];
+  accessKey: UsedAccessKeyDto | null;
+  signedWaivers: SignedWaiverDto[];
+  games: PlayerGameDto[];
+}
+
+/** A guest who joined by an owner's invite, and their acceptance of the guest terms. */
+export interface AdminGuestDto {
+  id: string;
+  displayName: string;
+  /** The name the owner gave the seat invite (null for an open-invite link). */
+  adminNickname: string | null;
+  inviteKind: 'seat-invite' | 'open-link';
+  tableId: string | null;
+  tableName: string | null;
+  joinedAt: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  termsVersion: number;
+  termsAcceptedAt: string;
+}
+
+export function adminListGuests(accessToken: string): Promise<{ guests: AdminGuestDto[] }> {
+  return getJson('/admin/guests', accessToken);
+}
+
+export function adminGetGuest(id: string, accessToken: string): Promise<AdminGuestDto & { games: PlayerGameDto[] }> {
+  return getJson(`/admin/guests/${encodeURIComponent(id)}`, accessToken);
+}
+
+export interface DeletedUserDto {
+  id: string;
+  displayName: string;
+  email: string | null;
+  accessKeyLabel: string | null;
+  /** The balance when the account was deleted. */
+  balance: number;
+  createdAt: string;
+  deletedAt: string;
+  deletedBy: 'self' | 'admin';
+}
+
+export interface DeletedUserDetailDto extends DeletedUserDto {
+  hasGoogle: boolean;
+  role: 'player' | 'admin';
+  netPlayResult: number;
+  lastLoginAt: string | null;
+  avatarUrl: string | null;
+  waiver: { version: number; initials: string; acceptedAt: string } | null;
+  accessKey: UsedAccessKeyDto | null;
+  ledger: (LedgerEntryDto & { handId: string | null })[];
+  signedWaivers: SignedWaiverDto[];
+  games: PlayerGameDto[];
+}
+
+export function adminListDeletedUsers(accessToken: string): Promise<{ users: DeletedUserDto[] }> {
+  return getJson('/admin/deleted-users', accessToken);
+}
+
+export function adminGetDeletedUser(id: string, accessToken: string): Promise<DeletedUserDetailDto> {
+  return getJson(`/admin/deleted-users/${encodeURIComponent(id)}`, accessToken);
 }
 
 export function adminListUsers(accessToken: string): Promise<{ users: AdminUserDto[] }> {
@@ -313,11 +398,10 @@ export interface SignupKeyDto {
   hint: string;
   label: string;
   email: string | null;
-  status: 'active' | 'used' | 'revoked' | 'expired';
+  /** Only unused keys are listed — a used one lives under the player it registered. */
+  status: 'active' | 'revoked' | 'expired';
   createdAt: string;
   expiresAt: string;
-  usedAt: string | null;
-  usedByName: string | null;
 }
 
 /** Owner-only: deletes (terminates) a table — everyone seated is refunded, and it's gone for good. */

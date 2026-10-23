@@ -24,8 +24,8 @@ export async function guestSignup(page: Page, name: string): Promise<void> {
 export async function adminLogin(page: Page): Promise<void> {
   await page.goto('/');
   await page.locator('.admin-login-trigger').click();
-  await page.getByLabel('Email').fill('admin@pokerclause.local');
-  await page.getByLabel('Password').fill('admin12345');
+  await page.getByLabel('Email or username').fill('admin');
+  await page.getByLabel('Password').fill('admin');
   await page.locator('form').getByRole('button', { name: 'Log in' }).click();
   await expect(page).toHaveURL(/\/lobby/);
 }
@@ -73,7 +73,7 @@ export async function googlePlayerLogin(page: Page, email: string, displayName: 
  */
 export async function createAccessKey(label: string, email?: string): Promise<string> {
   const api = await request.newContext({ baseURL: 'http://localhost:4210' });
-  const login = await api.post('/auth/login', { data: { email: 'admin@pokerclause.local', password: 'admin12345' } });
+  const login = await api.post('/auth/login', { data: { email: 'admin', password: 'admin' } });
   const { accessToken } = (await login.json()) as { accessToken: string };
   const res = await api.post('/admin/signup-keys', { data: email ? { label, email } : { label }, headers: { authorization: `Bearer ${accessToken}` } });
   expect(res.status()).toBe(201);
@@ -103,6 +103,8 @@ export interface CreateTableOptions {
   bigBlind: number;
   maxSeats: number;
   isPrivate: boolean;
+  /** An open-invite table — one shareable link, anyone with it picks their own seat. */
+  openSeating?: boolean;
 }
 
 /** Creates a table from the lobby and lands on it. Returns the invite link when private, else null. */
@@ -112,11 +114,12 @@ export async function createTable(page: Page, opts: CreateTableOptions): Promise
   await page.getByLabel('Small blind').fill(String(opts.smallBlind));
   await page.getByLabel('Big blind').fill(String(opts.bigBlind));
   await page.getByLabel('Max seats').fill(String(opts.maxSeats));
-  if (opts.isPrivate) await page.getByLabel(/Private/).check();
+  if (opts.openSeating) await page.getByLabel(/Open invite link/).check();
+  else if (opts.isPrivate) await page.getByLabel(/Private/).check();
   await page.getByRole('button', { name: 'Create', exact: true }).click();
 
   let link: string | null = null;
-  if (opts.isPrivate) {
+  if (opts.isPrivate || opts.openSeating) {
     link = await page.locator('.modal input[readonly]').inputValue();
   }
   await page.getByRole('button', { name: 'Go to table' }).click();

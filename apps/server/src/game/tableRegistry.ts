@@ -85,6 +85,14 @@ export class TableRegistry {
     }));
   }
 
+  /** The open-invite table this shareable code opens, if any. */
+  tableForOpenCode(code: string): LiveTable | null {
+    for (const t of this.tables.values()) {
+      if (t.openSeating && t.inviteCode === code) return t;
+    }
+    return null;
+  }
+
   /** The table an unused invite code belongs to, if any — see GET /invites/:token. */
   tableForInvite(token: string): LiveTable | null {
     for (const t of this.tables.values()) {

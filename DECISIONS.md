@@ -2223,3 +2223,66 @@ no foreign key to `users`, so deleting an account never deletes it:
 The admin dashboard's "Signed waivers" panel lists every one (searchable,
 marked "account deleted" where it is), opens the PDF, and downloads the PDF
 or the record.
+
+## Open-invite tables, an alerting waitlist, the owner's seat menu, and a folded chat dock
+
+**Open-invite tables.** "Create table" gains "Open invite link": a private
+table (off the lobby) whose one link — `/table/:id?code=…`, a 96-bit
+base64url code instead of the 32-bit code ordinary private tables use, since
+this one goes to group chats — lets anyone in. A signed-out visitor gets the
+guest form (the code is their invite: `/auth/guest` accepts it), a
+signed-in player is let in too (the practice-only rule is about public
+tables). Whoever came with the link picks any free seat (`canTakeSeat` in
+`table-permissions`; the server tracks it per connection). A guest's buy-in
+shortfall is covered by the owner (their chips vanish with the session); a
+signed-in player pays from their own balance — covering them would let them
+sit, leave and cash the owner's chips into a real balance. Bot defence: the
+code is unguessable; a wrong code on `join-table` counts toward the same
+per-IP invite lockout as the landing page; guest sessions stay rate-limited;
+`take-seat` and `join-waitlist` share the per-socket action limiter.
+
+**Waitlist.** On an open table, whenever a seat is free and people are
+waiting, one free seat is held for the first in line for `SEAT_OFFER_MS`
+(60 s): everyone else can take the other free seats, not that one
+(`SEAT_HELD`). The held person gets a chime, a vibration, a flashing tab
+title and — if they allowed it when joining the waitlist — a system
+notification, plus a countdown banner; everyone else sees who it's held
+for. Unclaimed, they drop off the list and the next person gets it.
+`LiveTable.syncSeatOffer` runs after anything that frees or fills a seat
+(every broadcast), with a timer for the expiry. The owner is never held up.
+
+**Owner's seat menu.** Holding a seat for a second (finger or mouse), or
+right-clicking it, opens a menu with only what fits that seat — rebuy /
+add chips, remove the player or computer player, delete the seat; or for
+an empty one sit here, add a computer player, invite a player. Destructive
+items need a second tap. It works the same in full screen, where the other
+table controls are hidden. Android's own half-second touch "right click" is
+ignored, so it's always the full second.
+
+**Chat and hand log** start folded into a slim bar (tabs, an unread badge on
+Chat); a tab opens or closes them, remembered per browser. The call controls
+are unchanged. Folding them let the felt reach the bottom of a phone screen,
+where the bet overlay's Fold/Call rail sits during the viewer's turn — so
+the full-screen toggle now measures that rail and lifts above it while it's
+up.
+
+**Seats never overlap each other, the board or the bets** — for 2 to 9
+players, any screen, cameras on or off (`useTableLayout.ts`). Each seat's real
+size (cards, camera, dealer button, labels) and the board are measured, and
+the seats go round the table's edge, evenly spaced, the viewer at the
+bottom. The edge's shape adapts from an oval on roomy screens to a rounded
+rectangle on a tall phone, and the board's height shifts a little. The seats
+and their bet chips then shrink together, only as far as needed. On the
+most cramped screens (a phone held sideways with a full table on camera)
+the board also steps down a size before seats would become unreadably small.
+If even that doesn't fit, the felt grows taller and the page scrolls rather
+than letting anything overlap. A short touch screen (a phone held sideways)
+now gets the phone controls, so the action bar doesn't eat the table's
+height; a short desktop window keeps the desktop bar. The existing camera
+rules are unchanged: no one's cards ever cover a face. Seats on the right of
+a phone may still sit behind the translucent raise rail. Covered by
+`tableLayout.spec.ts`.
+
+**Holding a seat for its menu** swallows the click that lifting the finger
+produces, so it can't also tap whatever is under the finger (an empty seat's
+"Sit here").

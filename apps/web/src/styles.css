@@ -944,7 +944,8 @@ input[type='range']::-moz-range-thumb {
   position: absolute;
   left: 50%;
   top: 42%;
-  transform: translate(-50%, -50%);
+  /* --board-scale: 1 except on the most cramped screens — see useTableLayout.ts. */
+  transform: translate(-50%, -50%) scale(var(--board-scale, 1));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1051,7 +1052,8 @@ input[type='range']::-moz-range-thumb {
    chips would be. */
 .bet-chips-slot {
   position: absolute;
-  transform: translate(-50%, -50%);
+  /* Scales with the seats (useTableLayout.ts's --fit-scale), so a shrunk table's bets shrink too. */
+  transform: translate(-50%, -50%) scale(var(--fit-scale, 1));
   z-index: 3;
 }
 
@@ -1382,6 +1384,7 @@ input[type='range']::-moz-range-thumb {
 .table-page.immersive .voice-panel,
 .table-page.immersive .speaker-bar,
 .table-page.immersive .waitlist-panel,
+.table-page.immersive .bottom-dock,
 .table-page.immersive .bottom-tabs,
 .table-page.immersive .chat-panel,
 .table-page.immersive .action-log,
@@ -1478,7 +1481,7 @@ input[type='range']::-moz-range-thumb {
      full-size screen, pulled down by the media queries below on a phone. Both
      multiply onto the same baseline together rather than fighting each other. */
   width: var(--seat-width, 128px);
-  transform: scale(var(--mobile-shrink, 1));
+  transform: scale(calc(var(--mobile-shrink, 1) * var(--fit-scale, 1)));
   background: rgba(10, 14, 20, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
@@ -1513,7 +1516,7 @@ input[type='range']::-moz-range-thumb {
      smaller than an occupied one at the same seat count — same ratio
      (100/128) the original fixed sizes used. */
   width: calc(var(--seat-width, 128px) * 0.78);
-  transform: scale(var(--mobile-shrink, 1));
+  transform: scale(calc(var(--mobile-shrink, 1) * var(--fit-scale, 1)));
   min-height: 60px;
   border: 1px dashed var(--panel-border);
   border-radius: 10px;
@@ -3084,4 +3087,129 @@ input[type='range']::-moz-range-thumb {
   margin-left: 8px;
   border-color: var(--danger);
   color: #ffb3ac;
+}
+
+/* Chat + hand log, folded into a slim bar until opened (Table.tsx's bottom dock). */
+.bottom-dock {
+  background: var(--panel);
+  border-top: 1px solid var(--panel-border);
+}
+.bottom-dock .bottom-tabs {
+  border-top: none;
+  padding: 4px 12px;
+  align-items: center;
+}
+.bottom-dock:not(.bottom-dock-open) .bottom-tabs button {
+  border-radius: 999px;
+}
+.bottom-dock .bottom-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+}
+.bottom-dock-toggle {
+  margin-left: auto;
+  font-size: 14px;
+}
+.bottom-tab-badge {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #10151c;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The owner's per-seat menu (components/SeatActionMenu.tsx). */
+.seat-slot-owner {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.seat-action-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 210px;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(24, 31, 42, 0.97);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: seat-menu-in 0.12s ease-out;
+}
+@keyframes seat-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.seat-action-menu-title {
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--panel-border);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seat-action-item {
+  justify-content: flex-start;
+  background: transparent;
+  text-align: left;
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.seat-action-item:hover {
+  background: var(--panel-2);
+}
+.seat-action-danger {
+  color: #ff9c94;
+}
+.seat-action-armed {
+  background: var(--danger);
+  color: #fff;
+}
+.seat-action-armed:hover {
+  background: var(--danger);
+}
+
+/* Open-invite waitlist: the held seat. */
+.seat-offer-banner {
+  margin: 6px 12px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  font-size: 13px;
+}
+.seat-offer-mine {
+  background: rgba(224, 167, 48, 0.16);
+  border-color: var(--accent);
+  animation: seat-offer-pulse 1.2s ease-in-out infinite alternate;
+}
+@keyframes seat-offer-pulse {
+  from {
+    box-shadow: 0 0 0 0 rgba(224, 167, 48, 0.0);
+  }
+  to {
+    box-shadow: 0 0 0 4px rgba(224, 167, 48, 0.35);
+  }
+}
+.seat-offer-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }

@@ -164,3 +164,12 @@ export function playBluffRevealSound(): void {
   const notes = [392, 349.23, 293.66]; // G4, F4, D4 — descending
   notes.forEach((freq, i) => playTone(now + 0.08 + i * 0.16, 0.3, freq, 0.14, 'sawtooth'));
 }
+
+/** A bright, unmistakable three-note ding — a seat is being held for you (open-invite waitlist). Meant to be heard from another tab. */
+export function playSeatOfferAlert(): void {
+  const c = getCtx();
+  if (!c) return;
+  const now = c.currentTime;
+  [784, 1046.5, 1568].forEach((freq, i) => playTone(now + i * 0.14, 0.4, freq, 0.14, 'triangle'));
+  [784, 1046.5, 1568].forEach((freq, i) => playTone(now + 0.75 + i * 0.14, 0.4, freq, 0.12, 'triangle'));
+}

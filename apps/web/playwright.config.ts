@@ -64,6 +64,9 @@ export default defineConfig({
         // test. Never set in a real deployment, so that route doesn't
         // exist there at all. See DECISIONS.md.
         ALLOW_TEST_SEEDING: 'true',
+        // Local and test runs log the owner in as admin/admin (production sets its own in .env).
+        ADMIN_EMAIL: 'admin',
+        ADMIN_PASSWORD: 'admin',
       },
       url: `http://localhost:${String(API_PORT)}/health`,
       reuseExistingServer: false,

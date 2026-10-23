@@ -258,6 +258,9 @@ export function OwnerMenu({
             <input type="checkbox" checked={form.isPrivate} onChange={(e) => set('isPrivate', e.target.checked)} />
             Private table (invite link only, hidden from the lobby)
           </label>
+          {state.settings.isPrivate && inviteCode && state.settings.openSeating && (
+            <p className="owner-menu-note">Open invite link — anyone with it can pick a free seat or join the waitlist:</p>
+          )}
           {state.settings.isPrivate && inviteCode && (
             <input
               type="text"

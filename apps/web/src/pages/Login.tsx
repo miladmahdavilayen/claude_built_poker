@@ -8,9 +8,10 @@ import { GoogleSignInButton, useGoogleSignInAvailable } from '../components/Goog
 // An owner-generated seat invite (`/table/:id?assign=:token`) sends an
 // unauthenticated visitor here via RedirectToLogin in App.tsx, which stashes
 // the original destination in location.state.from.
-const INVITE_FROM_PATTERN = /^\/table\/[^/]+\?.*\bassign=/;
-// The `assign` token on its own — what the owner can hand out as an "invitation code".
-const INVITE_CODE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// An owner's seat invite (`?assign=`) or an open-invite table's shareable link (`?code=`).
+const INVITE_FROM_PATTERN = /^\/table\/[^/]+\?.*\b(assign|code)=/;
+// The code on its own: a seat invite's `assign` token (a UUID), or an open-invite table's 16-character code.
+const INVITE_CODE_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9_-]{16})$/i;
 
 /** Local development only — see api.devGoogleSignIn. Vite drops the whole branch from a real build. */
 const DEV_GOOGLE_STUB = import.meta.env.DEV && import.meta.env.VITE_DEV_GOOGLE_STUB === 'true';
@@ -54,7 +55,8 @@ export function LoginPage(): React.JSX.Element {
   const navigate = useNavigate();
   const from = (location.state as { from?: string } | null)?.from;
   const isInvitedPlayer = typeof from === 'string' && INVITE_FROM_PATTERN.test(from);
-  const inviteToken = isInvitedPlayer ? (new URLSearchParams(from.split('?')[1]).get('assign') ?? '') : '';
+  const inviteParams = isInvitedPlayer ? new URLSearchParams(from.split('?')[1]) : null;
+  const inviteToken = inviteParams?.get('assign') ?? inviteParams?.get('code') ?? '';
   const googleAvailable = useGoogleSignInAvailable();
   // No navigation happens here on a successful sign-in — once `user`
   // becomes truthy, App.tsx's own /login route (LoginRoute) re-evaluates
@@ -109,8 +111,8 @@ export function LoginPage(): React.JSX.Element {
       }
       const code = invite.trim();
       if (!INVITE_CODE_PATTERN.test(code)) throw new Error("That doesn't look like an invitation. Paste the link or code the table owner sent you.");
-      const { tableId } = await api.lookupInvite(code);
-      void navigate(`/table/${tableId}?assign=${code}`);
+      const found = await api.lookupInvite(code);
+      void navigate(found.code ? `/table/${found.tableId}?code=${encodeURIComponent(found.code)}` : `/table/${found.tableId}?assign=${code}`);
     });
 
   const submitAccessKey = (): Promise<void> =>
@@ -136,12 +138,12 @@ export function LoginPage(): React.JSX.Element {
             {mode === 'admin-login' ? (
               <>
                 <label>
-                  Email
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                  Email or username
+                  <input type="text" autoCapitalize="none" autoCorrect="off" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
                 </label>
                 <label>
                   Password
-                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
+                  <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                 </label>
               </>
             ) : (

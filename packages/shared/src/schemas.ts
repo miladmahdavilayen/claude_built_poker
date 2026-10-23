@@ -144,6 +144,8 @@ export const CreateTableSchema = z
     noFlopNoDrop: z.boolean().default(true),
     isPrivate: z.boolean().default(false),
     disableChatInHand: z.boolean().default(false),
+    /** An open-invite table: one shareable link, anyone holding it picks their own seat (always private — kept off the lobby). */
+    openSeating: z.boolean().default(false),
   })
   .strict();
 export type CreateTableInput = z.infer<typeof CreateTableSchema>;
@@ -183,8 +185,12 @@ export type SeatTargetIntent = z.infer<typeof SeatTargetSchema>;
 export const GuestSignupSchema = z
   .object({
     displayName: z.string().min(1).max(24),
-    /** The owner's invite this guest session is for (the `assign` token) — no guest session exists without one. */
-    inviteToken: z.string().uuid(),
+    /** The owner's invite this guest session is for — a seat invite's `assign` token, or an open-invite table's code. No guest session exists without one. */
+    inviteToken: z
+      .string()
+      .min(8)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/),
   })
   .strict();
 export type GuestSignupInput = z.infer<typeof GuestSignupSchema>;
@@ -245,9 +251,10 @@ export const AcceptWaiverSchema = z
   })
   .strict();
 
+/** The owner's login. `email` is whatever ADMIN_EMAIL is — an email address in production, or a plain username (e.g. "admin" for local runs). */
 export const LoginSchema = z
   .object({
-    email: z.string().email(),
+    email: z.string().trim().min(1).max(254),
     password: z.string().min(1).max(200),
   })
   .strict();

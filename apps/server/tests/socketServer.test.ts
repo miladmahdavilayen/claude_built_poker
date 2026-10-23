@@ -8,6 +8,7 @@ import { issueAccessToken } from '../src/auth/session.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
 import type { LiveTable } from '../src/game/liveTable.js';
 import type { TableRegistry } from '../src/game/tableRegistry.js';
+import { inviteLockout } from '../src/security/lockouts.js';
 import { attachSocketServer } from '../src/socket/socketServer.js';
 
 process.env.JWT_SECRET ??= 'test-secret-do-not-use-in-prod';
@@ -552,7 +553,7 @@ describe('socketServer: live signaling and access control', () => {
     const permissionsPromise = waitFor<{ canManageTable: boolean; canManageLayout: boolean; isPractice: boolean }>(bobSocket, 'table-permissions');
     const statePromise = waitFor(bobSocket, 'state');
     bobSocket.emit('join-table', { tableId: table.tableId });
-    expect(await permissionsPromise).toEqual({ canManageTable: true, canManageLayout: false, isPractice: true });
+    expect(await permissionsPromise).toEqual({ canManageTable: true, canManageLayout: false, isPractice: true, canTakeSeat: false });
     await statePromise;
 
     const botRemoved = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
@@ -704,6 +705,124 @@ describe('socketServer: live signaling and access control', () => {
     } finally {
       delete process.env.PRACTICE_ABANDON_MS;
     }
+  });
+
+  describe('open-invite tables', () => {
+    const OPEN: TableSettings = { ...SETTINGS, isPrivate: true, openSeating: true, maxSeats: 2 };
+
+    async function joined(token: string, tableId: string, inviteCode?: string): Promise<{ sock: ClientSocket; perms: { canTakeSeat: boolean } }> {
+      const sock = connect(token);
+      await waitFor(sock, 'connect');
+      const perms = waitFor<{ canTakeSeat: boolean }>(sock, 'table-permissions');
+      const state = waitFor(sock, 'state');
+      sock.emit('join-table', inviteCode ? { tableId, inviteCode } : { tableId });
+      const p = await perms;
+      await state;
+      return { sock, perms: p };
+    }
+
+    function takeSeat(sock: ClientSocket, tableId: string, seatId: number, buyIn: number): Promise<{ code: string } | 'seated'> {
+      return new Promise((resolve) => {
+        const onError = (e: { code: string }): void => {
+          sock.off('state', onState);
+          resolve(e);
+        };
+        const onState = (p: { state: { viewerSeatId: number | null } }): void => {
+          if (p.state.viewerSeatId === seatId) {
+            sock.off('error', onError);
+            sock.off('state', onState);
+            resolve('seated');
+          }
+        };
+        sock.on('error', onError);
+        sock.on('state', onState);
+        sock.emit('take-seat', { tableId, seatId, buyIn });
+      });
+    }
+
+    it('anyone with the link — a guest or a signed-in player — picks their own seat; without it, nobody gets in', async () => {
+      const table = await registry.createTable('Open Game', { ...OPEN, maxSeats: 3 }, null, 'open-code-1234567');
+      const guest = await makeUser('Gus', 0); // a guest with nothing: the owner covers the buy-in
+      const player = await makeRegisteredUser('Pia', 150); // pays from their own balance
+      const stranger = await makeUser('Stan');
+      inviteLockout.reset();
+
+      const s = connect(stranger.token);
+      await waitFor(s, 'connect');
+      const denied = waitFor<{ code: string }>(s, 'error');
+      s.emit('join-table', { tableId: table.tableId, inviteCode: 'wrong-code-000000' });
+      expect((await denied).code).toBe('INVALID_INVITE_CODE');
+      s.close();
+
+      const g = await joined(guest.token, table.tableId, 'open-code-1234567');
+      expect(g.perms.canTakeSeat).toBe(true);
+      expect(await takeSeat(g.sock, table.tableId, 0, 200)).toBe('seated');
+      expect(table.state.seats[0]?.stack).toBe(200);
+
+      const p = await joined(player.token, table.tableId, 'open-code-1234567');
+      expect(p.perms.canTakeSeat).toBe(true);
+      expect(await takeSeat(p.sock, table.tableId, 1, 200)).toEqual(expect.objectContaining({ code: 'INSUFFICIENT_CHIPS' }));
+      expect(await takeSeat(p.sock, table.tableId, 1, 150)).toBe('seated');
+      expect((await store.findUserById(player.userId))?.chips).toBe(0);
+
+      g.sock.close();
+      p.sock.close();
+    });
+
+    it('a full table has a waitlist: a freed seat is held for the first in line, others are turned away, and an unclaimed hold passes on', async () => {
+      process.env.SEAT_OFFER_MS = '400';
+      try {
+        const table = await registry.createTable('Busy Game', OPEN, null, 'open-code-busy0000');
+        const [a, b, c, d] = await Promise.all(['Ann', 'Ben', 'Cat', 'Dan'].map((n) => makeUser(n, 1000)));
+        const sa = await joined(a!.token, table.tableId, 'open-code-busy0000');
+        const sb = await joined(b!.token, table.tableId, 'open-code-busy0000');
+        expect(await takeSeat(sa.sock, table.tableId, 0, 200)).toBe('seated');
+        expect(await takeSeat(sb.sock, table.tableId, 1, 200)).toBe('seated');
+
+        const sc = await joined(c!.token, table.tableId, 'open-code-busy0000');
+        const sd = await joined(d!.token, table.tableId, 'open-code-busy0000');
+        sc.sock.emit('join-waitlist');
+        await waitForState<{ state: { waitlist: unknown[] } }>(sc.sock, (p) => p.state.waitlist.length === 1);
+        sd.sock.emit('join-waitlist');
+        await waitForState<{ state: { waitlist: unknown[] } }>(sd.sock, (p) => p.state.waitlist.length === 2);
+
+        // Ann leaves: her seat is held for Cat (first in line).
+        const offered = waitForState<{ state: { seatOffer: { userId: string } | null } }>(sc.sock, (p) => p.state.seatOffer?.userId === c!.userId);
+        await emitWithAck(sa.sock, 'leave-table');
+        await offered;
+        expect(await takeSeat(sd.sock, table.tableId, 0, 200)).toEqual(expect.objectContaining({ code: 'SEAT_HELD' }));
+
+        // Cat doesn't take it in time: she drops off, and it's Dan's.
+        const passed = await waitForState<{ state: { seatOffer: { userId: string } | null; waitlist: { userId: string }[] } }>(
+          sd.sock,
+          (p) => p.state.seatOffer?.userId === d!.userId,
+        );
+        expect(passed.state.waitlist.map((w) => w.userId)).toEqual([d!.userId]);
+        expect(await takeSeat(sd.sock, table.tableId, 0, 200)).toBe('seated');
+        expect(table.currentSeatOffer).toBeNull();
+        expect(table.seatOfUser(d!.userId)).toBe(0);
+
+        for (const s of [sa, sb, sc, sd]) s.sock.close();
+      } finally {
+        delete process.env.SEAT_OFFER_MS;
+      }
+    });
+
+    it('guessing the link gets an address locked out', async () => {
+      const table = await registry.createTable('Guarded Game', OPEN, null, 'open-code-guard000');
+      inviteLockout.reset();
+      const intruder = await makeUser('Ivy');
+      const s = connect(intruder.token);
+      await waitFor(s, 'connect');
+      const codes: string[] = [];
+      s.on('error', (e: { code: string }) => codes.push(e.code));
+      for (let i = 0; i < 11; i++) s.emit('join-table', { tableId: table.tableId, inviteCode: `guess-${String(i)}-0000000` });
+      await new Promise((r) => setTimeout(r, 200));
+      expect(codes.filter((c) => c === 'INVALID_INVITE_CODE')).toHaveLength(10);
+      expect(codes.at(-1)).toBe('TOO_MANY_ATTEMPTS');
+      inviteLockout.reset();
+      s.close();
+    });
   });
 
   it('assign-seat + redeem-seat-assignment: a one-time, seat-and-amount-specific invite link, ignoring anything the redeemer tries to supply themselves, consumed on use', async () => {

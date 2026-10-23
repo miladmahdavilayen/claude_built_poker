@@ -39,8 +39,9 @@ const SIGNUP_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_LIMIT ?? 20), ti
 const SIGNUP_KEY_RATE_LIMIT = { max: Number(process.env.AUTH_SIGNUP_KEY_LIMIT ?? 10), timeWindow: '15 minutes' };
 
 /**
- * `isOpenInvite` answers whether an invite token belongs to a live table
- * (see TableRegistry.tableForInvite): a guest session only exists to
+ * `isOpenInvite` answers whether an invite token — a one-time seat invite,
+ * or an open-invite table's shareable code — belongs to a live table (see
+ * TableRegistry.tableForInvite / tableForOpenCode): a guest session only exists to
  * redeem one, so none is created without it.
  */
 export function registerAuthRoutes(app: FastifyInstance, store: Store, isOpenInvite: (token: string) => boolean): void {

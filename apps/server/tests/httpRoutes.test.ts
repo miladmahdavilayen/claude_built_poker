@@ -59,7 +59,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       if (table) await registry.close(table.tableId);
     };
     registerUserRoutes(app, store, closePracticeTableOf);
-    registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null);
+    registerAuthRoutes(app, store, (token) => registry.tableForInvite(token) !== null || registry.tableForOpenCode(token) !== null);
     signupKeyLockout.reset();
     inviteLockout.reset();
     // The real one (socketServer.ts) also refunds and notifies everyone at the table.
@@ -340,6 +340,28 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       table.redeemSeatAssignment(created.token);
       expect((await app.inject({ method: 'GET', url: `/invites/${created.token}` })).statusCode).toBe(404);
       expect((await app.inject({ method: 'GET', url: '/invites/not-a-token' })).statusCode).toBe(404);
+    });
+
+    it('an open-invite table: private, a long shareable code that finds the table, and lets a guest in', async () => {
+      const admin = await store.createAccount('open-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const created = await app.inject({
+        method: 'POST',
+        url: '/tables',
+        headers: auth(issueAccessToken({ ...admin, role: 'admin' })),
+        payload: { name: 'Friday Night', smallBlind: 100, bigBlind: 200, maxSeats: 9, isPrivate: false, openSeating: true },
+      });
+      expect(created.statusCode).toBe(201);
+      const { tableId, inviteCode } = created.json<{ tableId: string; inviteCode: string }>();
+      expect(inviteCode).toMatch(/^[A-Za-z0-9_-]{16}$/);
+      const table = registry.get(tableId)!;
+      expect(table.openSeating).toBe(true);
+      expect(table.settings.isPrivate).toBe(true);
+      expect((await app.inject({ method: 'GET', url: '/tables' })).json<{ tables: unknown[] }>().tables).toHaveLength(0);
+
+      expect((await app.inject({ method: 'GET', url: `/invites/${inviteCode}` })).json()).toEqual({ tableId, code: inviteCode });
+      const guest = await app.inject({ method: 'POST', url: '/auth/guest', payload: { displayName: 'Group Chat Gary', inviteToken: inviteCode } });
+      expect(guest.statusCode).toBe(200);
     });
 
     it('ten invite codes that match nothing lock the address out', async () => {

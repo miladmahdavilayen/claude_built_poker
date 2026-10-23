@@ -103,8 +103,9 @@ export function checkSignupKey(key: string): Promise<{ ok: true }> {
 }
 
 /** Which table an owner's invite code (the `assign` token from an invite link) is for. */
-export function lookupInvite(token: string): Promise<{ tableId: string }> {
-  return fetch(`${API_BASE}/invites/${encodeURIComponent(token)}`).then((res) => parseOrThrow<{ tableId: string }>(res));
+/** `code` comes back for an open-invite table's shareable code — open the table with it. */
+export function lookupInvite(token: string): Promise<{ tableId: string; code?: string }> {
+  return fetch(`${API_BASE}/invites/${encodeURIComponent(token)}`).then((res) => parseOrThrow<{ tableId: string; code?: string }>(res));
 }
 
 /**
@@ -221,6 +222,8 @@ export interface CreateTableInput {
   bigBlind: number;
   maxSeats: number;
   isPrivate: boolean;
+  /** One shareable link; anyone holding it picks their own seat (always private). */
+  openSeating?: boolean;
   minBuyIn?: number;
   maxBuyIn?: number;
 }

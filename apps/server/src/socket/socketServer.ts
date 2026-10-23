@@ -22,6 +22,7 @@ import { verifyAccessToken } from '../auth/session.js';
 import type { Store } from '../db/store.js';
 import type { LiveTable, VacatedSeat } from '../game/liveTable.js';
 import { TableRegistry } from '../game/tableRegistry.js';
+import { inviteLockout } from '../security/lockouts.js';
 import { filterProfanity } from './profanityFilter.js';
 import { RateLimiter } from './rateLimiter.js';
 
@@ -161,6 +162,8 @@ export function attachSocketServer(
     // for an explicit 'start-hand' from a seated player. See DECISIONS.md.
     const table = registry.get(tableId);
     if (table) broadcastAdminView(table, rawEvents);
+    // A hand ending can free seats (deferred removals) — the waitlist may now be owed one.
+    if (table && syncSeatOffer(table)) broadcastTable(table);
   }, (tableId, vacated) => {
     // A deferred owner removal finishing at hand end (see
     // LiveTable.removeSeatOccupant). The table's own end-of-hand broadcast
@@ -255,6 +258,9 @@ export function attachSocketServer(
     for (const room of rooms) io.to(room).emit('table-closed', { reason });
     await registry.close(tableId, keepOpen);
     clearPracticeAbandonTimer(tableId);
+    const offerTimer = seatOfferTimers.get(tableId);
+    if (offerTimer) clearTimeout(offerTimer);
+    seatOfferTimers.delete(tableId);
     practiceOwnerSockets.delete(tableId);
   }
 
@@ -307,7 +313,34 @@ export function attachSocketServer(
     if (table) await closeTableWithNotice(table.tableId, 'This account was deleted.', 'the player deleted their account');
   }
 
+  // --- Open-invite waitlist: the held seat's countdown (see LiveTable.syncSeatOffer). ---
+  const seatOfferTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Re-evaluates the table's held seat and (re)arms its expiry; returns whether it changed. */
+  function syncSeatOffer(table: LiveTable): boolean {
+    const changed = table.syncSeatOffer();
+    const offer = table.currentSeatOffer;
+    const existing = seatOfferTimers.get(table.tableId);
+    if (changed || !offer) {
+      if (existing) clearTimeout(existing);
+      seatOfferTimers.delete(table.tableId);
+    }
+    if (offer && !seatOfferTimers.has(table.tableId)) {
+      const timer = setTimeout(
+        () => {
+          seatOfferTimers.delete(table.tableId);
+          if (registry.get(table.tableId)) broadcastTable(table);
+        },
+        Math.max(0, offer.expiresAt - Date.now()) + 50,
+      );
+      timer.unref();
+      seatOfferTimers.set(table.tableId, timer);
+    }
+    return changed;
+  }
+
   function broadcastTable(table: LiveTable): void {
+    syncSeatOffer(table);
     for (const viewer of [...table.seats.filter((s) => s.userId !== null).map((s) => s.seatId), null]) {
       const room = viewer === null ? spectatorRoom(table.tableId) : seatRoom(table.tableId, viewer);
       io.to(room).except(adminRoom(table.tableId)).emit('state', { state: table.projectionFor(viewer), events: [] });
@@ -468,6 +501,8 @@ export function attachSocketServer(
   io.on('connection', (socket: Socket) => {
     const data = socket.data as SocketData;
     let joinedTableId: string | null = null;
+    /** Open-invite tables this connection joined with the right link — it may pick its own seat and join the waitlist there. */
+    const openAccess = new Set<string>();
 
     void (async () => {
       if (data.userId) {
@@ -500,14 +535,22 @@ export function attachSocketServer(
       // else. A practice-only player sees no other table at all.
       const isPracticeOwner = table.isPractice && data.userId !== null && data.userId === table.ownerId;
       if (table.isPractice && !isPracticeOwner && data.role !== 'admin') return emitError('TABLE_NOT_FOUND', 'Table not found.');
-      if (!table.isPractice && isPracticeOnly(data)) {
+      const seatId = data.userId ? table.seatOfUser(data.userId) : null;
+      const hasCode = parsed.data.inviteCode !== undefined && parsed.data.inviteCode === table.inviteCode;
+      // An open-invite table's link is an invitation for anyone, a signed-in
+      // player included (their practice-only rule is about public tables).
+      const openInvited = table.openSeating && (hasCode || seatId !== null);
+      if (!table.isPractice && isPracticeOnly(data) && !openInvited) {
         return emitError('PRACTICE_ONLY', 'Your account plays at your own table against computer players — start one from the lobby.');
       }
-
-      const seatId = data.userId ? table.seatOfUser(data.userId) : null;
-      if (!table.isPractice && table.settings.isPrivate && seatId === null && parsed.data.inviteCode !== table.inviteCode) {
+      if (!table.isPractice && table.settings.isPrivate && seatId === null && !hasCode && data.role !== 'admin') {
+        // A shareable link is worth guessing at: wrong codes count toward the per-IP lockout.
+        const ip = clientIp(socket);
+        if (inviteLockout.retryAfterMs(ip) > 0) return emitError('TOO_MANY_ATTEMPTS', 'Too many failed attempts. Try again later.');
+        inviteLockout.recordFailure(ip);
         return emitError('INVALID_INVITE_CODE', 'This table is private. Provide the correct invite code to join.');
       }
+      if (table.openSeating && (openInvited || data.role === 'admin')) openAccess.add(table.tableId);
       if (isPracticeOwner) practiceOwnerConnected(table.tableId, socket.id);
 
       joinedTableId = table.tableId;
@@ -523,7 +566,13 @@ export function attachSocketServer(
       // spectating table creator has no seat/room of their own to target a
       // "canManage" field on a shared projection to in the first place.
       // See canManageTable's own doc comment.
-      socket.emit('table-permissions', { canManageTable: canManageTable(table, data), canManageLayout: canManageLayout(table, data), isPractice: table.isPractice });
+      socket.emit('table-permissions', {
+        canManageTable: canManageTable(table, data),
+        canManageLayout: canManageLayout(table, data),
+        isPractice: table.isPractice,
+        // Open-invite tables: anyone who came with the link picks their own seat.
+        canTakeSeat: data.userId !== null && openAccess.has(table.tableId),
+      });
       // See registerVoiceParticipant's own doc comment — every human is
       // receive-ready from the moment they're at the table, not only once
       // they opt into sending their own mic/camera.
@@ -555,8 +604,14 @@ export function attachSocketServer(
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed take-seat payload.');
       const table = registry.get(parsed.data.tableId);
       if (!table) return emitError('TABLE_NOT_FOUND', 'Table not found.');
-      if (!canManageTable(table, data)) {
+      if (!actionLimiter.consume(socket.id)) return emitError('RATE_LIMITED', 'Slow down.');
+      // Anyone who came with an open-invite table's link seats themselves.
+      const openSeat = !canManageTable(table, data) && openAccess.has(table.tableId);
+      if (!canManageTable(table, data) && !openSeat) {
         return emitError('SELF_SERVE_DISABLED', 'Only the table owner can seat a player directly — ask them for an invite link.');
+      }
+      if (table.openSeating && data.role !== 'admin' && !table.canTakeOpenSeat(data.userId)) {
+        return emitError('SEAT_HELD', 'That seat is being held for the next person on the waitlist — join the waitlist to get the next one.');
       }
       // Only the player who owns a practice table ever sits at it.
       if (table.isPractice && data.userId !== table.ownerId) {
@@ -575,7 +630,11 @@ export function attachSocketServer(
       void (displayName ? deps.store.updateDisplayName(userId, displayName) : Promise.resolve())
         .then(() => {
           if (displayName) data.displayName = displayName;
-          return performTakeSeat(table, socket, userId, seatId, buyIn);
+          // A guest's buy-in is play money that vanishes with the session, so
+          // the owner covers whatever they're short; a signed-in player pays
+          // from their own balance (covering them would let them cash the
+          // owner's chips out into it).
+          return performTakeSeat(table, socket, userId, seatId, buyIn, null, openSeat && data.isGuest);
         })
         .then((result) => {
           if (!result.ok) emitError(result.code, result.message);
@@ -836,6 +895,7 @@ export function attachSocketServer(
         // the spectator room so it keeps receiving updates, then push
         // the fresh state directly to everyone who was affected.
         for (const seatId of previousSeatIds) evictSeatToSpectator(io, table.tableId, seatId);
+        syncSeatOffer(table);
         const freshState = table.projectionFor(null);
         io.to(spectatorRoom(table.tableId)).emit('state', { state: freshState, events: [] });
         callback?.();
@@ -882,6 +942,7 @@ export function attachSocketServer(
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to join the waitlist.');
       if (table.isPractice) return emitError('PRACTICE_TABLE', 'Only computer players can join this table.');
+      if (!actionLimiter.consume(socket.id)) return emitError('RATE_LIMITED', 'Slow down.');
       const result = table.joinWaitlist(data.userId, data.displayName ?? 'Player');
       if (!result.ok) return emitError(result.code, result.message);
       broadcastTable(table);

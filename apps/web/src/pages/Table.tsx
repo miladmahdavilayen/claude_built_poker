@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 import { useAuth } from '../AuthContext.js';
@@ -12,6 +12,9 @@ import { DealAnimation } from '../components/DealAnimation.js';
 import { HandBreakPanel } from '../components/HandBreakPanel.js';
 import { MoneyInput } from '../components/MoneyInput.js';
 import { OwnerMenu } from '../components/OwnerMenu.js';
+import { SeatActionMenu, useSeatMenuGesture, type SeatAction } from '../components/SeatActionMenu.js';
+import { SeatOfferBanner } from '../components/SeatOfferBanner.js';
+import { requestSeatAlerts, useSeatOfferAlert } from '../useSeatOfferAlert.js';
 import { RevealHandButton } from '../components/RevealHandButton.js';
 import { Seat } from '../components/Seat.js';
 import { SpeakerBar, type SpeakerBarTile } from '../components/SpeakerBar.js';
@@ -26,6 +29,8 @@ import { livePotTotal } from '../potTotal.js';
 import { seatPositionsFor, seatSizeVars } from '../seatLayout.js';
 import { useActiveSpeakers } from '../useActiveSpeakers.js';
 import { useCameraFit } from '../useCameraFit.js';
+import { useTableLayout } from '../useTableLayout.js';
+import { fakeCameraStream } from '../devFakeCamera.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
 import { useJustRevealedSeats } from '../useJustRevealedSeats.js';
@@ -98,6 +103,17 @@ export function TablePage(): React.JSX.Element {
     }
   });
   const [bottomTab, setBottomTab] = useState<'chat' | 'log'>('chat');
+  // Chat and the hand log start folded into a slim bar (they took a lot of
+  // the screen); open state is remembered per browser.
+  const [dockOpen, setDockOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem('pokerclause.dockOpen') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [lastSeenChatId, setLastSeenChatId] = useState<string | null | undefined>(undefined);
+  const [seatMenu, setSeatMenu] = useState<{ seatId: number; x: number; y: number } | null>(null);
   const [addBotModal, setAddBotModal] = useState<number | null>(null);
   const [botPersona, setBotPersona] = useState(BOT_PERSONAS[0]!.id);
   // Each persona actually added sinks to the bottom of the list — so
@@ -211,12 +227,18 @@ export function TablePage(): React.JSX.Element {
   // players' cameras is for whoever has joined it, plus the owner, who can
   // watch any table's cameras without having to turn on their own.
   const canSeeVideo = voice.inCall || user?.role === 'admin';
+  // Development only (compiled out of production builds): `?fakeCameras=1`
+  // puts a stand-in camera on every occupied seat, bots included — for
+  // checking the layout with a full table on camera.
+  const fakeCameras = import.meta.env.DEV && searchParams.get('fakeCameras') === '1';
   const humanCameraSeats: { seatId: number; displayName: string; stream: MediaStream; isLocal: boolean }[] = [];
   for (const seat of canSeeVideo ? (sock.state?.seats ?? []) : []) {
-    if (seat.status === 'empty' || seat.isBot) continue;
+    if (seat.status === 'empty' || (seat.isBot && !fakeCameras)) continue;
     let stream: MediaStream | null = null;
     let isLocal = false;
-    if (voice.inCall && seat.seatId === sock.state?.viewerSeatId && voice.localStream) {
+    if (fakeCameras) {
+      stream = fakeCameraStream();
+    } else if (voice.inCall && seat.seatId === sock.state?.viewerSeatId && voice.localStream) {
       stream = voice.localStream;
       isLocal = true;
     } else if (seat.playerId) {
@@ -247,6 +269,15 @@ export function TablePage(): React.JSX.Element {
     humanCameraSeats.length,
   );
   const immersiveHiddenCameraSeatIds = useCameraFit(feltRef, immersiveCameraFitActive, cameraPriority, sock.state?.handId ?? null);
+  // Where each seat sits and how big, solved from their measured sizes so
+  // nothing ever overlaps — seats, the board, bets — see useTableLayout.ts.
+  // `positions` (the plain oval) is the first-frame fallback and the ring order.
+  const ringSeatIds = useMemo(() => positions.map((p) => p.seatId), [positions]);
+  const tableLayout = useTableLayout(feltRef, ringSeatIds);
+  const placedPositions = useMemo(
+    () => (tableLayout ? positions.map((p) => ({ ...p, ...(tableLayout.seats.get(p.seatId) ?? {}) })) : positions),
+    [positions, tableLayout],
+  );
   // On a phone, 1-3 human cameras have enough felt space to run noticeably
   // (~20%) bigger tiles than the baseline per-seat-count sizing gives them.
   // Deliberately NOT extended to exactly 4 (the highest count that still
@@ -260,6 +291,40 @@ export function TablePage(): React.JSX.Element {
   // Same hook-ordering constraint as `positions`/`humanCameraSeats` above —
   // sock.state can be null pre-connect.
   const justRevealedSeats = useJustRevealedSeats(sock.latestEvents, sock.state?.board ?? []);
+
+  // The owner's per-seat menu: hold a seat for a second, or right-click it.
+  const seatGesture = useSeatMenuGesture((seatId, x, y) => setSeatMenu({ seatId, x, y }), user?.role === 'admin');
+  // On a phone, during the viewer's turn, the bet overlay's Fold/Call rail
+  // sits in the screen's bottom-left corner — where the full-screen toggle
+  // lives. While it's up, lift the toggle to just above it (measured, since
+  // the rail's height depends on the screen); otherwise it stays put.
+  const [toggleLift, setToggleLift] = useState<number | null>(null);
+  const legalActions = sock.state?.legalActions;
+  useLayoutEffect(() => {
+    const measure = (): void => {
+      const rail = document.querySelector('.bet-overlay-rail--left');
+      const felt = feltRef.current;
+      if (!rail || !felt) {
+        setToggleLift(null);
+        return;
+      }
+      const lift = felt.getBoundingClientRect().bottom - rail.getBoundingClientRect().top + 8;
+      setToggleLift(lift > 8 ? lift : null);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [legalActions, isCompactScreen, immersive.active]);
+  // Open-invite waitlist: chime, vibrate, flash the tab, notify — when a seat is held for this viewer.
+  useSeatOfferAlert(sock.state?.seatOffer ?? null, user?.id ?? '', sock.state?.tableName ?? '');
+  // Chat messages that arrived while the dock was folded (or on the log tab) — the Chat tab's badge.
+  const chatSeen = dockOpen && bottomTab === 'chat';
+  const latestChatId = sock.chat.at(-1)?.id ?? null;
+  useEffect(() => {
+    if (lastSeenChatId === undefined && sock.chatHistoryLoaded) setLastSeenChatId(latestChatId); // the history on arrival counts as read
+    else if (chatSeen && latestChatId !== lastSeenChatId) setLastSeenChatId(latestChatId);
+  }, [chatSeen, latestChatId, lastSeenChatId, sock.chatHistoryLoaded]);
+  const unreadChat = lastSeenChatId === undefined ? 0 : sock.chat.length - 1 - sock.chat.findIndex((m) => m.id === lastSeenChatId);
 
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
@@ -322,6 +387,7 @@ export function TablePage(): React.JSX.Element {
     : null;
 
   const voiceStreamForSeat = (seat: (typeof state.seats)[number]): { stream: MediaStream; isLocal: boolean } | null => {
+    if (fakeCameras && seat.status !== 'empty') return { stream: fakeCameraStream(), isLocal: false };
     if (voice.inCall && seat.seatId === state.viewerSeatId && voice.localStream) {
       return { stream: voice.localStream, isLocal: true };
     }
@@ -393,6 +459,40 @@ export function TablePage(): React.JSX.Element {
     setRebuyModal(seatId);
   };
 
+  const toggleDock = (tab: 'chat' | 'log'): void => {
+    const open = !(dockOpen && bottomTab === tab);
+    setBottomTab(tab);
+    setDockOpen(open);
+    try {
+      window.localStorage.setItem('pokerclause.dockOpen', open ? '1' : '0');
+    } catch {
+      // Storage blocked — it just won't be remembered.
+    }
+  };
+
+  // Open-invite table: whether this viewer can pick a free seat right now —
+  // one is held while the waitlist's first person has an offer out.
+  const offer = state.seatOffer;
+  const freeSeats = state.seats.filter((s) => s.status === 'empty' && !state.removedSeatIds.includes(s.seatId)).length;
+  const openSeatForMe = sock.canTakeSeat && (!offer || offer.userId === user.id || freeSeats > 1);
+
+  /** The owner's per-seat menu — only what makes sense for this seat. */
+  const seatActions = (seat: (typeof state.seats)[number]): SeatAction[] => {
+    const id = seat.seatId;
+    const actions: SeatAction[] = [];
+    if (seat.status === 'empty') {
+      if (!mySeat && !sock.isPractice) actions.push({ label: 'Sit here', onSelect: () => openSeatModal(id) });
+      actions.push({ label: 'Add a computer player', onSelect: () => openAddBotModal(id) });
+      if (!sock.isPractice) actions.push({ label: 'Invite a player to this seat', onSelect: () => openAssignModal(id) });
+    } else {
+      actions.push({ label: seat.isBot ? 'Add chips' : 'Rebuy (add chips)', onSelect: () => openRebuyModal(id, seat.stack, seat.pendingChips) });
+      if (seat.isBot) actions.push({ label: 'Remove computer player', danger: true, onSelect: () => sock.removeBot(id) });
+      else if (seat.seatId !== state.viewerSeatId) actions.push({ label: 'Remove player', danger: true, onSelect: () => void sock.removePlayer(id) });
+    }
+    if (state.seats.length - state.removedSeatIds.length > 2) actions.push({ label: 'Delete seat', danger: true, onSelect: () => void sock.deleteSeat(id) });
+    return actions;
+  };
+
   return (
     <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
       <div className="table-header">
@@ -456,14 +556,33 @@ export function TablePage(): React.JSX.Element {
         <WaitlistPanel
           waitlist={state.waitlist}
           myUserId={user.id}
-          canJoin={!mySeat}
-          onJoin={() => sock.joinWaitlist()}
+          // On an open-invite table the queue is for people who came with its link — not the owner, who seats themselves.
+          canJoin={!mySeat && (!state.settings.openSeating || (sock.canTakeSeat && user.role !== 'admin'))}
+          onJoin={() => {
+            requestSeatAlerts();
+            sock.joinWaitlist();
+          }}
           onLeave={() => sock.leaveWaitlist()}
         />
       )}
+      {state.seatOffer && <SeatOfferBanner offer={state.seatOffer} myUserId={user.id} amSeated={!!mySeat} />}
+      {state.settings.openSeating && !mySeat && sock.canTakeSeat && user.role !== 'admin' && freeSeats > 0 && !state.seatOffer && (
+        <div className="seat-offer-banner">Pick any empty seat to sit down.</div>
+      )}
 
-      <div ref={feltRef} className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`} style={seatSizeVars(positions.length)}>
-        <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} />
+      <div
+        ref={feltRef}
+        className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`}
+        style={
+          {
+            ...seatSizeVars(positions.length),
+            '--fit-scale': String(tableLayout?.scale ?? 1),
+            '--board-scale': String(tableLayout?.boardScale ?? 1),
+            ...(tableLayout?.minFeltHeight ? { minHeight: tableLayout.minFeltHeight } : {}),
+          } as React.CSSProperties
+        }
+      >
+        <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} top={tableLayout?.boardTop} />
         {state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
             Fairness commitment: {state.handCommitment.slice(0, 12)}&hellip;
@@ -486,6 +605,7 @@ export function TablePage(): React.JSX.Element {
         <button
           type="button"
           className={`immersive-toggle${!immersive.active && !fullScreenDiscovered ? ' immersive-toggle--attention' : ''}`}
+          style={toggleLift !== null ? { bottom: toggleLift } : undefined}
           onClick={() => {
             if (!fullScreenDiscovered) {
               setFullScreenDiscovered(true);
@@ -501,8 +621,8 @@ export function TablePage(): React.JSX.Element {
         >
           {immersive.active ? '⤡ Exit full screen' : '⛶ Full screen'}
         </button>
-        <DealAnimation events={sock.latestEvents} positions={positions} />
-        <WinCelebration events={sock.latestEvents} positions={positions} viewerSeatId={state.viewerSeatId} />
+        <DealAnimation events={sock.latestEvents} positions={placedPositions} />
+        <WinCelebration events={sock.latestEvents} positions={placedPositions} viewerSeatId={state.viewerSeatId} />
         {state.phase !== 'in-hand' && (
           <HandBreakPanel
             nextHandAt={state.nextHandAt}
@@ -511,16 +631,17 @@ export function TablePage(): React.JSX.Element {
             onStartHand={() => sock.startHand()}
           />
         )}
-        {positions.map(({ seatId, left, top, betLeft, betTop }) => {
+        {placedPositions.map(({ seatId, left, top, betLeft, betTop }) => {
           const seat = state.seats.find((s) => s.seatId === seatId);
           if (!seat) return null;
           return (
             <Fragment key={seatId}>
               <div
-                className="seat-slot"
+                className={`seat-slot${user.role === 'admin' ? ' seat-slot-owner' : ''}`}
                 data-testid={`seat-${String(seatId)}`}
                 data-seat-status={seat.status}
                 style={{ left: `${String(left)}%`, top: `${String(top)}%` }}
+                {...seatGesture(seatId)}
               >
                 <Seat
                   seat={seat}
@@ -541,7 +662,9 @@ export function TablePage(): React.JSX.Element {
                   // full stop — see DECISIONS.md. Nobody but its own
                   // player ever sits at a practice table.
                   onEmptySeatClick={
-                    (user.role === 'admin' || sock.canManageTable) && !sock.isPractice && !mySeat && seat.status === 'empty' ? () => openSeatModal(seatId) : undefined
+                    (user.role === 'admin' || sock.canManageTable || openSeatForMe) && !sock.isPractice && !mySeat && seat.status === 'empty'
+                      ? () => openSeatModal(seatId)
+                      : undefined
                   }
                   onAddBotClick={
                     (user.role === 'admin' || sock.canManageTable) && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined
@@ -599,19 +722,42 @@ export function TablePage(): React.JSX.Element {
 
       {sock.lastError && sock.lastError.code !== 'INVALID_INVITE_CODE' && <div className="error-banner">{sock.lastError.message}</div>}
 
-      <div className="bottom-tabs">
-        <button type="button" className={bottomTab === 'chat' ? 'active' : ''} onClick={() => setBottomTab('chat')}>
-          Chat
-        </button>
-        <button type="button" className={bottomTab === 'log' ? 'active' : ''} onClick={() => setBottomTab('log')}>
-          Hand log
-        </button>
+      <div className={`bottom-dock${dockOpen ? ' bottom-dock-open' : ''}`}>
+        <div className="bottom-tabs">
+          {(['chat', 'log'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              className={dockOpen && bottomTab === tab ? 'active' : ''}
+              aria-expanded={dockOpen && bottomTab === tab}
+              onClick={() => toggleDock(tab)}
+            >
+              {tab === 'chat' ? 'Chat' : 'Hand log'}
+              {tab === 'chat' && unreadChat > 0 && <span className="bottom-tab-badge">{unreadChat > 99 ? '99+' : unreadChat}</span>}
+            </button>
+          ))}
+          <button type="button" className="bottom-dock-toggle" aria-label={dockOpen ? 'Hide chat and hand log' : 'Show chat and hand log'} onClick={() => toggleDock(bottomTab)}>
+            {dockOpen ? '▾' : '▴'}
+          </button>
+        </div>
+        {dockOpen &&
+          (bottomTab === 'chat' ? <ChatPanel messages={sock.chat} onSend={sock.sendChat} /> : <ActionLog events={sock.recentEvents} seats={state.seats} />)}
       </div>
-      {bottomTab === 'chat' ? (
-        <ChatPanel messages={sock.chat} onSend={sock.sendChat} />
-      ) : (
-        <ActionLog events={sock.recentEvents} seats={state.seats} />
-      )}
+
+      {seatMenu &&
+        (() => {
+          const seat = state.seats.find((s) => s.seatId === seatMenu.seatId);
+          if (!seat) return null;
+          return (
+            <SeatActionMenu
+              x={seatMenu.x}
+              y={seatMenu.y}
+              title={seat.status === 'empty' ? `Seat ${String(seat.seatId + 1)} — empty` : (seat.displayName ?? `Seat ${String(seat.seatId + 1)}`)}
+              actions={seatActions(seat)}
+              onClose={() => setSeatMenu(null)}
+            />
+          );
+        })()}
 
       {ownerMenuOpen && canManageLayout && tableId && (
         <OwnerMenu

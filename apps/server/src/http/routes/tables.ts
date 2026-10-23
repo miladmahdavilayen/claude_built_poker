@@ -43,12 +43,14 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
     const wait = inviteLockout.retryAfterMs(req.ip);
     if (wait > 0) return reply.code(429).send(lockedOutReply(wait));
     const { token } = req.params as { token: string };
-    const table = token.length <= 64 ? registry.tableForInvite(token) : null;
-    if (!table) {
+    const seatInvite = token.length <= 64 ? registry.tableForInvite(token) : null;
+    // An open-invite table's shareable code works here too, and opens the table with it.
+    const openTable = !seatInvite && token.length <= 64 ? registry.tableForOpenCode(token) : null;
+    if (!seatInvite && !openTable) {
       inviteLockout.recordFailure(req.ip);
       return reply.code(404).send({ code: 'INVALID_ASSIGNMENT', message: 'This invitation is invalid or has already been used.' });
     }
-    return { tableId: table.tableId };
+    return seatInvite ? { tableId: seatInvite.tableId } : { tableId: openTable!.tableId, code: token };
   });
 
   app.post('/tables/practice', { preHandler: requireAuth }, async (req, reply) => {
@@ -88,10 +90,13 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
       rakePercent: input.rakePercent,
       rakeCap: input.rakeCap,
       noFlopNoDrop: input.noFlopNoDrop,
-      isPrivate: input.isPrivate,
+      // An open-invite table is always private: only its link gets anyone in.
+      isPrivate: input.isPrivate || input.openSeating,
       disableChatInHand: input.disableChatInHand,
+      ...(input.openSeating ? { openSeating: true } : {}),
     };
-    const inviteCode = input.isPrivate ? randomBytes(4).toString('hex') : null;
+    // A shareable link goes to group chats: its code is 96 random bits, not 32.
+    const inviteCode = input.openSeating ? randomBytes(12).toString('base64url') : input.isPrivate ? randomBytes(4).toString('hex') : null;
     const table = await registry.createTable(input.name, settings, req.userId ?? null, inviteCode);
     reply.code(201);
     return { tableId: table.tableId, name: table.name, settings: table.settings, inviteCode };

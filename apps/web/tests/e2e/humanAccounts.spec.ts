@@ -59,7 +59,7 @@ test('the landing page offers an invitation or an access key — the key gates G
   await page.getByRole('button', { name: '← Back' }).click();
 
   await page.locator('.admin-login-trigger').click();
-  await expect(page.getByLabel('Email')).toBeVisible();
+  await expect(page.getByLabel('Email or username')).toBeVisible();
   await expect(page.getByLabel('Password')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Log in' })).toBeVisible();
 });
@@ -68,7 +68,7 @@ test('profile page shows only registration info, and never offers to delete the 
   await adminLogin(page);
   await page.goto('/profile');
   await expect(page.getByText('My profile')).toBeVisible();
-  await expect(page.locator('.profile-fields')).toContainText('admin@pokerclause.local');
+  await expect(page.locator('.profile-fields')).toContainText('admin');
   await expect(page.locator('.profile-fields')).toContainText('Email and password');
   await expect(page.getByText('Balance', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Delete my account' })).toHaveCount(0);

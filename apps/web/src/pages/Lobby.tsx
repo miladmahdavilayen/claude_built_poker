@@ -189,8 +189,10 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
   const maxBuyIn = maxBuyInOverride ?? bb * 100;
   const [maxSeats, setMaxSeats] = useState(6);
   const [isPrivate, setIsPrivate] = useState(false);
+  const [openSeating, setOpenSeating] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ tableId: string; inviteCode: string | null } | null>(null);
+  const [created, setCreated] = useState<{ tableId: string; inviteCode: string | null; open: boolean } | null>(null);
   const navigate = useNavigate();
 
   const submit = (): void => {
@@ -203,8 +205,8 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
       return;
     }
     api
-      .createTable({ name, smallBlind, bigBlind, maxSeats, isPrivate, minBuyIn, maxBuyIn }, accessToken)
-      .then((res) => setCreated({ tableId: res.tableId, inviteCode: res.inviteCode }))
+      .createTable({ name, smallBlind, bigBlind, maxSeats, isPrivate: isPrivate || openSeating, openSeating, minBuyIn, maxBuyIn }, accessToken)
+      .then((res) => setCreated({ tableId: res.tableId, inviteCode: res.inviteCode, open: openSeating }))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to create table.'));
   };
 
@@ -218,8 +220,20 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
           <h3>Table created</h3>
           {created.inviteCode && (
             <>
-              <p>Share this link — only people with it can join.</p>
-              <input readOnly value={link} onClick={(e) => e.currentTarget.select()} />
+              <p>
+                {created.open
+                  ? 'Share this link — in a group chat, anywhere. Anyone who opens it can grab a free seat, or join the waitlist when it’s full.'
+                  : 'Share this link — only people with it can join.'}
+              </p>
+              <input readOnly aria-label="Table link" value={link} onClick={(e) => e.currentTarget.select()} />
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(link).then(() => setCopied(true));
+                }}
+              >
+                {copied ? 'Copied ✓' : 'Copy link'}
+              </button>
             </>
           )}
           <div className="modal-actions">
@@ -266,7 +280,11 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
           <input type="number" min={2} max={9} value={maxSeats} onChange={(e) => setMaxSeats(Number(e.target.value))} />
         </label>
         <label className="checkbox-label">
-          <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+          <input type="checkbox" checked={openSeating} onChange={(e) => setOpenSeating(e.target.checked)} />
+          Open invite link &mdash; one link for everyone; whoever has it picks a free seat or joins the waitlist
+        </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={isPrivate || openSeating} disabled={openSeating} onChange={(e) => setIsPrivate(e.target.checked)} />
           Private (invite-only, hidden from the lobby list)
         </label>
         <div className="modal-actions">

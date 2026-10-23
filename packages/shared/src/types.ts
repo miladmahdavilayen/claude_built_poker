@@ -11,6 +11,19 @@ export interface TableSettings extends TableConfig {
   noFlopNoDrop: boolean;
   isPrivate: boolean;
   disableChatInHand: boolean;
+  /**
+   * An open-invite table: anyone holding its link (`?code=` — see
+   * apps/server's open-invite tables) can pick a free seat themselves, or
+   * join the waitlist when it's full. Absent on every other table.
+   */
+  openSeating?: boolean;
+}
+
+/** On an open-invite table, a free seat held for the first person on the waitlist until `expiresAt` (epoch ms). */
+export interface SeatOffer {
+  userId: string;
+  displayName: string;
+  expiresAt: number;
 }
 
 export interface WaitlistEntry {
@@ -132,4 +145,6 @@ export interface ProjectedTableState {
   removedSeatIds: readonly number[];
   /** Blind/ante/straddle changes queued for the next hand, or null. `settings` always shows what's in force right now. */
   pendingSettings: PendingTableSettings | null;
+  /** On an open-invite table: the free seat currently held for the waitlist's first person, or null. */
+  seatOffer: SeatOffer | null;
 }

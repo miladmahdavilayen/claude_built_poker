@@ -1,7 +1,7 @@
 import type { GameEvent, TableState } from '@pokerclause/engine';
 import { getLegalActions } from '@pokerclause/engine';
 import type { ProjectedGameEvent } from './events.js';
-import type { PendingTableSettings, ProjectedSeat, ProjectedTableState, TableSettings, WaitlistEntry } from './types.js';
+import type { PendingTableSettings, ProjectedSeat, ProjectedTableState, SeatOffer, TableSettings, WaitlistEntry } from './types.js';
 
 export interface SeatMeta {
   playerId: string | null;
@@ -41,6 +41,7 @@ export interface ProjectionContext {
   waitlist: readonly WaitlistEntry[];
   removedSeatIds?: readonly number[];
   pendingSettings?: PendingTableSettings | null;
+  seatOffer?: SeatOffer | null;
 }
 
 const EMPTY_SEAT_META: SeatMeta = {
@@ -148,6 +149,7 @@ export function projectStateForSeat(
     waitlist: ctx.waitlist,
     removedSeatIds: ctx.removedSeatIds ?? [],
     pendingSettings: ctx.pendingSettings ?? null,
+    seatOffer: ctx.seatOffer ?? null,
   };
 }
 

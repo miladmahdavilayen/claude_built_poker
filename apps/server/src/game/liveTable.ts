@@ -25,6 +25,7 @@ import {
   type SeatMeta,
   type TableSettings,
   type UpdateTableSettingsIntent,
+  type SeatOffer,
   type WaitlistEntry,
 } from '@pokerclause/shared';
 import { ALL_BOT_POLICIES, projectSeatView, type BotPolicy } from '@pokerclause/sim';
@@ -38,6 +39,11 @@ import { GameBook, type PlayerKind } from './gameBook.js';
  * probe engine edge cases (pinned-to-the-boundary raises, chained short
  * all-ins), not a fun or legible opponent for a casual game.
  */
+/** How long a free seat is held for the waitlist's first person on an open-invite table. Env-overridable for tests. */
+export function seatOfferMs(): number {
+  return Number(process.env.SEAT_OFFER_MS ?? 60_000);
+}
+
 export const SELECTABLE_BOT_POLICIES: readonly BotPolicy[] = ALL_BOT_POLICIES.filter((p) => p.name !== 'adversarial');
 
 // Deliberately single-word — this is what actually renders on a seat
@@ -179,6 +185,8 @@ export class LiveTable {
   private clockTimer: ReturnType<typeof setTimeout> | null = null;
   private nextHandTimer: ReturnType<typeof setTimeout> | null = null;
   private waitlist: WaitlistEntry[] = [];
+  /** Open-invite tables only: the free seat held for the waitlist's first person — see syncSeatOffer. */
+  private seatOffer: SeatOffer | null = null;
   /** token -> pending owner-generated seat assignment. See createSeatAssignment/redeemSeatAssignment. */
   private readonly seatAssignments = new Map<string, { seatId: number; buyIn: number; ownerNickname: string | null }>();
   private botMoveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -644,6 +652,59 @@ export class LiveTable {
   /** The settings as they'll be once anything pending applies — what gets persisted. */
   get targetSettings(): TableSettings {
     return { ...this.settings, ...this.pendingSettings };
+  }
+
+  /** An open-invite table: anyone with its link picks their own seat (see socketServer.ts). */
+  get openSeating(): boolean {
+    return this.settings.openSeating === true;
+  }
+
+  /** Seats someone could sit down in right now. */
+  freeSeatCount(): number {
+    return this.state.seats.filter((s) => this.checkSeatUsable(s.seatId).ok).length;
+  }
+
+  /** On an open-invite table: whether this user may take a free seat now — while a seat is held for the waitlist's first person, everyone else can only take the others. */
+  canTakeOpenSeat(userId: string): boolean {
+    if (!this.seatOffer || this.seatOffer.userId === userId) return true;
+    return this.freeSeatCount() > 1;
+  }
+
+  get currentSeatOffer(): SeatOffer | null {
+    return this.seatOffer;
+  }
+
+  /**
+   * The open-invite waitlist, kept fair: whenever a seat is free and people
+   * are waiting, one free seat is held for whoever is first in line, for
+   * SEAT_OFFER_MS — their browser alerts them (see the web Table page). If
+   * they don't take it in time they drop off the list and the next person
+   * gets it. Called after anything that can free or fill a seat, or change
+   * the queue; returns whether the offer changed (so the caller broadcasts).
+   */
+  syncSeatOffer(): boolean {
+    const before = this.seatOffer;
+    const now = this.callbacks.now();
+    if (!this.openSeating) {
+      this.seatOffer = null;
+    } else {
+      const offer = this.seatOffer;
+      if (offer) {
+        const stillWaiting = this.waitlist.some((w) => w.userId === offer.userId);
+        if (!stillWaiting || this.seatOfUser(offer.userId) !== null || this.freeSeatCount() === 0) {
+          this.seatOffer = null;
+        } else if (now >= offer.expiresAt) {
+          // Missed it: off the list, and the seat goes to the next person.
+          this.removeFromWaitlist(offer.userId);
+          this.seatOffer = null;
+        }
+      }
+      const first = this.waitlist[0];
+      if (!this.seatOffer && first && this.freeSeatCount() > 0) {
+        this.seatOffer = { userId: first.userId, displayName: first.displayName, expiresAt: now + seatOfferMs() };
+      }
+    }
+    return this.seatOffer !== before;
   }
 
   joinWaitlist(userId: string, displayName: string): { ok: true } | { ok: false; code: string; message: string } {
@@ -1450,6 +1511,7 @@ export class LiveTable {
         rakePot: 0,
         removedSeatIds: [...this.removedSeatIds].sort((a, b) => a - b),
         pendingSettings: this.pendingSettings,
+        seatOffer: this.seatOffer,
       },
       viewerSeatId,
       viewerIsAdmin,

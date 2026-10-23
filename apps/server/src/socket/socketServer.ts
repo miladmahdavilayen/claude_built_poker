@@ -185,12 +185,7 @@ export function attachSocketServer(
   async function settleVacatedSeats(table: LiveTable, vacated: readonly VacatedSeat[]): Promise<void> {
     for (const v of vacated) evictSeatToSpectator(io, table.tableId, v.seatId);
     for (const v of vacated) {
-      if (!v.userId || v.refund <= 0) continue;
-      await deps.store.adjustUserChips(v.userId, v.refund);
-      await deps.store.recordLedgerEntries([
-        { userId: v.userId, isHouse: false, amount: v.refund, reason: 'cash_out', tableId: table.tableId },
-        { userId: null, isHouse: true, amount: -v.refund, reason: 'cash_out', tableId: table.tableId },
-      ]);
+      if (v.userId) await cashOut(table, v.userId, v.refund);
     }
     if (table.isPractice && vacated.some((v) => v.userId) && !table.seats.some((s) => s.userId !== null)) {
       await closeTableWithNotice(table.tableId, 'All players left.');
@@ -246,14 +241,7 @@ export function attachSocketServer(
     // the table (and its in-memory book) goes away.
     await table.closeBook(bookReason ?? (reason === 'All players left.' ? 'everyone left the table' : 'table terminated by the owner'));
     const humanSeats = table.seats.filter((s) => s.userId !== null);
-    for (const seat of humanSeats) {
-      const amount = table.voidedHandRefund(seat.seatId);
-      await deps.store.adjustUserChips(seat.userId!, amount);
-      await deps.store.recordLedgerEntries([
-        { userId: seat.userId, isHouse: false, amount, reason: 'cash_out', tableId },
-        { userId: null, isHouse: true, amount: -amount, reason: 'cash_out', tableId },
-      ]);
-    }
+    for (const seat of humanSeats) await cashOut(table, seat.userId!, table.voidedHandRefund(seat.seatId));
     const rooms = [spectatorRoom(tableId), ...humanSeats.map((s) => seatRoom(tableId, s.seatId))];
     for (const room of rooms) io.to(room).emit('table-closed', { reason });
     await registry.close(tableId, keepOpen);
@@ -383,6 +371,36 @@ export function attachSocketServer(
    * so the owner's invite link or rebuy IS their money. Recorded as an
    * 'admin_adjust' from the house, the same way the starting grant is.
    */
+  /**
+   * Pays a seat's chips back into its player's balance (ledgered) — and, for
+   * a guest, remembers them as what they left this table with: coming back
+   * by the same link, they sit down with exactly that (see sitAmountForGuest).
+   */
+  async function cashOut(table: LiveTable, userId: string, amount: number): Promise<void> {
+    if (amount > 0) {
+      await deps.store.adjustUserChips(userId, amount);
+      await deps.store.recordLedgerEntries([
+        { userId, isHouse: false, amount, reason: 'cash_out', tableId: table.tableId },
+        { userId: null, isHouse: true, amount: -amount, reason: 'cash_out', tableId: table.tableId },
+      ]);
+    }
+    if (table.isPractice) return;
+    const user = await deps.store.findUserById(userId);
+    if (user?.isGuest) await deps.store.setGuestStack(userId, table.tableId, amount);
+  }
+
+  /**
+   * What a guest sits down with: what they left this table with, if they've
+   * been here before — otherwise `fresh` (an open-invite table's starting
+   * chips, or a seat invite's amount). Null when they left with nothing.
+   */
+  async function sitAmountForGuest(table: LiveTable, userId: string, fresh: number): Promise<number | null> {
+    const kept = await deps.store.getGuestStack(userId, table.tableId);
+    if (kept === null) return fresh;
+    return kept > 0 ? kept : null;
+  }
+  const OUT_OF_CHIPS = { ok: false as const, code: 'OUT_OF_CHIPS', message: 'You left this table with no chips — ask the table owner to seat you with more.' };
+
   async function grantFromOwner(userId: string, amount: number, tableId: string): Promise<void> {
     await deps.store.adjustUserChips(userId, amount);
     await deps.store.recordLedgerEntries([
@@ -622,14 +640,22 @@ export function attachSocketServer(
       if (table.seatOfUser(data.userId) !== null) {
         return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
       }
-      const { buyIn, seatId } = parsed.data;
-      const range = table.checkBuyInRange(buyIn);
-      if (!range.ok) return emitError(range.code, range.message);
+      const { seatId } = parsed.data;
+      // A guest by an open-invite link doesn't choose a buy-in: they sit
+      // with the table's starting chips the first time, and with whatever
+      // they left with after that (see sitAmountForGuest).
+      const openGuest = openSeat && data.isGuest && table.settings.openSeatStack !== undefined;
+      if (!openGuest) {
+        const range = table.checkBuyInRange(parsed.data.buyIn);
+        if (!range.ok) return emitError(range.code, range.message);
+      }
       const userId = data.userId;
       const { displayName } = parsed.data;
       void (displayName ? deps.store.updateDisplayName(userId, displayName) : Promise.resolve())
-        .then(() => {
+        .then(async () => {
           if (displayName) data.displayName = displayName;
+          const buyIn = openGuest ? await sitAmountForGuest(table, userId, table.settings.openSeatStack!) : parsed.data.buyIn;
+          if (buyIn === null) return OUT_OF_CHIPS;
           // A guest's buy-in is play money that vanishes with the session, so
           // the owner covers whatever they're short; a signed-in player pays
           // from their own balance (covering them would let them cash the
@@ -661,11 +687,13 @@ export function attachSocketServer(
       const userId = data.userId;
       // The owner chose this seat AND this amount — anything the invitee
       // can't cover from their own balance is covered by the owner, so an
-      // invite always seats them (a $0 Google account used to be bounced
-      // with INSUFFICIENT_CHIPS, its single-use link already spent).
-      void performTakeSeat(table, socket, userId, redeemed.seatId, redeemed.buyIn, redeemed.ownerNickname, true).then((result) => {
+      // invite always seats them. Coming back by it, they sit with what they
+      // left with instead (see sitAmountForGuest).
+      void (async () => {
+        const buyIn = redeemed.returning ? await sitAmountForGuest(table, userId, redeemed.buyIn) : redeemed.buyIn;
+        const result = buyIn === null ? OUT_OF_CHIPS : await performTakeSeat(table, socket, userId, redeemed.seatId, buyIn, redeemed.ownerNickname, true);
         if (!result.ok) emitError(result.code, result.message);
-      });
+      })();
     });
 
     socket.on('assign-seat', (raw: unknown, callback?: (result: { ok: true; token: string } | { ok: false; code: string; message: string }) => void): void => {
@@ -842,13 +870,7 @@ export function attachSocketServer(
           // evictSeatToSpectator's doc comment for why that matters.
           void socket.leave(seatRoom(table.tableId, seatId));
           void socket.join(spectatorRoom(table.tableId));
-          if (result) {
-            await deps.store.adjustUserChips(result.userId, result.stack);
-            await deps.store.recordLedgerEntries([
-              { userId: result.userId, isHouse: false, amount: result.stack, reason: 'cash_out', tableId: table.tableId },
-              { userId: null, isHouse: true, amount: -result.stack, reason: 'cash_out', tableId: table.tableId },
-            ]);
-          }
+          if (result) await cashOut(table, result.userId, result.stack);
           // Only a practice table ends when its player leaves (and is
           // deleted). Every real table — the default ones above all — stays
           // in the lobby, empty or not, until the owner terminates it. With
@@ -883,13 +905,7 @@ export function attachSocketServer(
       const previousSeatIds = table.seats.filter((s) => s.userId !== null).map((s) => s.seatId);
       void (async () => {
         const refunds = table.resetTable();
-        for (const r of refunds) {
-          await deps.store.adjustUserChips(r.userId, r.stack);
-          await deps.store.recordLedgerEntries([
-            { userId: r.userId, isHouse: false, amount: r.stack, reason: 'cash_out', tableId: table.tableId },
-            { userId: null, isHouse: true, amount: -r.stack, reason: 'cash_out', tableId: table.tableId },
-          ]);
-        }
+        for (const r of refunds) await cashOut(table, r.userId, r.stack);
         // Every previously-seated player's socket is still in its old
         // (now-empty) seat room unless it explicitly left — move it to
         // the spectator room so it keeps receiving updates, then push
@@ -975,7 +991,7 @@ export function attachSocketServer(
       if (!engineSeat || !liveSeat || engineSeat.status === 'empty') return emitError('SEAT_EMPTY', 'That seat has no player to rebuy.');
       if (liveSeat.pendingRemoval) return emitError('CANNOT_REBUY', 'That player is leaving after this hand.');
       const cappedAmount = Math.min(amount, table.rebuyHeadroom(seatId));
-      if (cappedAmount <= 0) return emitError('CANNOT_REBUY', 'That seat is already at the maximum buy-in.');
+      if (cappedAmount <= 0) return emitError('CANNOT_REBUY', 'That seat already holds the most chips a player can have.');
       // A computer player's chips aren't anyone's balance — nothing to debit.
       if (!liveSeat.userId) {
         table.addChips(seatId, cappedAmount);

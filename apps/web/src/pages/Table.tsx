@@ -470,7 +470,8 @@ export function TablePage(): React.JSX.Element {
   };
 
   const openRebuyModal = (seatId: number, currentStack: number, pendingChips = 0): void => {
-    setRebuyAmount(Math.max(0, state.settings.maxBuyIn - currentStack - pendingChips));
+    // A top-up back to the table's usual stack — the owner can enter any amount.
+    setRebuyAmount(Math.max(state.settings.bigBlind, (state.settings.openSeatStack ?? state.settings.maxBuyIn) - currentStack - pendingChips));
     setRebuyModal(seatId);
   };
 
@@ -508,6 +509,38 @@ export function TablePage(): React.JSX.Element {
     return actions;
   };
 
+  // On a phone the felt can't spare a corner for it — the button lives in
+  // the header bar instead, clear of every seat. In full screen the header
+  // is hidden, so its "exit" button sits on the felt (a small corner icon
+  // the table layout steers seats around — see useTableLayout.ts).
+  const fullScreenInHeader = isCompactScreen && !immersive.active;
+  const fullScreenButton = (where: 'felt' | 'header'): React.JSX.Element => (
+    <button
+      type="button"
+      className={`immersive-toggle${where === 'header' ? ' immersive-toggle--header' : ''}${!immersive.active && !fullScreenDiscovered ? ' immersive-toggle--attention' : ''}`}
+      style={where === 'felt' && toggleLift !== null ? { bottom: toggleLift } : undefined}
+      onClick={() => {
+        if (!fullScreenDiscovered) {
+          setFullScreenDiscovered(true);
+          try {
+            window.localStorage.setItem('pokerclause.fullScreenUsed', '1');
+          } catch {
+            // Storage unavailable — it simply pulses again next visit.
+          }
+        }
+        immersive.toggle();
+      }}
+      title={immersive.active ? 'Show the rest of the page' : 'Hide the rest of the page while playing'}
+      aria-label={immersive.active ? 'Exit full screen' : 'Full screen'}
+    >
+      <span aria-hidden="true">{immersive.active ? '⤡' : '⛶'}</span>
+      {/* Words on a roomy screen; just the icon on a phone, where the felt can't spare the space. */}
+      <span className="immersive-toggle-label" aria-hidden="true">
+        {immersive.active ? ' Exit full screen' : ' Full screen'}
+      </span>
+    </button>
+  );
+
   return (
     <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
       <div className="table-header">
@@ -541,6 +574,7 @@ export function TablePage(): React.JSX.Element {
               Leave table
             </button>
           )}
+          {fullScreenInHeader && fullScreenButton('header')}
           {canManageLayout && (
             <button type="button" className="owner-menu-toggle" aria-label="Table menu" title="Table controls" onClick={() => setOwnerMenuOpen(true)}>
               <span aria-hidden="true">☰</span> Menu
@@ -616,25 +650,7 @@ export function TablePage(): React.JSX.Element {
             ActionTimer.tsx's own fix was written to eliminate — see its
             doc comment and DECISIONS.md. */}
         <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
-        <button
-          type="button"
-          className={`immersive-toggle${!immersive.active && !fullScreenDiscovered ? ' immersive-toggle--attention' : ''}`}
-          style={toggleLift !== null ? { bottom: toggleLift } : undefined}
-          onClick={() => {
-            if (!fullScreenDiscovered) {
-              setFullScreenDiscovered(true);
-              try {
-                window.localStorage.setItem('pokerclause.fullScreenUsed', '1');
-              } catch {
-                // Storage unavailable — it simply pulses again next visit.
-              }
-            }
-            immersive.toggle();
-          }}
-          title={immersive.active ? 'Show the rest of the page' : 'Hide the rest of the page while playing'}
-        >
-          {immersive.active ? '⤡ Exit full screen' : '⛶ Full screen'}
-        </button>
+        {!fullScreenInHeader && fullScreenButton('felt')}
         <DealAnimation events={sock.latestEvents} positions={placedPositions} />
         <WinCelebration events={sock.latestEvents} positions={placedPositions} viewerSeatId={state.viewerSeatId} />
         {state.phase !== 'in-hand' && (
@@ -672,7 +688,7 @@ export function TablePage(): React.JSX.Element {
                   // they created (sock.canManageTable — see
                   // socketServer.ts's canManageTable and its own doc
                   // comment). Inviting another real human (onAssignHumanClick)
-                  // and rebuying (onRebuyClick) stay admin-only everywhere,
+                  // and rebuying (the seat's hold/right-click menu) stay admin-only everywhere,
                   // full stop — see DECISIONS.md. Nobody but its own
                   // player ever sits at a practice table.
                   onEmptySeatClick={
@@ -686,17 +702,6 @@ export function TablePage(): React.JSX.Element {
                   onAssignHumanClick={user.role === 'admin' && !sock.isPractice && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
                   // Owner-only, like every table control (the server rejects anyone else).
                   onRemoveBotClick={seat.isBot && canManage ? () => sock.removeBot(seatId) : undefined}
-                  // Hidden in full screen / immersive mode — it renders as a
-                  // corner overlay on the seat's video tile, which in
-                  // immersive mode is the player's whole visible camera and
-                  // the button ends up covering their face. Exiting full
-                  // screen brings it back; the owner can still rebuy anyone
-                  // that way. See DECISIONS.md.
-                  onRebuyClick={
-                    user.role === 'admin' && !seat.isBot && seat.status !== 'empty' && !immersive.active
-                      ? () => openRebuyModal(seatId, seat.stack, seat.pendingChips)
-                      : undefined
-                  }
                 />
               </div>
               {seat.status !== 'empty' && seat.committedThisStreet > 0 && (
@@ -816,11 +821,21 @@ export function TablePage(): React.JSX.Element {
               Display name
               <input type="text" maxLength={24} value={seatDisplayName} onChange={(e) => setSeatDisplayName(e.target.value)} />
             </label>
-            <label>
-              Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
-              <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={buyIn} onChange={setBuyIn} />
-            </label>
-            <p>Your chips: {formatChips(user.chips)}</p>
+            {/* A guest by an open-invite link doesn't choose: the server seats them with the table's starting chips, or what they left with. */}
+            {state.settings.openSeating && state.settings.openSeatStack !== undefined && user.isGuest ? (
+              <p data-testid="open-seat-stack">
+                You&rsquo;ll sit with <strong>{formatChips(state.settings.openSeatStack)}</strong> in starting chips &mdash; or, if you&rsquo;ve played here
+                before, the chips you left with.
+              </p>
+            ) : (
+              <>
+                <label>
+                  Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
+                  <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={buyIn} onChange={setBuyIn} />
+                </label>
+                <p>Your chips: {formatChips(user.chips)}</p>
+              </>
+            )}
             <div className="modal-actions">
               <button type="button" onClick={() => setSeatModal(null)}>
                 Cancel

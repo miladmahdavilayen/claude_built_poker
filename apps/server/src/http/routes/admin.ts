@@ -10,7 +10,7 @@ import {
 import { archiveAndDeleteUser } from '../../auth/accountDeletion.js';
 import { normalizeEmailKey } from '../../auth/authService.js';
 import { generateSignupKey, hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
-import type { PlayerGameRecord, SignedWaiverSummary, SignupKeyRecord } from '../../db/store.js';
+import type { GuestPlayerRecord, PlayerGameRecord, SignedWaiverSummary, SignupKeyRecord } from '../../db/store.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Store } from '../../db/store.js';
 import type { TableRegistry } from '../../game/tableRegistry.js';
@@ -33,6 +33,23 @@ function waiverDto(w: SignedWaiverSummary) {
 
 function gameDto(g: PlayerGameRecord) {
   return { ...g, startedAt: g.startedAt.toISOString(), endedAt: g.endedAt?.toISOString() ?? null };
+}
+
+/** A guest's record for the dashboard — never the hash of their browser's key. */
+function guestDto(g: GuestPlayerRecord) {
+  return {
+    id: g.id,
+    displayName: g.displayName,
+    adminNickname: g.adminNickname,
+    inviteKind: g.inviteKind,
+    tableId: g.tableId,
+    tableName: g.tableName,
+    joinedAt: g.joinedAt.toISOString(),
+    ipAddress: g.ipAddress,
+    userAgent: g.userAgent,
+    termsVersion: g.termsVersion,
+    termsAcceptedAt: g.termsAcceptedAt.toISOString(),
+  };
 }
 
 function keyDto(k: SignupKeyRecord) {
@@ -263,7 +280,7 @@ export function registerAdminRoutes(
 
   app.get('/admin/guests', { preHandler: requireAdmin }, async () => {
     const guests = await store.listGuestPlayers();
-    return { guests: guests.map((g) => ({ ...g, joinedAt: g.joinedAt.toISOString(), termsAcceptedAt: g.termsAcceptedAt.toISOString() })) };
+    return { guests: guests.map(guestDto) };
   });
 
   app.get('/admin/guests/:id', { preHandler: requireAdmin }, async (req, reply) => {
@@ -271,7 +288,7 @@ export function registerAdminRoutes(
     const guest = await store.getGuestPlayer(id);
     if (!guest) return reply.code(404).send({ code: 'GUEST_NOT_FOUND', message: 'Guest not found.' });
     const games = await store.gameHistoryForUser(guest.id);
-    return { ...guest, joinedAt: guest.joinedAt.toISOString(), termsAcceptedAt: guest.termsAcceptedAt.toISOString(), games: games.map(gameDto) };
+    return { ...guestDto(guest), games: games.map(gameDto) };
   });
 
   // --- Deleted accounts: everything about a registered player's account

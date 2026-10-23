@@ -202,6 +202,31 @@ export class DrizzleStore implements Store {
     if (key) await this.db.update(schema.users).set({ accessKeyLabel: key.label }).where(eq(schema.users.id, userId));
   }
 
+  async getGuestStack(guestId: string, tableId: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ chips: schema.guestStacks.chips })
+      .from(schema.guestStacks)
+      .where(and(eq(schema.guestStacks.guestId, guestId), eq(schema.guestStacks.tableId, tableId)));
+    return row?.chips ?? null;
+  }
+
+  async setGuestStack(guestId: string, tableId: string, chips: number): Promise<void> {
+    await this.db
+      .insert(schema.guestStacks)
+      .values({ guestId, tableId, chips, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: [schema.guestStacks.guestId, schema.guestStacks.tableId], set: { chips, updatedAt: new Date() } });
+  }
+
+  async findGuestByKey(tableId: string, guestKeyHash: string): Promise<GuestPlayerRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.guestPlayers)
+      .where(and(eq(schema.guestPlayers.tableId, tableId), eq(schema.guestPlayers.guestKeyHash, guestKeyHash)))
+      .orderBy(desc(schema.guestPlayers.joinedAt))
+      .limit(1);
+    return row ?? null;
+  }
+
   async saveSeatInvite(invite: SeatInviteRecord): Promise<void> {
     await this.db
       .insert(schema.seatInvites)

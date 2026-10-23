@@ -41,7 +41,6 @@ export function Seat({
   onAddBotClick,
   onRemoveBotClick,
   onAssignHumanClick,
-  onRebuyClick,
 }: {
   seat: ProjectedSeat;
   isButton: boolean;
@@ -63,8 +62,6 @@ export function Seat({
   onRemoveBotClick?: (() => void) | undefined;
   /** Owner-only — generates a one-time invite link for a human to redeem into this exact seat. */
   onAssignHumanClick?: (() => void) | undefined;
-  /** Owner-only — rebuys THIS seat's occupant (a human, not a bot). Self-serve rebuy no longer exists. */
-  onRebuyClick?: (() => void) | undefined;
 }): React.JSX.Element {
   // `status === 'empty'` is the authoritative "is this seat occupied?"
   // signal from the engine. `playerId` is NOT a reliable proxy for that —
@@ -149,11 +146,6 @@ export function Seat({
       {seat.isBot && onRemoveBotClick && (
         <button type="button" className="seat-remove-bot" onClick={onRemoveBotClick}>
           Remove
-        </button>
-      )}
-      {!seat.isBot && onRebuyClick && (
-        <button type="button" className="seat-remove-bot" onClick={onRebuyClick}>
-          Rebuy
         </button>
       )}
     </>

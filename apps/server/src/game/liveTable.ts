@@ -17,6 +17,7 @@ import {
 import { cryptoSource, shuffle, type RandomSource } from '@pokerclause/rng';
 import {
   formatMoney,
+  MAX_BALANCE_CENTS,
   projectEvent,
   projectStateForSeat,
   type PendingTableSettings,
@@ -1371,9 +1372,14 @@ export class LiveTable {
     return { appliedNow: true };
   }
 
-  /** Room left under the max buy-in for this seat, counting chips still pending. */
+  /**
+   * How much the owner can still add to this seat, counting chips still
+   * pending. The owner has full control of anyone's chips — the table's max
+   * buy-in doesn't cap a rebuy (an open-invite table's starting chips can be
+   * above it anyway); only the app-wide balance ceiling does.
+   */
   rebuyHeadroom(seatId: number): number {
-    return Math.max(0, this.settings.maxBuyIn - this.cashOutAmount(seatId));
+    return Math.max(0, MAX_BALANCE_CENTS - this.cashOutAmount(seatId));
   }
 
   /**

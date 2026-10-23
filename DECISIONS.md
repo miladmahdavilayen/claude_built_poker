@@ -2319,3 +2319,31 @@ the full ledger history (whose rows lose their user id with the account).
 Signed waivers and game history stay where they are, found by the same id.
 Only the owner sees it. It never blocks re-registering, and the welcome
 bonus and kept-balance rules (`welcome_bonus_claims`) are unchanged.
+
+**Open-invite tables have starting chips** (`openSeatStack`, set when the
+table is created; the max buy-in by default). A guest who comes by the link
+doesn't choose a buy-in. The first time, they sit with exactly the starting
+chips. After that, they sit with what they left with: every cash-out
+(leaving, being removed, a reset, termination, a restart) records the
+guest's stack per table in `guest_stacks`. A guest who left with nothing is
+refused (`OUT_OF_CHIPS`) until the owner seats them with more. Seat-invite
+guests coming back follow the same rule, so leaving and rejoining never
+mints chips.
+
+An open link is shared, so it can't identify anyone. The guest's browser
+keeps a random key per link (`guestKey`; its SHA-256 is stored on their
+guest record). Signing in by the link with that key restores the same guest
+(same id, name and kept chips), even after their session is gone or the
+server restarted. Another browser is another guest.
+
+**Owner rebuys are uncapped** by the table's max buy-in; only the app-wide
+balance ceiling applies. The owner has full control of anyone's chips, and a
+starting stack can exceed the max buy-in anyway.
+
+**No Rebuy button on seats.** The owner rebuys from the seat's hold or
+right-click menu. The space goes to bigger hole cards, and the viewer's own
+cards are drawn 35% bigger still. On phones the full-screen button moved
+from the felt into the header, clear of every seat. In full screen the exit
+icon stays on the felt, and the table layout treats it as a soft obstacle.
+The layout solver now measures a bet's whole footprint (chips and amount
+label), so bets keep clear of the board at any card size.

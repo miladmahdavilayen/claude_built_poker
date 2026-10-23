@@ -13,9 +13,11 @@ async function arriveByLink(browser: Browser, link: string, name: string): Promi
   return page;
 }
 
-async function sitAt(page: Page, seatId: number, buyIn: number): Promise<void> {
+/** A guest by the open link doesn't pick a buy-in: they sit with the table's starting chips (or what they left with). */
+async function sitAt(page: Page, seatId: number): Promise<void> {
   await page.locator(`[data-testid="seat-${String(seatId)}"]`).getByText('Sit here').click();
-  await page.getByLabel(/Buy-in/).fill(String(buyIn));
+  await expect(page.getByTestId('open-seat-stack')).toBeVisible();
+  await expect(page.getByLabel(/Buy-in/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Sit down' }).click();
   await expect(page.locator(`[data-testid="seat-${String(seatId)}"]`)).toHaveAttribute('data-seat-status', /active|sitting-out/);
 }
@@ -29,9 +31,9 @@ test('an open-invite table: one link for everyone — pick a seat, a waitlist wh
   // Two people from the group chat take the two seats themselves.
   const ann = await arriveByLink(browser, link, 'Ann');
   await expect(ann.getByText('Pick any empty seat to sit down.')).toBeVisible();
-  await sitAt(ann, 0, 100);
+  await sitAt(ann, 0);
   const ben = await arriveByLink(browser, link, 'Ben');
-  await sitAt(ben, 1, 100);
+  await sitAt(ben, 1);
 
   // Full: the next two join the waitlist instead.
   const cat = await arriveByLink(browser, link, 'Cat');
@@ -50,7 +52,7 @@ test('an open-invite table: one link for everyone — pick a seat, a waitlist wh
   await expect(dan.getByText('A seat is being held for')).toContainText('Cat');
   await expect(dan.locator('[data-testid="seat-0"]').getByText('Sit here')).toHaveCount(0);
 
-  await sitAt(cat, 0, 100);
+  await sitAt(cat, 0);
   await expect(cat.getByText('A seat is open for you!')).toHaveCount(0);
   await expect(dan.getByRole('button', { name: 'Leave waitlist (#1)' })).toBeVisible();
 
@@ -69,7 +71,7 @@ test('the owner holds or right-clicks a seat for its menu — in full screen too
   const link = (await createTable(owner, { name: 'Menu Game', smallBlind: 1, bigBlind: 2, maxSeats: 3, isPrivate: false, openSeating: true }))!;
   const tableUrl = owner.url();
   const ann = await arriveByLink(browser, link, 'Ann');
-  await sitAt(ann, 1, 100);
+  await sitAt(ann, 1);
 
   await owner.goto(tableUrl);
   const seat = owner.locator('[data-testid="seat-1"]');
@@ -124,4 +126,35 @@ test('chat and the hand log start folded into a slim bar; new chat shows a badge
   await expect(owner.getByPlaceholder('Say something...')).toHaveCount(0);
   await owner.getByRole('button', { name: 'Hide chat and hand log' }).click();
   await expect(owner.locator('.bottom-dock-open')).toHaveCount(0);
+});
+
+test('an open-invite table’s starting chips: everyone who joins by the link sits with them — and a guest who leaves comes back with what they had', async ({ browser }) => {
+  const owner = await (await browser.newContext()).newPage();
+  await adminLogin(owner);
+  const link = (await createTable(owner, { name: 'Five Hundred Game', smallBlind: 1, bigBlind: 2, maxSeats: 9, isPrivate: false, openSeating: true, openSeatStack: 500 }))!;
+  const tableUrl = owner.url();
+
+  const gil = await arriveByLink(browser, link, 'Gil');
+  await gil.locator('[data-testid="seat-3"]').getByText('Sit here').click();
+  await expect(gil.getByTestId('open-seat-stack')).toContainText('$500');
+  await gil.getByRole('button', { name: 'Sit down' }).click();
+  await expect(gil.locator('[data-testid="seat-3"] .seat-stack')).toHaveText('$500');
+
+  // The owner tops Gil up from the seat's menu: $550.
+  await owner.goto(tableUrl);
+  await owner.locator('[data-testid="seat-3"]').click({ button: 'right' });
+  await owner.getByRole('menuitem', { name: 'Rebuy (add chips)' }).click();
+  await owner.getByLabel('Amount').fill('50');
+  await owner.locator('.modal').getByRole('button', { name: 'Confirm' }).click();
+  await expect(gil.locator('[data-testid="seat-3"] .seat-stack')).toHaveText('$550', { timeout: 10_000 });
+
+  // Gil leaves — the table stays — and comes back with his $550, not a fresh $500.
+  await gil.getByRole('button', { name: 'Leave table' }).click();
+  await gil.getByRole('button', { name: 'Yes, leave' }).click();
+  await expect(gil).toHaveURL(/\/left/);
+  await gil.getByRole('button', { name: 'Rejoin table' }).click();
+  await gil.locator('[data-testid="seat-5"]').getByText('Sit here').click();
+  await gil.getByRole('button', { name: 'Sit down' }).click();
+  await expect(gil.locator('[data-testid="seat-5"] .seat-stack')).toHaveText('$550');
+  await expect(owner.locator('[data-testid="seat-5"]')).toContainText('Gil');
 });

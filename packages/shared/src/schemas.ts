@@ -146,6 +146,8 @@ export const CreateTableSchema = z
     disableChatInHand: z.boolean().default(false),
     /** An open-invite table: one shareable link, anyone holding it picks their own seat (always private — kept off the lobby). */
     openSeating: z.boolean().default(false),
+    /** An open-invite table's starting chips (cents) for each new player — the table's maximum buy-in when not given. */
+    openSeatStack: z.number().int().positive().max(MAX_BALANCE_CENTS).optional(),
   })
   .strict();
 export type CreateTableInput = z.infer<typeof CreateTableSchema>;
@@ -194,6 +196,8 @@ export const GuestSignupSchema = z
     /** The guest ticked "I agree" to the guest terms (see GUEST_TERMS in waiver.ts) — required, and of the version they were shown. */
     acceptTerms: z.literal(true),
     termsVersion: z.number().int().min(1),
+    /** A random secret this browser keeps per open-invite link — the same guest comes back by it (their chips too), even once their session is gone. */
+    guestKey: z.string().regex(/^[A-Za-z0-9_-]{22,128}$/).optional(),
   })
   .strict();
 export type GuestSignupInput = z.infer<typeof GuestSignupSchema>;

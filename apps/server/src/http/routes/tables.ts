@@ -80,6 +80,9 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
     if ((input.minBuyIn ?? input.minBuyInBB * input.bigBlind) > (input.maxBuyIn ?? input.maxBuyInBB * input.bigBlind)) {
       return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'The minimum buy-in cannot be above the maximum.' });
     }
+    if (input.openSeatStack !== undefined && input.openSeatStack < input.bigBlind) {
+      return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Starting chips must be at least one big blind.' });
+    }
     const settings: TableSettings = {
       smallBlind: input.smallBlind,
       bigBlind: input.bigBlind,
@@ -97,7 +100,7 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
       // An open-invite table is always private: only its link gets anyone in.
       isPrivate: input.isPrivate || input.openSeating,
       disableChatInHand: input.disableChatInHand,
-      ...(input.openSeating ? { openSeating: true } : {}),
+      ...(input.openSeating ? { openSeating: true, openSeatStack: input.openSeatStack ?? input.maxBuyIn ?? input.maxBuyInBB * input.bigBlind } : {}),
     };
     // A shareable link goes to group chats: its code is 96 random bits, not 32.
     const inviteCode = input.openSeating ? randomBytes(12).toString('base64url') : input.isPrivate ? randomBytes(4).toString('hex') : null;

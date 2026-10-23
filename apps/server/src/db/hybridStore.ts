@@ -116,6 +116,18 @@ export class HybridStore implements Store {
   // --- Guest records and deleted accounts: always persisted, kept for good.
   // A guest's session stays in memory (guestStore); this is the record of them. ---
 
+  getGuestStack(guestId: string, tableId: string): Promise<number | null> {
+    return this.real.getGuestStack(guestId, tableId);
+  }
+
+  setGuestStack(guestId: string, tableId: string, chips: number): Promise<void> {
+    return this.real.setGuestStack(guestId, tableId, chips);
+  }
+
+  findGuestByKey(tableId: string, guestKeyHash: string): Promise<GuestPlayerRecord | null> {
+    return this.real.findGuestByKey(tableId, guestKeyHash);
+  }
+
   // A practice table never has seat invites; every real table's are persisted.
   saveSeatInvite(invite: SeatInviteRecord): Promise<void> {
     return this.real.saveSeatInvite(invite);

@@ -17,6 +17,12 @@ export interface TableSettings extends TableConfig {
    * join the waitlist when it's full. Absent on every other table.
    */
   openSeating?: boolean;
+  /**
+   * An open-invite table's starting chips (cents): what each new player who
+   * comes by its link sits down with. A player who leaves and comes back
+   * sits with what they left with instead. Absent on every other table.
+   */
+  openSeatStack?: number;
 }
 
 /** On an open-invite table, a free seat held for the first person on the waitlist until `expiresAt` (epoch ms). */

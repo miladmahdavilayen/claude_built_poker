@@ -124,8 +124,22 @@ export const guestPlayers = pgTable(
     userAgent: text('user_agent'),
     termsVersion: integer('terms_version').notNull(),
     termsAcceptedAt: timestamp('terms_accepted_at', { withTimezone: true }).notNull(),
+    /** Open-invite guests: SHA-256 of the secret their browser keeps for that link (see GuestPlayerRecord). */
+    guestKeyHash: text('guest_key_hash'),
   },
-  (t) => [index('guest_players_joined_at_idx').on(t.joinedAt)],
+  (t) => [index('guest_players_joined_at_idx').on(t.joinedAt), index('guest_players_table_key_idx').on(t.tableId, t.guestKeyHash)],
+);
+
+/** The chips each guest left each table with — what they sit down with when they come back (see Store.getGuestStack). */
+export const guestStacks = pgTable(
+  'guest_stacks',
+  {
+    guestId: text('guest_id').notNull(),
+    tableId: text('table_id').notNull(),
+    chips: integer('chips').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.guestId, t.tableId] })],
 );
 
 /**

@@ -58,9 +58,13 @@ export function seatSizeVars(maxSeats: number): Record<string, string> {
     '--seat-width': px(128, 76),
     '--seat-pad': px(6, 4),
     '--seat-gap': px(4, 3),
-    '--card-w': px(30, 22),
-    '--card-h': px(44, 32),
-    '--card-font': px(13, 11),
+    // Hole cards, as big as the seat box allows — the space the seat's old
+    // Rebuy button took went to them (the owner rebuys from the seat's
+    // hold/right-click menu now). useTableLayout.ts keeps every seat clear
+    // of the board and of each other whatever the size.
+    '--card-w': px(38, 28),
+    '--card-h': px(55, 41),
+    '--card-font': px(16, 13),
     '--avatar-size': px(16, 13),
     '--avatar-font': px(10, 8),
     '--seat-name-font': px(12, 10),

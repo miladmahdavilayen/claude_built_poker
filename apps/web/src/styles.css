@@ -1700,9 +1700,15 @@ input[type='range']::-moz-range-thumb {
   z-index: 2;
 }
 .seat-cards .card {
-  width: var(--card-w, 26px);
-  height: var(--card-h, 38px);
-  font-size: var(--card-font, 11px);
+  width: calc(var(--card-w, 26px) * var(--own-cards, 1));
+  height: calc(var(--card-h, 38px) * var(--own-cards, 1));
+  font-size: calc(var(--card-font, 11px) * var(--own-cards, 1));
+}
+/* Your own hand matters most: drawn bigger than everyone else's. The
+   table layout (useTableLayout.ts) measures it like anything else, so the
+   board stays clear whatever the size. */
+.seat-viewer .seat-cards {
+  --own-cards: 1.35;
 }
 .seat-info {
   text-align: center;
@@ -3600,4 +3606,28 @@ button.admin-user-row:hover:not(:disabled) {
   border: 1px solid var(--accent);
   color: var(--accent-strong);
   background: rgba(224, 167, 48, 0.12);
+}
+
+/* The full-screen toggle on a phone (or a phone held sideways): just its
+   icon, as a small round button — the felt can't spare room for the words,
+   and a small button rarely sits over a seat (see useTableLayout.ts). */
+@media (max-width: 767px), (max-height: 500px) and (pointer: coarse) {
+  .immersive-toggle {
+    width: 34px;
+    height: 34px;
+    min-height: 0;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .immersive-toggle-label {
+    display: none;
+  }
+}
+
+/* On a phone, the full-screen button sits in the table's header bar, not on the felt (see Table.tsx). */
+.immersive-toggle.immersive-toggle--header {
+  position: static;
+  flex: none;
 }

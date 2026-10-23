@@ -38,9 +38,10 @@ test('a regular player has no self-serve options; the owner assigns a seat via l
   // Alice, now seated, still has no self-serve rebuy anywhere on the page.
   await expect(pageAlice.getByRole('button', { name: 'Rebuy' })).toHaveCount(0);
 
-  // The owner sees a "Rebuy" control on Alice's seat specifically (not on empty seats, not on a bot).
-  await expect(pageOwner.locator('[data-testid="seat-1"]').getByRole('button', { name: 'Rebuy' })).toBeVisible();
-  await pageOwner.locator('[data-testid="seat-1"]').getByRole('button', { name: 'Rebuy' }).click();
+  // No Rebuy button on seats at all (that space goes to cards and cameras) — the owner rebuys from the seat's menu.
+  await expect(pageOwner.locator('[data-testid="seat-1"]').getByRole('button', { name: 'Rebuy' })).toHaveCount(0);
+  await pageOwner.locator('[data-testid="seat-1"]').click({ button: 'right' });
+  await pageOwner.getByRole('menuitem', { name: 'Rebuy (add chips)' }).click();
   await expect(pageOwner.getByText('Rebuy seat 1')).toBeVisible();
   await pageOwner.getByLabel('Amount').fill('30');
   await pageOwner.locator('.modal').getByRole('button', { name: 'Confirm' }).click();

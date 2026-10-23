@@ -105,6 +105,8 @@ export interface CreateTableOptions {
   isPrivate: boolean;
   /** An open-invite table — one shareable link, anyone with it picks their own seat. */
   openSeating?: boolean;
+  /** An open-invite table's starting chips for each player, in dollars. */
+  openSeatStack?: number;
 }
 
 /** Creates a table from the lobby and lands on it. Returns the invite link when private, else null. */
@@ -114,7 +116,10 @@ export async function createTable(page: Page, opts: CreateTableOptions): Promise
   await page.getByLabel('Small blind').fill(String(opts.smallBlind));
   await page.getByLabel('Big blind').fill(String(opts.bigBlind));
   await page.getByLabel('Max seats').fill(String(opts.maxSeats));
-  if (opts.openSeating) await page.getByLabel(/Open invite link/).check();
+  if (opts.openSeating) {
+    await page.getByLabel(/Open invite link/).check();
+    if (opts.openSeatStack !== undefined) await page.getByLabel('Starting chips for each player').fill(String(opts.openSeatStack));
+  }
   else if (opts.isPrivate) await page.getByLabel(/Private/).check();
   await page.getByRole('button', { name: 'Create', exact: true }).click();
 

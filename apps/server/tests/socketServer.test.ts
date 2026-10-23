@@ -769,6 +769,38 @@ describe('socketServer: live signaling and access control', () => {
       p.sock.close();
     });
 
+    it('starting chips: a guest by the link sits with exactly the table’s starting chips — and, after leaving, with what they left with', async () => {
+      const table = await registry.createTable('Stack Game', { ...OPEN, maxSeats: 3, maxBuyIn: 100_000, openSeatStack: 50_000 }, null, 'open-code-stack000');
+      const admin = await makeAdminUser('Owner');
+      const guest = await makeUser('Gia', 0);
+
+      const g = await joined(guest.token, table.tableId, 'open-code-stack000');
+      // Whatever buy-in the guest's client asks for, they get the starting chips.
+      expect(await takeSeat(g.sock, table.tableId, 0, 1)).toBe('seated');
+      expect(table.state.seats[0]?.stack).toBe(50_000);
+
+      // The owner tops them up, then they leave: $650 kept for this table.
+      const owner = await joined(admin.token, table.tableId);
+      owner.sock.emit('admin-rebuy', { seatId: 0, amount: 15_000 });
+      await waitForState<{ state: { seats: { seatId: number; stack: number }[] } }>(owner.sock, (p) => p.state.seats[0]?.stack === 65_000);
+      await emitWithAck(g.sock, 'leave-table');
+      expect(await store.getGuestStack(guest.userId, table.tableId)).toBe(65_000);
+
+      // Back again: $650, not a fresh $500.
+      expect(await takeSeat(g.sock, table.tableId, 1, 1)).toBe('seated');
+      expect(table.state.seats[1]?.stack).toBe(65_000);
+      await emitWithAck(g.sock, 'leave-table');
+
+      // Left with nothing: no free chips — the owner seats them with more if they choose.
+      await store.setGuestStack(guest.userId, table.tableId, 0);
+      expect(await takeSeat(g.sock, table.tableId, 0, 1)).toEqual(expect.objectContaining({ code: 'OUT_OF_CHIPS' }));
+
+      // Leaving never closes the table.
+      expect(registry.get(table.tableId)).not.toBeNull();
+      g.sock.close();
+      owner.sock.close();
+    });
+
     it('a full table has a waitlist: a freed seat is held for the first in line, others are turned away, and an unclaimed hold passes on', async () => {
       process.env.SEAT_OFFER_MS = '400';
       try {
@@ -915,7 +947,7 @@ describe('socketServer: live signaling and access control', () => {
     spectatorSocket.close();
   });
 
-  it('admin-rebuy tops up a specific seat, requires the admin role, and is capped at the table max buy-in', async () => {
+  it('admin-rebuy tops up a specific seat by any amount — past the table max buy-in too — and requires the admin role', async () => {
     const admin = await makeAdminUser('Owner');
     const alice = await makeUser('Alice', 1000);
     const table = await registry.createTable('Rebuy Table', SETTINGS, null, null);
@@ -938,12 +970,10 @@ describe('socketServer: live signaling and access control', () => {
     const afterRebuy = await reboughtPromise;
     expect(afterRebuy.state.seats.find((s) => s.seatId === 0)?.stack).toBe(200);
 
-    // Already at the max buy-in (200/200) — a further rebuy has no room
-    // left and is refused outright, with the error going back to the
-    // CALLER (the admin), not the seat's occupant.
-    const noRoomError = waitFor<{ code: string }>(adminSocket, 'error');
+    // The owner has full control: past the table's max buy-in (200) too.
+    const bigRebuy = waitForState<{ state: { seats: { seatId: number; stack: number }[] } }>(aliceSocket, (p) => p.state.seats.find((s) => s.seatId === 0)?.stack === 1200);
     adminSocket.emit('admin-rebuy', { seatId: 0, amount: 1000 });
-    expect((await noRoomError).code).toBe('CANNOT_REBUY');
+    await bigRebuy;
 
     adminSocket.close();
     aliceSocket.close();

@@ -34,6 +34,26 @@ function invitePathFrom(input: string): string | null {
 type Step = 'choose' | 'google-signup' | 'google-signin';
 
 /**
+ * This browser's secret for an open-invite link: an open link is shared by
+ * everyone, so this is how the server knows it's the same guest — with the
+ * same chips — when they come back by it, even after their session is gone.
+ * Kept per link; never shown. Without storage, each visit is a new guest.
+ */
+function guestKeyFor(code: string): string | undefined {
+  const storageKey = `pokerclause-guest-key:${code}`;
+  try {
+    const existing = localStorage.getItem(storageKey);
+    if (existing) return existing;
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const key = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+    localStorage.setItem(storageKey, key);
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The landing page offers two ways in:
  *
  * - An invitation (the owner's invite link, or just its code) → straight
@@ -58,6 +78,7 @@ export function LoginPage(): React.JSX.Element {
   const isInvitedPlayer = typeof from === 'string' && INVITE_FROM_PATTERN.test(from);
   const inviteParams = isInvitedPlayer ? new URLSearchParams(from.split('?')[1]) : null;
   const inviteToken = inviteParams?.get('assign') ?? inviteParams?.get('code') ?? '';
+  const openCode = inviteParams?.get('assign') ? null : (inviteParams?.get('code') ?? null);
   const googleAvailable = useGoogleSignInAvailable();
   // No navigation happens here on a successful sign-in — once `user`
   // becomes truthy, App.tsx's own /login route (LoginRoute) re-evaluates
@@ -134,7 +155,7 @@ export function LoginPage(): React.JSX.Element {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              void run(() => (mode === 'admin-login' ? login(email, password) : signupGuest(displayName || 'Guest', inviteToken, GUEST_TERMS_VERSION)));
+              void run(() => (mode === 'admin-login' ? login(email, password) : signupGuest(displayName || 'Guest', inviteToken, GUEST_TERMS_VERSION, openCode ? guestKeyFor(openCode) : undefined)));
             }}
           >
             {mode === 'admin-login' ? (

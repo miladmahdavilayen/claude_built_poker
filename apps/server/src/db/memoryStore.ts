@@ -186,6 +186,22 @@ export class MemoryStore implements Store {
     return Promise.resolve();
   }
 
+  private readonly guestStacks = new Map<string, number>();
+
+  async getGuestStack(guestId: string, tableId: string): Promise<number | null> {
+    return Promise.resolve(this.guestStacks.get(`${guestId}:${tableId}`) ?? null);
+  }
+
+  async setGuestStack(guestId: string, tableId: string, chips: number): Promise<void> {
+    this.guestStacks.set(`${guestId}:${tableId}`, chips);
+    return Promise.resolve();
+  }
+
+  async findGuestByKey(tableId: string, guestKeyHash: string): Promise<GuestPlayerRecord | null> {
+    const found = [...this.guestPlayers.values()].filter((g) => g.tableId === tableId && g.guestKeyHash === guestKeyHash).sort((a, b) => b.joinedAt.getTime() - a.joinedAt.getTime())[0];
+    return Promise.resolve(found ? { ...found } : null);
+  }
+
   private readonly seatInvites = new Map<string, SeatInviteRecord>();
 
   async saveSeatInvite(invite: SeatInviteRecord): Promise<void> {

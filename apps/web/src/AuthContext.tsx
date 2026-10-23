@@ -7,7 +7,7 @@ interface AuthState {
   accessToken: string | null;
   loading: boolean;
   /** Starts a guest session for redeeming this invite (the `assign` token). */
-  signupGuest: (displayName: string, inviteToken: string, termsVersion: number) => Promise<void>;
+  signupGuest: (displayName: string, inviteToken: string, termsVersion: number, guestKey?: string) => Promise<void>;
   /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
   login: (email: string, password: string) => Promise<void>;
   /** `signupKey` (the owner's access key) is needed only to register a new account. */
@@ -89,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     };
   }, []);
 
-  const signupGuest = useCallback(async (displayName: string, inviteToken: string, termsVersion: number) => {
-    const res = await api.signupGuest(displayName, inviteToken, termsVersion);
+  const signupGuest = useCallback(async (displayName: string, inviteToken: string, termsVersion: number, guestKey?: string) => {
+    const res = await api.signupGuest(displayName, inviteToken, termsVersion, guestKey);
     setUser(res.user);
     setAccessToken(res.accessToken);
   }, []);

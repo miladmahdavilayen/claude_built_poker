@@ -427,6 +427,32 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect((await store.listGuestPlayers()).filter((g) => g.id === first.id)).toHaveLength(1);
     });
 
+    it('an open-invite guest comes back by the link as the same guest — by the key their browser keeps — even once their session is gone', async () => {
+      const table = await registry.createTable('Open Return', { ...SETTINGS_FOR_LIST, isPrivate: true, openSeating: true, openSeatStack: 50_000 }, null, 'open-return-code1');
+      const signIn = (name: string, guestKey?: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/auth/guest',
+          payload: { displayName: name, inviteToken: 'open-return-code1', acceptTerms: true, termsVersion: GUEST_TERMS_VERSION, ...(guestKey ? { guestKey } : {}) },
+        });
+      const key = 'k'.repeat(32);
+      const first = (await signIn('Gary', key)).json<{ user: { id: string } }>().user;
+      expect((await signIn('Gary again', key)).json<{ user: { id: string } }>().user.id).toBe(first.id);
+      // A restart clears guests from memory: same key, same guest — and name.
+      await store.deleteUser(first.id);
+      const back = (await signIn('Someone', key)).json<{ user: { id: string; displayName: string } }>().user;
+      expect(back).toMatchObject({ id: first.id, displayName: 'Gary' });
+      // Another browser (another key, or none) is another guest.
+      expect((await signIn('Gina', 'z'.repeat(32))).json<{ user: { id: string } }>().user.id).not.toBe(first.id);
+      expect((await signIn('Nokey')).json<{ user: { id: string } }>().user.id).not.toBe(first.id);
+      // The key's hash never reaches the dashboard.
+      const admin = await store.createAccount('keyhash-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const listed = await app.inject({ method: 'GET', url: '/admin/guests', headers: auth(issueAccessToken({ ...admin, role: 'admin' })) });
+      expect(listed.body).not.toContain('guestKeyHash');
+      expect(table.settings.openSeatStack).toBe(50_000);
+    });
+
     it('a used invite outlives a restart and a seat change; an unused one is voided by a reset', async () => {
       const table = await registry.createTable('Survivor', { ...SETTINGS_FOR_LIST }, null, null);
       const used = table.createSeatAssignment(1, 10_000);

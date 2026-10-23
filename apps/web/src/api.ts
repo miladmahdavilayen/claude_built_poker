@@ -83,8 +83,8 @@ function deleteJson<T>(path: string, accessToken: string): Promise<T> {
 }
 
 /** A guest session exists only to redeem an owner's invite, so it takes the invite's token — and the guest's agreement to the guest terms (the version they were shown). */
-export function signupGuest(displayName: string, inviteToken: string, termsVersion: number): Promise<AuthResponse> {
-  return postJson('/auth/guest', { displayName, inviteToken, acceptTerms: true, termsVersion });
+export function signupGuest(displayName: string, inviteToken: string, termsVersion: number, guestKey?: string): Promise<AuthResponse> {
+  return postJson('/auth/guest', { displayName, inviteToken, acceptTerms: true, termsVersion, ...(guestKey ? { guestKey } : {}) });
 }
 
 /** Email/password login — only ever reachable by the admin/owner account. See Login.tsx. */
@@ -220,6 +220,8 @@ export interface CreateTableInput {
   isPrivate: boolean;
   /** One shareable link; anyone holding it picks their own seat (always private). */
   openSeating?: boolean;
+  /** An open-invite table's starting chips (cents) for each new player. */
+  openSeatStack?: number;
   minBuyIn?: number;
   maxBuyIn?: number;
 }

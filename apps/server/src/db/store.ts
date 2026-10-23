@@ -42,6 +42,8 @@ export interface GuestPlayerRecord {
   userAgent: string | null;
   termsVersion: number;
   termsAcceptedAt: Date;
+  /** Open-invite guests only: the SHA-256 of a secret their browser keeps for that link — how the same guest is recognised when they come back by it. */
+  guestKeyHash?: string | null;
 }
 
 /**
@@ -356,6 +358,11 @@ export interface Store {
   /** Newest first. */
   listGuestPlayers(): Promise<GuestPlayerRecord[]>;
   getGuestPlayer(id: string): Promise<GuestPlayerRecord | null>;
+  /** The chips a guest left a table with (cents) — what they sit down with when they come back. Null if they never left it. */
+  getGuestStack(guestId: string, tableId: string): Promise<number | null>;
+  setGuestStack(guestId: string, tableId: string, chips: number): Promise<void>;
+  /** An open-invite guest of this table, by the hash of their browser's key (see GuestPlayerRecord.guestKeyHash). */
+  findGuestByKey(tableId: string, guestKeyHash: string): Promise<GuestPlayerRecord | null>;
   /** Inserts or updates a seat invite (by token hash). */
   saveSeatInvite(invite: SeatInviteRecord): Promise<void>;
   /** Every seat invite for a table — restored with it on boot. */

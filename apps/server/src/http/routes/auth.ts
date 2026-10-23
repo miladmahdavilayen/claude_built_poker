@@ -1,4 +1,5 @@
 import { GoogleSignInSchema, GUEST_TERMS_VERSION, GuestSignupSchema, LoginSchema, SignupKeySchema } from '@pokerclause/shared';
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { AuthError, login, loginOrRegisterWithGoogle, resumeGuest, signUpGuest } from '../../auth/authService.js';
 import { isGoogleSignInConfigured, verifyGoogleIdToken } from '../../auth/googleAuth.js';
@@ -87,12 +88,20 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store, describeI
     // in-memory session — is that same guest, not a new one.
     // (An invite a registered player used is theirs — a guest by it is just
     // a new guest, whom the table then refuses the seat: INVITE_TAKEN.)
-    const owner = invite.guestUserId ? await store.findUserById(invite.guestUserId) : null;
+    // An open-invite link is shared, so it can't say who's who: the guest's
+    // browser keeps a secret for it (guestKey), and that is how the same
+    // guest — and their chips — comes back by it.
+    const guestKeyHash = invite.kind === 'open-link' && body.data.guestKey ? createHash('sha256').update(body.data.guestKey).digest('hex') : null;
+    const knownId = invite.guestUserId ?? (guestKeyHash ? ((await store.findGuestByKey(invite.tableId, guestKeyHash))?.id ?? null) : null);
+    const owner = knownId ? await store.findUserById(knownId) : null;
+    // Re-created under their old id (and old name) when their session is gone — a restart clears guests from memory.
+    const previous = knownId && !owner ? await store.getGuestPlayer(knownId) : null;
     const result = owner?.isGuest
       ? await resumeGuest(store, owner)
-      : await signUpGuest(store, body.data.displayName, invite.guestUserId && !owner ? invite.guestUserId : undefined);
+      : await signUpGuest(store, previous?.displayName ?? body.data.displayName, knownId && !owner ? knownId : undefined);
     const now = new Date();
     await store.recordGuestPlayer({
+      guestKeyHash,
       id: result.user.id,
       displayName: result.user.displayName,
       adminNickname: invite.adminNickname,

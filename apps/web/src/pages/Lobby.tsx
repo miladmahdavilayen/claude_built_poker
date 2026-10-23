@@ -207,6 +207,9 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
   const [maxSeats, setMaxSeats] = useState(6);
   const [isPrivate, setIsPrivate] = useState(false);
   const [openSeating, setOpenSeating] = useState(false);
+  // An open-invite table's starting chips for each new player — the max buy-in until the owner sets it.
+  const [openSeatStackOverride, setOpenSeatStackOverride] = useState<number | '' | null>(null);
+  const openSeatStack = openSeatStackOverride ?? maxBuyIn;
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ tableId: string; inviteCode: string | null; open: boolean } | null>(null);
@@ -221,8 +224,15 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
       setError('Enter a minimum and maximum buy-in.');
       return;
     }
+    if (openSeating && (openSeatStack === '' || openSeatStack < bigBlind)) {
+      setError('Enter the starting chips for each player — at least one big blind.');
+      return;
+    }
     api
-      .createTable({ name, smallBlind, bigBlind, maxSeats, isPrivate: isPrivate || openSeating, openSeating, minBuyIn, maxBuyIn }, accessToken)
+      .createTable(
+        { name, smallBlind, bigBlind, maxSeats, isPrivate: isPrivate || openSeating, openSeating, minBuyIn, maxBuyIn, ...(openSeating && openSeatStack !== '' ? { openSeatStack } : {}) },
+        accessToken,
+      )
       .then((res) => setCreated({ tableId: res.tableId, inviteCode: res.inviteCode, open: openSeating }))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to create table.'));
   };
@@ -300,6 +310,13 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
           <input type="checkbox" checked={openSeating} onChange={(e) => setOpenSeating(e.target.checked)} />
           Open invite link &mdash; one link for everyone; whoever has it picks a free seat or joins the waitlist
         </label>
+        {openSeating && (
+          <label>
+            Starting chips for each player
+            <MoneyInput minCents={1} cents={openSeatStack} onChange={setOpenSeatStackOverride} />
+            <span className="profile-hint">Everyone who joins by the link sits down with this. Anyone who leaves keeps what they had for when they come back.</span>
+          </label>
+        )}
         <label className="checkbox-label">
           <input type="checkbox" checked={isPrivate || openSeating} disabled={openSeating} onChange={(e) => setIsPrivate(e.target.checked)} />
           Private (invite-only, hidden from the lobby list)

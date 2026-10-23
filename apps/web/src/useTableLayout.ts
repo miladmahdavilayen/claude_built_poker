@@ -82,6 +82,8 @@ interface Problem {
   seats: Extent[];
   board: { w: number; h: number };
   bet: { w: number; h: number };
+  /** Fixed controls on the felt (the full-screen toggle) that no seat may cover — relative to the felt's center. */
+  obstacles: Box[];
 }
 
 interface Box {
@@ -144,6 +146,7 @@ function place(pr: Problem, shape: number, boardTop: number, scale: number): Pla
     const s = boxes[i]!;
     if (s.l < limit.l || s.r > limit.r || s.t < limit.t || s.b > limit.b) return null;
     if (overlap(s, board, BOARD_GAP)) return null;
+    for (const o of pr.obstacles) if (overlap(s, o, GAP)) return null;
     for (let j = i + 1; j < boxes.length; j++) if (overlap(s, boxes[j]!, GAP)) return null;
   }
   // Each seat's bet chips sit just in front of it, toward the board — and
@@ -166,7 +169,7 @@ function place(pr: Problem, shape: number, boardTop: number, scale: number): Pla
   for (let i = 0; i < bets.length; i++) {
     const bet = bets[i]!;
     const box: Box = { l: bet.x - bw, r: bet.x + bw, t: bet.y - bh, b: bet.y + bh };
-    if (overlap(box, board, 2)) return null;
+    if (overlap(box, board, BOARD_GAP)) return null;
     for (let j = 0; j < boxes.length; j++) if (j !== i && overlap(box, boxes[j]!, 0)) return null;
   }
   return { centers, bets, board };
@@ -268,10 +271,23 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
       extents.push(e);
     }
     const boardEl = felt.querySelector<HTMLElement>('.board-area');
-    const betEl = felt.querySelector<HTMLElement>('.bet-chips-slot');
+    // A bet's whole footprint — the chips and the amount under them — and the biggest one on the table.
+    const betSize = [...felt.querySelectorAll<HTMLElement>('.bet-chips-slot')].reduce<{ w: number; h: number } | null>((biggest, el) => {
+      const rects = [el, ...el.querySelectorAll<HTMLElement>('*')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+      if (rects.length === 0) return biggest;
+      const w = Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left));
+      const h = Math.max(...rects.map((r) => r.bottom)) - Math.min(...rects.map((r) => r.top));
+      return { w: Math.max(w, biggest?.w ?? 0), h: Math.max(h, biggest?.h ?? 0) };
+    }, null);
     const boardRect = boardEl?.getBoundingClientRect();
-    const betRect = betEl?.getBoundingClientRect();
     const rail = parseFloat(getComputedStyle(felt).borderLeftWidth) || 0;
+    const feltRect = felt.getBoundingClientRect();
+    const cx = feltRect.left + rail + felt.clientWidth / 2;
+    const cy = feltRect.top + (parseFloat(getComputedStyle(felt).borderTopWidth) || 0) + felt.clientHeight / 2;
+    const obstacles = [...felt.querySelectorAll<HTMLElement>('.immersive-toggle')]
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0)
+      .map((r) => ({ l: r.left - cx, r: r.right - cx, t: r.top - cy, b: r.bottom - cy }));
     const pr: Problem = {
       width: felt.clientWidth,
       height: felt.clientHeight,
@@ -279,15 +295,21 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
       seats: extents,
       // Measured at full size: the board is drawn at `boardScale` right now.
       board: { w: (boardRect?.width ?? 0) / boardScale, h: (boardRect?.height ?? 0) / boardScale },
-      bet: betRect && betRect.width > 0 ? { w: Math.max(DEFAULT_BET.w, betRect.width / scale), h: Math.max(DEFAULT_BET.h, betRect.height / scale) } : DEFAULT_BET,
+      obstacles,
+      bet: betSize ? { w: Math.max(DEFAULT_BET.w, betSize.w / scale), h: Math.max(DEFAULT_BET.h, betSize.h / scale) } : DEFAULT_BET,
     };
-    const key = JSON.stringify([pr.width, pr.height, pr.rail, ringSeatIds, extents.map((e) => [round(e.l), round(e.r), round(e.t), round(e.b)]), round(pr.board.w), round(pr.board.h), round(pr.bet.w), round(pr.bet.h)]);
+    const key = JSON.stringify([pr.width, pr.height, pr.rail, pr.obstacles.map((o) => [round(o.l), round(o.t)]), ringSeatIds, extents.map((e) => [round(e.l), round(e.r), round(e.t), round(e.b)]), round(pr.board.w), round(pr.board.h), round(pr.bet.w), round(pr.bet.h)]);
     if (key === lastKey.current) return;
     lastKey.current = key;
     // A felt we stretched earlier keeps that height until the window itself changes.
     const viewport = `${String(window.innerWidth)}x${String(window.innerHeight)}`;
     const stretched = layout && layout.viewport === viewport ? layout.minFeltHeight : null;
-    let best = solve(pr);
+    // Seats keep clear of the full-screen button when that costs them
+    // little; on a cramped table they'd rather sit a little under its small
+    // corner icon than all shrink, or push the felt past the screen.
+    const clear = pr.obstacles.length > 0 ? solve(pr) : null;
+    const free = solve({ ...pr, obstacles: [] });
+    let best = clear && (!free || clear.scale >= free.scale * 0.75) ? clear : free;
     let minFeltHeight = stretched;
     if (!best) {
       // Nothing fits in this height: find the smallest height where something does.

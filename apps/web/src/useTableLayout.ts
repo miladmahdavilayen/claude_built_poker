@@ -45,6 +45,13 @@ export interface TableLayout {
    * instead, and the page scrolls a little — anything but an overlap.
    */
   minFeltHeight: number | null;
+  /**
+   * Set only when no arrangement keeps the seats off the "Full screen"
+   * button in its corner (a full table on a small phone): where it goes
+   * instead, in px from the felt's top-left — the clear spot nearest its
+   * corner.
+   */
+  toggleSpot: { left: number; top: number } | null;
   /** The window size this was solved for — a new size starts over. */
   viewport: string;
 }
@@ -240,6 +247,8 @@ function sameLayout(a: TableLayout, b: TableLayout): boolean {
     a.boardScale !== b.boardScale ||
     a.boardTop !== b.boardTop ||
     a.minFeltHeight !== b.minFeltHeight ||
+    a.toggleSpot?.left !== b.toggleSpot?.left ||
+    a.toggleSpot?.top !== b.toggleSpot?.top ||
     a.viewport !== b.viewport ||
     a.seats.size !== b.seats.size
   )
@@ -258,6 +267,9 @@ function sameLayout(a: TableLayout, b: TableLayout): boolean {
 export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatIds: readonly number[]): TableLayout | null {
   const [layout, setLayout] = useState<TableLayout | null>(null);
   const lastKey = useRef('');
+  // The full-screen button's own corner, remembered while it's moved away
+  // (see toggleSpot) so the layout keeps solving against its real home.
+  const toggleHome = useRef<Box | null>(null);
   useLayoutEffect(() => {
     const felt = feltRef.current;
     if (!felt || ringSeatIds.length === 0) return;
@@ -284,10 +296,14 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
     const feltRect = felt.getBoundingClientRect();
     const cx = feltRect.left + rail + felt.clientWidth / 2;
     const cy = feltRect.top + (parseFloat(getComputedStyle(felt).borderTopWidth) || 0) + felt.clientHeight / 2;
-    const obstacles = [...felt.querySelectorAll<HTMLElement>('.immersive-toggle')]
-      .map((el) => el.getBoundingClientRect())
-      .filter((r) => r.width > 0 && r.height > 0)
-      .map((r) => ({ l: r.left - cx, r: r.right - cx, t: r.top - cy, b: r.bottom - cy }));
+    // offset*, not getBoundingClientRect: its attention bounce scales it, and that mustn't move the seats.
+    const toggleEl = felt.querySelector<HTMLElement>('.immersive-toggle');
+    if (toggleEl && toggleEl.offsetWidth > 0 && !toggleEl.dataset.moved) {
+      const l = toggleEl.offsetLeft - felt.clientWidth / 2;
+      const t = toggleEl.offsetTop - felt.clientHeight / 2;
+      toggleHome.current = { l, r: l + toggleEl.offsetWidth, t, b: t + toggleEl.offsetHeight };
+    }
+    const obstacles = toggleEl && toggleHome.current ? [toggleHome.current] : [];
     const pr: Problem = {
       width: felt.clientWidth,
       height: felt.clientHeight,
@@ -305,23 +321,27 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
     const viewport = `${String(window.innerWidth)}x${String(window.innerHeight)}`;
     const stretched = layout && layout.viewport === viewport ? layout.minFeltHeight : null;
     // Seats keep clear of the full-screen button when that costs them
-    // little; on a cramped table they'd rather sit a little under its small
-    // corner icon than all shrink, or push the felt past the screen.
+    // little; on a cramped table they'd rather sit a little under the small
+    // "exit" corner icon than all shrink, or push the felt past the screen.
+    // "Full screen" itself (the button new players must find) is never
+    // covered while any clear arrangement exists.
     const clear = pr.obstacles.length > 0 ? solve(pr) : null;
     const free = solve({ ...pr, obstacles: [] });
-    let best = clear && (!free || clear.scale >= free.scale * 0.75) ? clear : free;
+    const enterShown = !!felt.querySelector('.immersive-toggle--enter');
+    let best = clear && (!free || enterShown || clear.scale >= free.scale * 0.75) ? clear : free;
     let minFeltHeight = stretched;
     if (!best) {
       // Nothing fits in this height: find the smallest height where something does.
       let height = pr.height;
       for (let extra = 20; extra <= 600 && !best; extra += 20) {
         height = pr.height + extra;
-        best = solve({ ...pr, height });
+        best = solve({ ...pr, height }) ?? solve({ ...pr, height, obstacles: [] });
       }
       if (!best) return;
       pr.height = height;
       minFeltHeight = height + 2 * pr.rail; // the felt is border-box: its rails count toward min-height
     }
+    const toggleSpot = enterShown && best !== clear && obstacles.length > 0 ? findToggleSpot(felt, cx, cy, pr, best, obstacles[0]!) : null;
     const seats = new Map<number, SeatPlacement>();
     ringSeatIds.forEach((id, i) => {
       const c = best.placed.centers[i]!;
@@ -339,6 +359,7 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
       boardTop: best.boardTop * 100,
       seats,
       minFeltHeight,
+      toggleSpot,
       viewport,
     };
     // Re-measuring at the new size can shift a box by a rounding pixel — that alone mustn't trigger another render.
@@ -346,4 +367,38 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
     setLayout(next);
   });
   return layout;
+}
+
+/**
+ * The clear spot nearest the full-screen button's corner, for when the
+ * seats can't keep off it there: clear of every seat, bet, the board and
+ * the felt's other corner widgets. In px from the felt's top-left; null if
+ * there's nowhere (it then stays put).
+ */
+function findToggleSpot(felt: HTMLElement, cx: number, cy: number, pr: Problem, sol: Solution, home: Box): { left: number; top: number } | null {
+  const w = home.r - home.l;
+  const h = home.b - home.t;
+  const busy: Box[] = [sol.placed.board];
+  sol.placed.centers.forEach((c, i) => {
+    const e = pr.seats[i]!;
+    busy.push({ l: c.x - e.l * sol.scale, r: c.x + e.r * sol.scale, t: c.y - e.t * sol.scale, b: c.y + e.b * sol.scale });
+  });
+  const bw = (pr.bet.w * sol.scale) / 2;
+  const bh = (pr.bet.h * sol.scale) / 2;
+  for (const b of sol.placed.bets) busy.push({ l: b.x - bw, r: b.x + bw, t: b.y - bh, b: b.y + bh });
+  for (const el of felt.querySelectorAll<HTMLElement>('.fairness-commitment, .action-timer:not(.action-timer-hidden)')) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0) busy.push({ l: r.left - cx, r: r.right - cx, t: r.top - cy, b: r.bottom - cy });
+  }
+  let best: { x: number; y: number; d: number } | null = null;
+  const inset = 6;
+  for (let y = -pr.height / 2 + inset; y + h <= pr.height / 2 - inset; y += 6) {
+    for (let x = -pr.width / 2 + inset; x + w <= pr.width / 2 - inset; x += 6) {
+      const box: Box = { l: x, r: x + w, t: y, b: y + h };
+      if (busy.some((o) => overlap(box, o, GAP))) continue;
+      const d = Math.hypot(x - home.l, y - home.t);
+      if (!best || d < best.d) best = { x, y, d };
+    }
+  }
+  return best ? { left: Math.round(best.x + pr.width / 2), top: Math.round(best.y + pr.height / 2) } : null;
 }

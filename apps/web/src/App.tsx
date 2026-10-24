@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext.js';
 import { AdminDashboardPage } from './pages/AdminDashboard.js';
+import { CelebrationPreviewPage } from './pages/CelebrationPreview.js';
 import { LeftTablePage } from './pages/Left.js';
 import { LobbyPage } from './pages/Lobby.js';
 import { LoginPage } from './pages/Login.js';
@@ -58,6 +59,7 @@ export function App(): React.JSX.Element {
           leave-table confirm and Left.tsx's own doc comment), and this
           page must still render for them regardless. */}
       <Route path="/left" element={<LeftTablePage />} />
+      {import.meta.env.DEV && <Route path="/dev/celebrations" element={<CelebrationPreviewPage />} />}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

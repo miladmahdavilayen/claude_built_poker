@@ -2347,3 +2347,47 @@ from the felt into the header, clear of every seat. In full screen the exit
 icon stays on the felt, and the table layout treats it as a soft obstacle.
 The layout solver now measures a bet's whole footprint (chips and amount
 label), so bets keep clear of the board at any card size.
+
+**"Full screen" is back on the felt** (bottom-left, every screen size; that
+supersedes the move into the phone header above). It keeps its words on
+phones and, until a player has used it once, flashes: gold, a ring pulsing
+out of it, a light sweep and a small dip-and-spring (never larger than its
+resting size, so it never grows over a seat). The layout keeps seats off it
+whenever any arrangement allows. On a small phone with a full table, where
+none does, the button moves to the clear spot nearest its corner
+(`toggleSpot`) instead of covering a seat. The exit icon is unchanged.
+
+**Trophy celebration for a straight or better.** The viewer's own win with a
+straight (tier 1) up to a royal flush (6; the straight flush that includes
+an ace and a king) replaces the plain "You Win!" banner with a trophy show
+and a synthesized fanfare. Each tier adds to the last:
+- straight: a bell arpeggio and a brass chord;
+- flush: a gem, a shockwave ring and a cymbal;
+- full house: turning light rays, corner confetti cannons and the
+  "da-da-da DAAA" fanfare with a timpani boom;
+- four of a kind: a second ring, a flash, a second confetti wave and a
+  second, higher phrase;
+- straight flush: fireworks, a purple glow and a key change with a cymbal
+  swell;
+- royal flush: rainbow rays, a crown, gold-coin rain and a two-phrase regal
+  fanfare with a choir pad.
+
+The base shows one star per tier. Only the winner sees it; others still get
+the small badge.
+
+It stays light. DOM layers animate only transform and opacity, and every
+particle is drawn on one canvas. That canvas uses no shadows or filters,
+caps its particle budget (lower on small or low-core devices) and stops its
+animation loop when the last particle is gone. Measured at 60fps
+throughout, on desktop and phone sizes. With reduced motion, the particles
+are skipped and the rest only fades in.
+
+It never covers the community cards or a seated player, since their
+showdown cards are what the winner wants to see. At mount it searches the
+felt for a clear place:
+- framing the board (trophy above, name below) when that fits;
+- otherwise, the clear spot nearest the board.
+
+The rays and glow sit under the cards. `/dev/celebrations` (a dev-only
+route) and `__celebrate(tier)` in the console at a table (dev only) fire
+any tier on demand.

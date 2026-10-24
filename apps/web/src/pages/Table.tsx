@@ -509,16 +509,22 @@ export function TablePage(): React.JSX.Element {
     return actions;
   };
 
-  // On a phone the felt can't spare a corner for it — the button lives in
-  // the header bar instead, clear of every seat. In full screen the header
-  // is hidden, so its "exit" button sits on the felt (a small corner icon
-  // the table layout steers seats around — see useTableLayout.ts).
-  const fullScreenInHeader = isCompactScreen && !immersive.active;
-  const fullScreenButton = (where: 'felt' | 'header'): React.JSX.Element => (
+  // Always on the felt's bottom-left corner (the table layout steers seats
+  // around it — see useTableLayout.ts). "Full screen" keeps its words on
+  // every screen and flashes until a player has used it once; on a phone
+  // "exit" shrinks to a small round icon.
+  const fullScreenButton = (
     <button
       type="button"
-      className={`immersive-toggle${where === 'header' ? ' immersive-toggle--header' : ''}${!immersive.active && !fullScreenDiscovered ? ' immersive-toggle--attention' : ''}`}
-      style={where === 'felt' && toggleLift !== null ? { bottom: toggleLift } : undefined}
+      className={`immersive-toggle${immersive.active ? '' : ' immersive-toggle--enter'}${!immersive.active && !fullScreenDiscovered ? ' immersive-toggle--attention' : ''}`}
+      data-moved={tableLayout?.toggleSpot ? 'true' : undefined}
+      style={
+        tableLayout?.toggleSpot
+          ? { left: tableLayout.toggleSpot.left, top: tableLayout.toggleSpot.top, bottom: 'auto' }
+          : toggleLift !== null
+            ? { bottom: toggleLift }
+            : undefined
+      }
       onClick={() => {
         if (!fullScreenDiscovered) {
           setFullScreenDiscovered(true);
@@ -534,7 +540,7 @@ export function TablePage(): React.JSX.Element {
       aria-label={immersive.active ? 'Exit full screen' : 'Full screen'}
     >
       <span aria-hidden="true">{immersive.active ? '⤡' : '⛶'}</span>
-      {/* Words on a roomy screen; just the icon on a phone, where the felt can't spare the space. */}
+      {/* "Exit" is just the icon on a phone, where the felt can't spare the space. */}
       <span className="immersive-toggle-label" aria-hidden="true">
         {immersive.active ? ' Exit full screen' : ' Full screen'}
       </span>
@@ -574,7 +580,6 @@ export function TablePage(): React.JSX.Element {
               Leave table
             </button>
           )}
-          {fullScreenInHeader && fullScreenButton('header')}
           {canManageLayout && (
             <button type="button" className="owner-menu-toggle" aria-label="Table menu" title="Table controls" onClick={() => setOwnerMenuOpen(true)}>
               <span aria-hidden="true">☰</span> Menu
@@ -650,7 +655,7 @@ export function TablePage(): React.JSX.Element {
             ActionTimer.tsx's own fix was written to eliminate — see its
             doc comment and DECISIONS.md. */}
         <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
-        {!fullScreenInHeader && fullScreenButton('felt')}
+        {fullScreenButton}
         <DealAnimation events={sock.latestEvents} positions={placedPositions} />
         <WinCelebration events={sock.latestEvents} positions={placedPositions} viewerSeatId={state.viewerSeatId} />
         {state.phase !== 'in-hand' && (

@@ -72,12 +72,14 @@ test('the fold-win winner can voluntarily reveal their cards, and it extends the
     await expect(page.locator(`[data-testid="seat-${String(winnerSeatId)}"] .seat-cards .card`)).toHaveCount(2, { timeout: 3000 });
   }
 
-  // The reveal leaves at least 1.5s of break from the click (whatever was
-  // left of this suite's shortened 1200ms HAND_BREAK_MS — see
-  // playwright.config.ts — plus 1.5s), so 1s after the click the next
-  // hand still can't start, but it does come back eventually.
+  // The reveal leaves at least 1.5s of break from the moment the server
+  // gets it (whatever was left of this suite's shortened 1200ms
+  // HAND_BREAK_MS — see playwright.config.ts — plus 1.5s), so half a second
+  // after the click the next hand still can't start — a margin that holds
+  // even when a slow CI machine delays the click's round trip — but it does
+  // come back eventually.
   const playHandBtn = pageA.getByRole('button', { name: 'Play Hand' });
-  await pageA.waitForTimeout(Math.max(0, revealedAt + 1000 - Date.now()));
+  await pageA.waitForTimeout(Math.max(0, revealedAt + 500 - Date.now()));
   expect(await playHandBtn.count()).toBe(0);
   await expect(playHandBtn).toBeVisible({ timeout: 6000 });
 

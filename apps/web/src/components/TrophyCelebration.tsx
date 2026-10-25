@@ -41,9 +41,22 @@ export function TrophyCelebration({ tier, amount }: { tier: Exclude<WinTier, 0>;
     if (!root || !banner) return;
     const placement = placeCelebration(root, banner, tier);
     setPlace(placement);
+    // The win lands with the showdown, when revealed cards resize the seats
+    // and the table lays itself out again a moment later: look again over
+    // the first second, and glide to the new clear spot if anything moved.
+    const timers = [150, 450, 900].map((ms) =>
+      setTimeout(() => {
+        const next = placeCelebration(root, banner, tier);
+        setPlace((prev) => (prev && samePlace(prev, next) ? prev : next));
+      }, ms),
+    );
     const canvas = canvasRef.current;
-    if (!canvas || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    return runCelebrationParticles(canvas, tier, placement.originX, placement.originY);
+    const stopParticles =
+      canvas && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? runCelebrationParticles(canvas, tier, placement.originX, placement.originY) : null;
+    return () => {
+      timers.forEach(clearTimeout);
+      stopParticles?.();
+    };
   }, [tier]);
 
   const name = WIN_TIER_NAMES[tier];
@@ -120,6 +133,9 @@ interface Box {
   bottom: number;
 }
 
+const samePlace = (a: Placement, b: Placement): boolean =>
+  a.size === b.size && Math.abs(a.stageX - b.stageX) < 3 && Math.abs(a.stageY - b.stageY) < 3 && Math.abs(a.bannerX - b.bannerX) < 3 && Math.abs(a.bannerY - b.bannerY) < 3;
+
 const TIER_SCALE: Record<Exclude<WinTier, 0>, number> = { 1: 1, 2: 1.04, 3: 1.1, 4: 1.16, 5: 1.22, 6: 1.3 };
 const GAP = 8;
 const MIN_SIZE = 44;
@@ -167,8 +183,9 @@ function placeCelebration(root: HTMLElement, banner: HTMLElement, tier: Exclude<
     const h = Math.max(size * ASPECT, bh);
     return { size, stageX: x, stageY: y + (h - size * ASPECT) / 2, bannerX: x + size + 10 + bw / 2, bannerY: y + (h - bh) / 2 };
   };
+  // The trophy's drop-in overshoots to 1.12x around its middle: keep that clear too.
   const fits = (l: Layout): boolean =>
-    clear({ left: l.stageX, top: l.stageY, right: l.stageX + l.size, bottom: l.stageY + l.size * ASPECT }) &&
+    clear({ left: l.stageX - l.size * 0.06, top: l.stageY - l.size * 0.07, right: l.stageX + l.size * 1.06, bottom: l.stageY + l.size * (ASPECT + 0.07) }) &&
     clear({ left: l.bannerX - bw / 2, top: l.bannerY, right: l.bannerX + bw / 2, bottom: l.bannerY + bh });
   const sizes: number[] = [];
   for (let s = wanted; s >= MIN_SIZE; s -= 6) sizes.push(s);

@@ -42,16 +42,19 @@ test('a straight-or-better win shows a trophy that grows with the hand, clear of
   await expect(show.locator('.viewer-win-banner')).toContainText('You Win!');
   await expect(show.locator('.trophy-hand-name')).toHaveAttribute('aria-label', 'Straight');
   await expect(show.locator('.trophy-crown')).toHaveCount(0);
-  // The trophy and its words keep off the community cards and the seated players.
-  await pageA.waitForTimeout(900);
+  // The trophy and its words keep off the community cards and the seated
+  // players — checked once it has settled (it re-checks its spot over the
+  // first second, in case the seats move at showdown).
+  await pageA.waitForTimeout(1500);
   const clash = await pageA.evaluate(() => {
     const r = (el: Element): DOMRect => el.getBoundingClientRect();
     const hit = (a: DOMRect, b: DOMRect): boolean => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-    const mine = [document.querySelector('.trophy-icon')!, document.querySelector('.viewer-win-banner--trophy')!].map(r);
-    const others = [...document.querySelectorAll('.board-cards, .seat:not(.seat-empty)')].map(r);
-    return mine.some((m) => others.some((o) => hit(m, o)));
+    const name = (el: Element): string => `${el.className} ${JSON.stringify(r(el).toJSON())}`;
+    const mine = [document.querySelector('.trophy-icon')!, document.querySelector('.viewer-win-banner--trophy')!];
+    const others = [...document.querySelectorAll('.board-cards, .seat:not(.seat-empty)')];
+    return mine.flatMap((m) => others.filter((o) => hit(r(m), r(o))).map((o) => `${name(m)} x ${name(o)}`));
   });
-  expect(clash).toBe(false);
+  expect(clash).toEqual([]);
   // It goes away on its own.
   await expect(show).toHaveCount(0, { timeout: 6000 });
 

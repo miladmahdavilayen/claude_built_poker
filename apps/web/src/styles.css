@@ -3782,6 +3782,12 @@ button.admin-user-row:hover:not(:disabled) {
   position: absolute;
   left: var(--stage-x, 40%);
   top: var(--stage-y, 10%);
+  /* If the seats shift under it at showdown it glides clear (see TrophyCelebration.tsx). */
+  transition:
+    left 0.3s ease,
+    top 0.3s ease,
+    width 0.3s ease,
+    height 0.3s ease;
   width: var(--trophy-size);
   height: calc(var(--trophy-size) * 7 / 6);
 }
@@ -4019,6 +4025,9 @@ button.admin-user-row:hover:not(:disabled) {
 }
 .viewer-win-banner--trophy {
   left: var(--banner-x, 50%);
+  transition:
+    left 0.3s ease,
+    top 0.3s ease;
   width: max-content;
   top: var(--banner-y, 55%);
   transform: translate(-50%, 0);

@@ -2406,3 +2406,9 @@ it. It's the same form and the same rules as the owner menu at the table
 An open-invite table's starting chips are editable there too, and such a
 table can't be made public, since only its link gets anyone in. Practice
 tables aren't the lobby's to edit.
+
+A private or open-invite table's live invite link (`/table/:id?code=…`,
+the same one the owner menu at the table shows) sits at the top of that
+editor with a Copy button, so the owner can grab it from the lobby and
+share it. A public table has no link there. If a public table is made
+private, its new link appears as soon as the change is saved.

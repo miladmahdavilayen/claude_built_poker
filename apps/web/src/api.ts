@@ -416,7 +416,7 @@ export function adminDeleteTable(tableId: string, accessToken: string): Promise<
 }
 
 /** Owner-only: a table's settings as they'll stand once anything queued for the next hand applies — for the lobby's settings editor. */
-export function adminGetTableSettings(tableId: string, accessToken: string): Promise<{ tableId: string; name: string; settings: TableSettings; inHand: boolean }> {
+export function adminGetTableSettings(tableId: string, accessToken: string): Promise<{ tableId: string; name: string; settings: TableSettings; inHand: boolean; inviteCode: string | null }> {
   return getJson(`/admin/tables/${encodeURIComponent(tableId)}/settings`, accessToken);
 }
 
@@ -425,7 +425,7 @@ export function adminUpdateTableSettings(
   tableId: string,
   patch: UpdateTableSettingsIntent,
   accessToken: string,
-): Promise<{ ok: true; deferred: boolean; name: string; settings: TableSettings }> {
+): Promise<{ ok: true; deferred: boolean; name: string; settings: TableSettings; inviteCode: string | null }> {
   return patchJson(`/admin/tables/${encodeURIComponent(tableId)}/settings`, patch, accessToken);
 }
 

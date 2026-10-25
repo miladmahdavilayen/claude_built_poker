@@ -4132,6 +4132,21 @@ button.admin-user-row:hover:not(:disabled) {
   align-items: center;
   color: var(--text);
 }
+.table-settings-link {
+  margin-bottom: 12px;
+}
+.table-settings-link .owner-menu-note {
+  margin: 0 0 6px;
+}
+.table-settings-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.table-settings-link-row button {
+  flex: none;
+  white-space: nowrap;
+}
 .lobby-hold-hint {
   margin-top: -4px;
 }

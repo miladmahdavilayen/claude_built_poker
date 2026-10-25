@@ -35,6 +35,8 @@ test('the owner holds a lobby table to edit its settings, and the table follows'
   const dialog = owner.getByRole('dialog', { name: 'Table settings' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Table name')).toHaveValue('Lobby Edit Public');
+  // A public table has no invite link to share.
+  await expect(dialog.getByLabel('Table invite link')).toHaveCount(0);
   await dialog.getByLabel('Table name').fill('Lobby Edited');
   await dialog.getByLabel('Small blind ($)').fill('5');
   await dialog.getByLabel('Big blind ($)').fill('10');
@@ -59,12 +61,13 @@ test('the owner holds a lobby table to edit its settings, and the table follows'
   await ctxB.close();
 });
 
-test('private and open-invite tables are editable from the lobby too — by right-click on a desktop', async ({ page }) => {
+test('private and open-invite tables are editable from the lobby too — by right-click on a desktop', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await adminLogin(page);
-  await createTable(page, { name: 'Lobby Edit Private', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: true });
+  const privLink = await createTable(page, { name: 'Lobby Edit Private', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: true });
   const privId = tableIdFromUrl(page.url());
   await page.goto('/lobby');
-  await createTable(page, { name: 'Lobby Edit Open', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false, openSeating: true, openSeatStack: 500 });
+  const openLink = await createTable(page, { name: 'Lobby Edit Open', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false, openSeating: true, openSeatStack: 500 });
   const openId = tableIdFromUrl(page.url());
   await page.goto('/lobby');
 
@@ -73,6 +76,12 @@ test('private and open-invite tables are editable from the lobby too — by righ
   await priv.click({ button: 'right' });
   const dialog = page.getByRole('dialog', { name: 'Table settings' });
   await expect(dialog.getByLabel(/Private table/)).toBeChecked();
+  // Its live invite link, ready to copy and share.
+  // The same link the table was created with.
+  await expect(dialog.getByLabel('Table invite link')).toHaveValue(privLink!);
+  await dialog.getByRole('button', { name: 'Copy link' }).click();
+  await expect(dialog.getByRole('button', { name: 'Copied ✓' })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(privLink);
   await dialog.getByLabel('Max buy-in ($)').fill('900');
   await dialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(dialog.getByText('Saved.')).toBeVisible();
@@ -83,6 +92,8 @@ test('private and open-invite tables are editable from the lobby too — by righ
   await card(page, openId).click({ button: 'right' });
   await expect(dialog.getByLabel('Starting chips for each player ($)')).toHaveValue('500');
   await expect(dialog.getByLabel(/Private table/)).toHaveCount(0);
+  await expect(dialog.getByText(/Open invite link/)).toBeVisible();
+  await expect(dialog.getByLabel('Table invite link')).toHaveValue(openLink!);
   await dialog.getByLabel('Starting chips for each player ($)').fill('750');
   await dialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(dialog.getByText('Saved.')).toBeVisible();

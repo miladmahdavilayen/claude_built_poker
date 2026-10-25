@@ -233,7 +233,8 @@ export function registerAdminRoutes(
     const table = registry.get(tableId);
     if (!table || table.isPractice) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
     // Where the table is heading: anything queued for the next hand included.
-    return { tableId, name: table.name, settings: table.targetSettings, inHand: table.handInProgress };
+    // A private table's invite code comes too, so the lobby can show its link.
+    return { tableId, name: table.name, settings: table.targetSettings, inHand: table.handInProgress, inviteCode: table.settings.isPrivate ? table.inviteCode : null };
   });
   app.patch('/admin/tables/:tableId/settings', { preHandler: requireAdmin }, (req, reply) => {
     const { tableId } = req.params as { tableId: string };
@@ -243,7 +244,13 @@ export function registerAdminRoutes(
     if (!result) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
     if (!result.ok) return reply.code(400).send({ code: result.code, message: result.message });
     const table = registry.get(tableId)!;
-    return { ok: true, deferred: result.deferred, name: table.name, settings: table.targetSettings };
+    return {
+      ok: true,
+      deferred: result.deferred,
+      name: table.name,
+      settings: table.targetSettings,
+      inviteCode: table.settings.isPrivate ? table.inviteCode : null,
+    };
   });
   app.post('/admin/tables/:tableId/close', { preHandler: requireAdmin }, terminate);
 

@@ -654,6 +654,9 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const got = await app.inject({ method: 'GET', url: `/admin/tables/${priv.tableId}/settings`, headers });
       expect(got.statusCode).toBe(200);
       expect(got.json<{ name: string; settings: { isPrivate: boolean }; inHand: boolean }>()).toMatchObject({ name: 'Hidden', settings: { isPrivate: true }, inHand: false });
+      // A private table's invite code comes with it (for the link to share); a public one has none.
+      expect(got.json<{ inviteCode: string | null }>().inviteCode).toBe('code1234');
+      expect((await app.inject({ method: 'GET', url: `/admin/tables/${pub.tableId}/settings`, headers })).json<{ inviteCode: string | null }>().inviteCode).toBeNull();
 
       const saved = await app.inject({
         method: 'PATCH',
@@ -662,7 +665,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
         payload: { name: 'Renamed', smallBlind: 5, bigBlind: 10, minBuyIn: 400, maxBuyIn: 2000, actionSeconds: 45, isPrivate: false },
       });
       expect(saved.statusCode).toBe(200);
-      expect(saved.json<{ deferred: boolean }>().deferred).toBe(false);
+      expect(saved.json<{ deferred: boolean; inviteCode: string | null }>()).toMatchObject({ deferred: false, inviteCode: null });
       expect(priv.name).toBe('Renamed');
       expect(priv.settings).toMatchObject({ smallBlind: 5, bigBlind: 10, minBuyIn: 400, maxBuyIn: 2000, actionSeconds: 45, isPrivate: false });
       // Saved for a restart, and the lobby lists it under its new name.
@@ -686,6 +689,7 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       const headers = auth(issueAccessToken({ ...admin, role: 'admin' }));
       expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${open.tableId}/settings`, headers, payload: { openSeatStack: 1500 } })).statusCode).toBe(200);
       expect(open.settings.openSeatStack).toBe(1500);
+      expect((await app.inject({ method: 'GET', url: `/admin/tables/${open.tableId}/settings`, headers })).json<{ inviteCode: string }>().inviteCode).toBe('opencode');
       expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${open.tableId}/settings`, headers, payload: { isPrivate: false } })).statusCode).toBe(400);
       expect(open.settings.isPrivate).toBe(true);
       // Starting chips mean nothing on an ordinary table.

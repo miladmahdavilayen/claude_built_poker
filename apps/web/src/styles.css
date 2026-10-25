@@ -4108,3 +4108,27 @@ button.admin-user-row:hover:not(:disabled) {
     animation: trophy-rays-in 0.4s ease-out both !important;
   }
 }
+
+/* ---- Lobby table settings (see components/TableSettingsModal.tsx) ---- */
+.table-settings-modal {
+  width: 420px;
+}
+.table-settings-modal input[type='text'],
+.table-settings-modal input[type='number'] {
+  width: 100%;
+  min-width: 0;
+}
+.table-settings-modal .checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  color: var(--text);
+}
+.lobby-hold-hint {
+  margin-top: -4px;
+}
+/* A hold opens the editor: no text selection or iOS callout fighting it. */
+.table-card {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

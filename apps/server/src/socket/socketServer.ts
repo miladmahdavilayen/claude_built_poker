@@ -16,6 +16,7 @@ import {
   SeatTargetSchema,
   TakeSeatSchema,
   UpdateTableSettingsSchema,
+  type UpdateTableSettingsIntent,
 } from '@pokerclause/shared';
 import { Server, type Socket } from 'socket.io';
 import { verifyAccessToken } from '../auth/session.js';
@@ -117,6 +118,8 @@ export function attachSocketServer(
   closeAllTables: () => Promise<void>;
   /** The owner ending a table for good (terminate, or delete from the lobby): everyone's refunded and notified, and it's gone from the lobby. */
   terminateTable: (tableId: string) => Promise<boolean>;
+  /** The admin's settings change from the lobby — see routes/admin.ts. Null for an unknown or practice table. */
+  updateTableSettings: (tableId: string, patch: UpdateTableSettingsIntent) => ReturnType<LiveTable['updateSettings']> | null;
   closePracticeTableOf: (userId: string) => Promise<void>;
   watchPracticeTable: (tableId: string) => void;
 } {
@@ -325,6 +328,32 @@ export function attachSocketServer(
       seatOfferTimers.set(table.tableId, timer);
     }
     return changed;
+  }
+
+  /** Saves an owner's change to a table's name, settings or privacy — see LiveTable.updateSettings. */
+  function persistTable(table: LiveTable): void {
+    void deps.store.updateTable(table.tableId, {
+      name: table.name,
+      config: table.targetSettings as unknown as Record<string, unknown>,
+      inviteCode: table.inviteCode,
+    });
+  }
+
+  /**
+   * The admin's settings change from outside the table (the lobby — see
+   * routes/admin.ts): the same rules as the in-table owner menu, then saved
+   * and pushed to everyone at the table. Null when there's no such table
+   * (practice tables included — those aren't the lobby's to edit).
+   */
+  function updateTableSettings(tableId: string, patch: UpdateTableSettingsIntent): ReturnType<LiveTable['updateSettings']> | null {
+    const table = registry.get(tableId);
+    if (!table || table.isPractice) return null;
+    const result = table.updateSettings(patch);
+    if (result.ok) {
+      persistTable(table);
+      broadcastTable(table);
+    }
+    return result;
   }
 
   function broadcastTable(table: LiveTable): void {
@@ -755,14 +784,6 @@ export function attachSocketServer(
       return canManageLayout(table, data) && !table.seats[seatId]?.userId;
     }
 
-    function persistTable(table: LiveTable): void {
-      void deps.store.updateTable(table.tableId, {
-        name: table.name,
-        config: table.targetSettings as unknown as Record<string, unknown>,
-        inviteCode: table.inviteCode,
-      });
-    }
-
     type Ack = (result: { ok: true; deferred?: boolean; seatId?: number } | { ok: false; code: string; message: string }) => void;
 
     socket.on('update-table-settings', (raw: unknown, callback?: Ack): void => {
@@ -1127,5 +1148,5 @@ export function attachSocketServer(
     return true;
   }
 
-  return { io, registry, closeAllTables, terminateTable, closePracticeTableOf, watchPracticeTable };
+  return { io, registry, closeAllTables, terminateTable, updateTableSettings, closePracticeTableOf, watchPracticeTable };
 }

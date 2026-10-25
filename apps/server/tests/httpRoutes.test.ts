@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import cookie from '@fastify/cookie';
-import { GUEST_TERMS_VERSION, WAIVER_VERSION, type TableSettings } from '@pokerclause/shared';
+import { GUEST_TERMS_VERSION, WAIVER_VERSION, type TableSettings, type UpdateTableSettingsIntent } from '@pokerclause/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { issueAccessToken } from '../src/auth/session.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
+import type { LiveTable } from '../src/game/liveTable.js';
 import { TableRegistry } from '../src/game/tableRegistry.js';
 import { registerAdminRoutes } from '../src/http/routes/admin.js';
 import { registerAuthRoutes } from '../src/http/routes/auth.js';
@@ -68,7 +69,15 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       await registry.close(tableId);
       return true;
     };
-    registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable);
+    // The real one (socketServer.ts) also broadcasts to everyone at the table.
+    const updateTableSettings = (tableId: string, patch: UpdateTableSettingsIntent): ReturnType<LiveTable['updateSettings']> | null => {
+      const table = registry.get(tableId);
+      if (!table || table.isPractice) return null;
+      const result = table.updateSettings(patch);
+      if (result.ok) void store.updateTable(table.tableId, { name: table.name, config: table.targetSettings as unknown as Record<string, unknown>, inviteCode: table.inviteCode });
+      return result;
+    };
+    registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable, updateTableSettings);
   });
 
   afterEach(async () => {
@@ -629,6 +638,58 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect((await store.listTables()).map((t) => t.id)).not.toContain(table.tableId);
       expect((await app.inject({ method: 'GET', url: '/tables' })).json<{ tables: { tableId: string }[] }>().tables.map((t) => t.tableId)).not.toContain(table.tableId);
       expect((await app.inject({ method: 'DELETE', url: `/admin/tables/${table.tableId}`, headers: auth(token) })).statusCode).toBe(404);
+    });
+
+    it('the owner edits any table’s settings from the lobby (GET/PATCH /admin/tables/:id/settings), private ones too; nobody else can', async () => {
+      const pub = await registry.createTable('Public', { ...SETTINGS_FOR_LIST }, null, null);
+      const priv = await registry.createTable('Hidden', { ...SETTINGS_FOR_LIST, isPrivate: true }, null, 'code1234');
+      const player = await store.createGoogleAccount({ googleId: 'g-set', email: 'set@gmail.com', displayName: 'P', avatarUrl: null });
+      const playerAuth = auth(issueAccessToken(player));
+      expect((await app.inject({ method: 'GET', url: `/admin/tables/${pub.tableId}/settings`, headers: playerAuth })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${pub.tableId}/settings`, headers: playerAuth, payload: { name: 'Mine' } })).statusCode).toBe(403);
+
+      const admin = await store.createAccount('set-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const headers = auth(issueAccessToken({ ...admin, role: 'admin' }));
+      const got = await app.inject({ method: 'GET', url: `/admin/tables/${priv.tableId}/settings`, headers });
+      expect(got.statusCode).toBe(200);
+      expect(got.json<{ name: string; settings: { isPrivate: boolean }; inHand: boolean }>()).toMatchObject({ name: 'Hidden', settings: { isPrivate: true }, inHand: false });
+
+      const saved = await app.inject({
+        method: 'PATCH',
+        url: `/admin/tables/${priv.tableId}/settings`,
+        headers,
+        payload: { name: 'Renamed', smallBlind: 5, bigBlind: 10, minBuyIn: 400, maxBuyIn: 2000, actionSeconds: 45, isPrivate: false },
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json<{ deferred: boolean }>().deferred).toBe(false);
+      expect(priv.name).toBe('Renamed');
+      expect(priv.settings).toMatchObject({ smallBlind: 5, bigBlind: 10, minBuyIn: 400, maxBuyIn: 2000, actionSeconds: 45, isPrivate: false });
+      // Saved for a restart, and the lobby lists it under its new name.
+      const record = (await store.listTables()).find((t) => t.id === priv.tableId);
+      expect(record?.name).toBe('Renamed');
+      expect(record?.config).toMatchObject({ bigBlind: 10, isPrivate: false });
+
+      // The same rules as the owner menu at the table.
+      const bad = await app.inject({ method: 'PATCH', url: `/admin/tables/${pub.tableId}/settings`, headers, payload: { smallBlind: 50, bigBlind: 10 } });
+      expect(bad.statusCode).toBe(400);
+      expect(bad.json<{ code: string }>().code).toBe('INVALID_SETTINGS');
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${pub.tableId}/settings`, headers, payload: { maxSeats: 9 } })).statusCode).toBe(400);
+      expect((await app.inject({ method: 'PATCH', url: '/admin/tables/nope/settings', headers, payload: { name: 'X' } })).statusCode).toBe(404);
+    });
+
+    it('an open-invite table’s starting chips can be changed from the lobby, but it can’t be made public', async () => {
+      const open = await registry.createTable('Open', { ...SETTINGS_FOR_LIST, isPrivate: true, openSeating: true, openSeatStack: 500 }, null, 'opencode');
+      const pub = await registry.createTable('Public', { ...SETTINGS_FOR_LIST }, null, null);
+      const admin = await store.createAccount('open-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const headers = auth(issueAccessToken({ ...admin, role: 'admin' }));
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${open.tableId}/settings`, headers, payload: { openSeatStack: 1500 } })).statusCode).toBe(200);
+      expect(open.settings.openSeatStack).toBe(1500);
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${open.tableId}/settings`, headers, payload: { isPrivate: false } })).statusCode).toBe(400);
+      expect(open.settings.isPrivate).toBe(true);
+      // Starting chips mean nothing on an ordinary table.
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${pub.tableId}/settings`, headers, payload: { openSeatStack: 1500 } })).statusCode).toBe(400);
     });
 
     it('a shutdown keeps a table open on record, and the next boot restores it as it was', async () => {

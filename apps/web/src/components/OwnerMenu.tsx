@@ -1,59 +1,14 @@
-import type { ProjectedSeat, ProjectedTableState, UpdateTableSettingsIntent } from '@pokerclause/shared';
+import type { ProjectedSeat, ProjectedTableState } from '@pokerclause/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { formatChips } from '../chips.js';
 import type { TableSocketApi } from '../useTableSocket.js';
 import { MoneyInput } from './MoneyInput.js';
 import { ReportDownloads } from './ReportDownloads.js';
-
-type SettingsForm = {
-  name: string;
-  smallBlind: number | '';
-  bigBlind: number | '';
-  ante: number | '';
-  straddleEnabled: boolean;
-  minBuyIn: number | '';
-  maxBuyIn: number | '';
-  actionSeconds: number | '';
-  timeBankSeconds: number | '';
-  isPrivate: boolean;
-  disableChatInHand: boolean;
-};
+import { diffSettings, formFromSettings, TableSettingsFields, type SettingsForm } from './TableSettingsForm.js';
 
 /** The form starts from where the table is heading — settings in force, overlaid with anything queued for the next hand. */
 function formFromState(state: ProjectedTableState): SettingsForm {
-  const s = { ...state.settings, ...state.pendingSettings };
-  return {
-    name: state.tableName,
-    smallBlind: s.smallBlind,
-    bigBlind: s.bigBlind,
-    ante: s.ante,
-    straddleEnabled: s.straddleEnabled,
-    minBuyIn: s.minBuyIn,
-    maxBuyIn: s.maxBuyIn,
-    actionSeconds: s.actionSeconds,
-    timeBankSeconds: s.timeBankSeconds,
-    isPrivate: s.isPrivate,
-    disableChatInHand: s.disableChatInHand,
-  };
-}
-
-/** Only the fields that actually changed — so saving a timer tweak mid-hand doesn't also re-send (and re-defer) the blinds. */
-function diff(form: SettingsForm, base: SettingsForm): UpdateTableSettingsIntent | string {
-  const out: UpdateTableSettingsIntent = {};
-  if (form.name.trim() !== base.name) {
-    if (!form.name.trim()) return 'The table needs a name.';
-    out.name = form.name.trim();
-  }
-  for (const key of ['smallBlind', 'bigBlind', 'ante', 'minBuyIn', 'maxBuyIn', 'actionSeconds', 'timeBankSeconds'] as const) {
-    if (form[key] === base[key]) continue;
-    const value = form[key];
-    if (value === '' || (key !== 'ante' && key !== 'timeBankSeconds' && value <= 0) || value < 0) return 'Every amount needs a value.';
-    out[key] = value;
-  }
-  for (const key of ['straddleEnabled', 'isPrivate', 'disableChatInHand'] as const) {
-    if (form[key] !== base[key]) out[key] = form[key];
-  }
-  return out;
+  return formFromSettings(state.tableName, { ...state.settings, ...state.pendingSettings });
 }
 
 function seatBadges(seat: ProjectedSeat): string[] {
@@ -136,7 +91,7 @@ export function OwnerMenu({
   const inHand = state.phase === 'in-hand';
   // Hands this game has finished — the report covers exactly these (a hand in progress isn't in it yet).
   const completedHands = inHand ? state.handNumber - 1 : state.handNumber;
-  const patch = diff(form, base);
+  const patch = diffSettings(form, base);
   const hasChanges = typeof patch === 'string' || Object.keys(patch).length > 0;
 
   const save = (): void => {
@@ -198,83 +153,27 @@ export function OwnerMenu({
 
         <section className="owner-menu-section">
           <h4>Game settings</h4>
-          <label>
-            Table name
-            <input type="text" maxLength={60} value={form.name} onChange={(e) => set('name', e.target.value)} />
-          </label>
-          <div className="form-row">
-            <label>
-              Small blind ($)
-              <MoneyInput minCents={1} cents={form.smallBlind} onChange={(c) => set('smallBlind', c)} />
-            </label>
-            <label>
-              Big blind ($)
-              <MoneyInput minCents={1} cents={form.bigBlind} onChange={(c) => set('bigBlind', c)} />
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Ante ($)
-              <MoneyInput minCents={0} cents={form.ante} onChange={(c) => set('ante', c)} />
-            </label>
-            <label className="checkbox-label owner-menu-inline-check">
-              <input type="checkbox" checked={form.straddleEnabled} onChange={(e) => set('straddleEnabled', e.target.checked)} />
-              Straddle
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Min buy-in ($)
-              <MoneyInput minCents={1} cents={form.minBuyIn} onChange={(c) => set('minBuyIn', c)} />
-            </label>
-            <label>
-              Max buy-in ($)
-              <MoneyInput minCents={1} cents={form.maxBuyIn} onChange={(c) => set('maxBuyIn', c)} />
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Seconds per action
-              <input
-                type="number"
-                min={5}
-                max={120}
-                value={form.actionSeconds}
-                onChange={(e) => set('actionSeconds', e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </label>
-            <label>
-              Time bank (seconds)
-              <input
-                type="number"
-                min={0}
-                max={600}
-                value={form.timeBankSeconds}
-                onChange={(e) => set('timeBankSeconds', e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </label>
-          </div>
-          <label className="checkbox-label">
-            <input type="checkbox" checked={form.isPrivate} onChange={(e) => set('isPrivate', e.target.checked)} />
-            Private table (invite link only, hidden from the lobby)
-          </label>
-          {state.settings.isPrivate && inviteCode && state.settings.openSeating && (
-            <p className="owner-menu-note">Open invite link — anyone with it can pick a free seat or join the waitlist:</p>
-          )}
-          {state.settings.isPrivate && inviteCode && (
-            <input
-              type="text"
-              className="assign-link-input"
-              readOnly
-              aria-label="Private table link"
-              value={`${window.location.origin}/table/${tableId}?code=${inviteCode}`}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          )}
-          <label className="checkbox-label">
-            <input type="checkbox" checked={form.disableChatInHand} onChange={(e) => set('disableChatInHand', e.target.checked)} />
-            No chat for players still in a hand
-          </label>
+          <TableSettingsFields
+            form={form}
+            set={set}
+            privacyExtra={
+              <>
+                {state.settings.isPrivate && inviteCode && state.settings.openSeating && (
+                  <p className="owner-menu-note">Open invite link — anyone with it can pick a free seat or join the waitlist:</p>
+                )}
+                {state.settings.isPrivate && inviteCode && (
+                  <input
+                    type="text"
+                    className="assign-link-input"
+                    readOnly
+                    aria-label="Private table link"
+                    value={`${window.location.origin}/table/${tableId}?code=${inviteCode}`}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                )}
+              </>
+            }
+          />
           {inHand && <p className="owner-menu-note">Blinds, ante and straddle switch over when this hand ends. Everything else applies right away.</p>}
           {saveMessage && <div className={saveMessage.ok ? 'owner-menu-ok' : 'error-banner'}>{saveMessage.text}</div>}
           <div className="owner-menu-actions">

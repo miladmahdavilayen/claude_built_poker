@@ -172,6 +172,8 @@ export const UpdateTableSettingsSchema = z
     timeBankSeconds: z.number().int().min(0).max(600).optional(),
     isPrivate: z.boolean().optional(),
     disableChatInHand: z.boolean().optional(),
+    /** Open-invite tables only: what a guest new to the table sits down with. */
+    openSeatStack: z.number().int().positive().max(MAX_BALANCE_CENTS).optional(),
   })
   .strict();
 export type UpdateTableSettingsIntent = z.infer<typeof UpdateTableSettingsSchema>;

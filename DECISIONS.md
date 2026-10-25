@@ -2391,3 +2391,18 @@ felt for a clear place:
 The rays and glow sit under the cards. `/dev/celebrations` (a dev-only
 route) and `__celebrate(tier)` in the console at a table (dev only) fire
 any tier on demand.
+
+**The owner edits any table's settings from the lobby.** Holding a table's
+card for a second (or right-clicking it on a desktop) opens its settings,
+for public, private and open-invite tables alike, without sitting down at
+it. It's the same form and the same rules as the owner menu at the table
+(`TableSettingsForm.tsx`; `LiveTable.updateSettings` behind
+`GET/PATCH /admin/tables/:id/settings`):
+- blinds, ante and straddle changed mid-hand switch over when that hand
+  ends; everything else applies at once;
+- the change is saved for restarts and pushed live to everyone at the
+  table.
+
+An open-invite table's starting chips are editable there too, and such a
+table can't be made public, since only its link gets anyone in. Practice
+tables aren't the lobby's to edit.

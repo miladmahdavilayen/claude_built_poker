@@ -1,3 +1,5 @@
+import type { TableSettings, UpdateTableSettingsIntent } from '@pokerclause/shared';
+
 export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
 export interface PublicUser {
@@ -411,6 +413,20 @@ export interface SignupKeyDto {
 /** Owner-only: deletes (terminates) a table — everyone seated is refunded, and it's gone for good. */
 export function adminDeleteTable(tableId: string, accessToken: string): Promise<{ ok: true }> {
   return deleteJson(`/admin/tables/${encodeURIComponent(tableId)}`, accessToken);
+}
+
+/** Owner-only: a table's settings as they'll stand once anything queued for the next hand applies — for the lobby's settings editor. */
+export function adminGetTableSettings(tableId: string, accessToken: string): Promise<{ tableId: string; name: string; settings: TableSettings; inHand: boolean }> {
+  return getJson(`/admin/tables/${encodeURIComponent(tableId)}/settings`, accessToken);
+}
+
+/** Owner-only: changes a table's settings from the lobby — the same rules as the owner menu at the table (LiveTable.updateSettings). */
+export function adminUpdateTableSettings(
+  tableId: string,
+  patch: UpdateTableSettingsIntent,
+  accessToken: string,
+): Promise<{ ok: true; deferred: boolean; name: string; settings: TableSettings }> {
+  return patchJson(`/admin/tables/${encodeURIComponent(tableId)}/settings`, patch, accessToken);
 }
 
 export function adminListSignupKeys(accessToken: string): Promise<{ keys: SignupKeyDto[] }> {

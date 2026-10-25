@@ -206,11 +206,11 @@ async function main(): Promise<void> {
   registerFairnessRoutes(app, store);
   registerTestSeedRoutes(app, store);
 
-  const { io, registry, closeAllTables, terminateTable, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
+  const { io, registry, closeAllTables, terminateTable, updateTableSettings, closePracticeTableOf, watchPracticeTable } = attachSocketServer(app.server, { store, corsOrigin, adminUserId });
   registerAuthRoutes(app, store, (token) => registry.describeInvite(token));
   registerUserRoutes(app, store, closePracticeTableOf);
   registerTableRoutes(app, store, registry, watchPracticeTable);
-  registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable);
+  registerAdminRoutes(app, store, registry, closePracticeTableOf, terminateTable, updateTableSettings);
   registerReportRoutes(app, store, registry);
 
   await finishInterruptedGameReports(store, (msg) => app.log.info(msg));

@@ -6,7 +6,9 @@ import { useAuth } from '../AuthContext.js';
 import { formatChips } from '../chips.js';
 import { AnimatedBackground } from '../components/AnimatedBackground.js';
 import { MoneyInput } from '../components/MoneyInput.js';
+import { useSeatMenuGesture } from '../components/SeatActionMenu.js';
 import { SwipeToDelete } from '../components/SwipeToDelete.js';
+import { TableSettingsModal } from '../components/TableSettingsModal.js';
 
 export function LobbyPage(): React.JSX.Element {
   const { user } = useAuth();
@@ -60,12 +62,16 @@ function TablesLobby(): React.JSX.Element {
     return () => clearInterval(id);
   }, [accessToken, refreshTick]);
 
+  // The owner holds a table (or right-clicks it) to change its settings — see TableSettingsModal.tsx.
+  const [settingsTarget, setSettingsTarget] = useState<TableSummaryDto | null>(null);
+  const tableHold = useSeatMenuGesture<string>((tableId) => setSettingsTarget(tables.find((t) => t.tableId === tableId) ?? null), isAdmin);
+
   const publicTables = tables.filter((t) => !t.isPrivate);
   const privateTables = tables.filter((t) => t.isPrivate);
 
   const renderTable = (t: TableSummaryDto): React.JSX.Element => {
     const card = (
-      <div className="table-card">
+      <div className="table-card" data-testid={`lobby-table-${t.tableId}`} {...tableHold(t.tableId)}>
         <div className="table-card-top">
           <h3 className="table-card-name">{t.name}</h3>
           <span className="table-card-seats" title="Seats filled">
@@ -144,6 +150,9 @@ function TablesLobby(): React.JSX.Element {
         </button>
       </div>
 
+      {isAdmin && tables.length > 0 && (
+        <p className="lobby-section-hint lobby-hold-hint">Hold a table (or right-click it) to change its settings; swipe it left to delete it.</p>
+      )}
       <div className="table-grid">
         {publicTables.map(renderTable)}
         {publicTables.length === 0 && <div className="table-grid-empty">No tables open right now.</div>}
@@ -178,6 +187,16 @@ function TablesLobby(): React.JSX.Element {
             </div>
           </div>
         </div>
+      )}
+
+      {settingsTarget && accessToken && (
+        <TableSettingsModal
+          tableId={settingsTarget.tableId}
+          tableName={settingsTarget.name}
+          accessToken={accessToken}
+          onClose={() => setSettingsTarget(null)}
+          onSaved={() => setRefreshTick((n) => n + 1)}
+        />
       )}
 
       {showCreate && accessToken && <CreateTableModal onClose={() => setShowCreate(false)} accessToken={accessToken} />}

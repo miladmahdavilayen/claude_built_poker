@@ -6,6 +6,8 @@ import {
   CreateSignupKeySchema,
   formatMoney,
   MAX_BALANCE_CENTS,
+  UpdateTableSettingsSchema,
+  type UpdateTableSettingsIntent,
 } from '@pokerclause/shared';
 import { archiveAndDeleteUser } from '../../auth/accountDeletion.js';
 import { normalizeEmailKey } from '../../auth/authService.js';
@@ -62,6 +64,7 @@ export function registerAdminRoutes(
   registry: TableRegistry,
   closePracticeTableOf: (userId: string) => Promise<void>,
   terminateTable: (tableId: string) => Promise<boolean>,
+  updateTableSettings: (tableId: string, patch: UpdateTableSettingsIntent) => { ok: true; deferred: boolean } | { ok: false; code: string; message: string } | null = () => null,
 ): void {
   app.get('/admin/tables', { preHandler: requireAdmin }, () => {
     return { tables: registry.list() };
@@ -221,6 +224,27 @@ export function registerAdminRoutes(
     return { ok: true };
   };
   app.delete('/admin/tables/:tableId', { preHandler: requireAdmin }, terminate);
+
+  // The lobby's "hold a table" settings editor — the same settings and rules
+  // as the owner menu at the table (LiveTable.updateSettings), for any of
+  // the owner's tables, public or private, without sitting down at it.
+  app.get('/admin/tables/:tableId/settings', { preHandler: requireAdmin }, (req, reply) => {
+    const { tableId } = req.params as { tableId: string };
+    const table = registry.get(tableId);
+    if (!table || table.isPractice) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
+    // Where the table is heading: anything queued for the next hand included.
+    return { tableId, name: table.name, settings: table.targetSettings, inHand: table.handInProgress };
+  });
+  app.patch('/admin/tables/:tableId/settings', { preHandler: requireAdmin }, (req, reply) => {
+    const { tableId } = req.params as { tableId: string };
+    const body = UpdateTableSettingsSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid table settings.' });
+    const result = updateTableSettings(tableId, body.data);
+    if (!result) return reply.code(404).send({ code: 'TABLE_NOT_FOUND', message: 'Table not found.' });
+    if (!result.ok) return reply.code(400).send({ code: result.code, message: result.message });
+    const table = registry.get(tableId)!;
+    return { ok: true, deferred: result.deferred, name: table.name, settings: table.targetSettings };
+  });
   app.post('/admin/tables/:tableId/close', { preHandler: requireAdmin }, terminate);
 
   // --- Access keys: one per new player (see auth/signupKeys.ts). ---

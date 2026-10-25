@@ -337,6 +337,11 @@ export class LiveTable {
     };
   }
 
+  /** A hand is being played right now — blind/ante/straddle changes wait for it to end. */
+  get handInProgress(): boolean {
+    return this.inHand;
+  }
+
   private get inHand(): boolean {
     return this.state.phase === 'in-hand';
   }
@@ -684,6 +689,12 @@ export class LiveTable {
     if (target.smallBlind > target.bigBlind) return { ok: false, code: 'INVALID_SETTINGS', message: 'The small blind cannot be bigger than the big blind.' };
     if (target.minBuyIn > target.maxBuyIn) return { ok: false, code: 'INVALID_SETTINGS', message: 'The minimum buy-in cannot be above the maximum.' };
     if (target.ante > target.bigBlind) return { ok: false, code: 'INVALID_SETTINGS', message: 'The ante cannot be bigger than the big blind.' };
+    if (patch.openSeatStack !== undefined && !this.openSeating) return { ok: false, code: 'INVALID_SETTINGS', message: 'Starting chips only apply to an open-invite table.' };
+    if (this.openSeating && (target.openSeatStack ?? target.maxBuyIn) < target.bigBlind) {
+      return { ok: false, code: 'INVALID_SETTINGS', message: 'Starting chips must be at least one big blind.' };
+    }
+    // Only its link gets anyone into an open-invite table — it can't go public.
+    if (patch.isPrivate === false && this.openSeating) return { ok: false, code: 'INVALID_SETTINGS', message: 'An open-invite table is always private.' };
 
     const { smallBlind, bigBlind, ante, straddleEnabled, name, ...immediate } = patch;
     if (name !== undefined) {

@@ -80,15 +80,16 @@ const MOVE_TOLERANCE_PX = 10;
 
 /**
  * Hold-to-open (1 second, finger or mouse) and right-click handlers, bound
- * per seat — `onOpen` gets the seat and where to put the menu. Holding still
+ * per seat (or per lobby table — anything with a key) — `onOpen` gets the
+ * key and where to put the menu. Holding still
  * is what counts: moving more than a few pixels (a scroll, a swipe) cancels
  * it. A touch long-press's own browser "right click" (Android fires one at
  * about half a second) is ignored, so it's always the full second.
  */
-export function useSeatMenuGesture(
-  onOpen: (seatId: number, x: number, y: number) => void,
+export function useSeatMenuGesture<K = number>(
+  onOpen: (key: K, x: number, y: number) => void,
   enabled: boolean,
-): (seatId: number) => {
+): (key: K) => {
   onPointerDown: (e: React.PointerEvent) => void;
   onPointerMove: (e: React.PointerEvent) => void;
   onPointerUp: () => void;
@@ -104,7 +105,7 @@ export function useSeatMenuGesture(
     start.current = null;
   };
   useEffect(() => cancel, []);
-  return (seatId) => ({
+  return (key) => ({
     onPointerDown: (e) => {
       lastPointer.current = e.pointerType;
       if (!enabled || e.button !== 0) return;
@@ -123,7 +124,7 @@ export function useSeatMenuGesture(
         window.addEventListener('click', swallow, { capture: true, once: true });
         window.addEventListener('pointerup', () => setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0), { once: true });
         if ('vibrate' in navigator) navigator.vibrate(30);
-        onOpen(seatId, clientX, clientY);
+        onOpen(key, clientX, clientY);
       }, HOLD_MS);
     },
     onPointerMove: (e) => {
@@ -136,7 +137,7 @@ export function useSeatMenuGesture(
       e.preventDefault();
       if (lastPointer.current === 'touch') return; // the hold timer opens it
       cancel();
-      onOpen(seatId, e.clientX, e.clientY);
+      onOpen(key, e.clientX, e.clientY);
     },
   });
 }

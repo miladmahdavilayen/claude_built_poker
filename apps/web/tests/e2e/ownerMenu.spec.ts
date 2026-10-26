@@ -86,9 +86,10 @@ test('chips added mid-hand show as pending and land on the stack when the hand e
   const stackText = async (): Promise<number> => Number(((await alice.locator('[data-testid="seat-1"] .seat-stack').textContent()) ?? '').replace(/[$,]/g, ''));
   await playHandToCompletion([owner, alice]);
   await expect(alice.locator('[data-testid="seat-1"] .seat-tag-pending')).toHaveCount(0);
-  // Whatever the hand did to her stack, the table's chips grew by exactly the $50.
-  const ownerStack = Number(((await owner.locator('[data-testid="seat-0"] .seat-stack').textContent()) ?? '').replace(/[$,]/g, ''));
-  expect(ownerStack + (await stackText())).toBe(250);
+  // Whatever the hand did to her stack, the table's chips grew by exactly the $50. (Polled: a winner's stack
+  // counts up to its new total for a moment after the hand — Seat.tsx's count-up.)
+  const ownerStackText = async (): Promise<number> => Number(((await owner.locator('[data-testid="seat-0"] .seat-stack').textContent()) ?? '').replace(/[$,]/g, ''));
+  await expect.poll(async () => (await ownerStackText()) + (await stackText()), { timeout: 5000 }).toBe(250);
 });
 
 test('deleting a seat mid-hand removes it for everyone; adding a seat brings it back', async ({ browser }) => {

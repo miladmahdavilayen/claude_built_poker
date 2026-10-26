@@ -22,6 +22,21 @@ test('the hand winner sees a celebratory banner, and the other player sees a sub
   await startHand(pageA);
   await pageA.waitForSelector('[data-testid="fairness-commitment"]', { timeout: 10_000 });
 
+  // The banner and the loss cue are transient (they fade after ~2.4s — see
+  // WinCelebration.tsx), and a slow CI runner can take longer than that just
+  // to notice the hand ended. So each page watches for them from now on —
+  // catching them the moment they appear — rather than looking afterwards.
+  const watch = (page: typeof pageA, selector: string): Promise<string | null> =>
+    page
+      .locator(selector)
+      .first()
+      .waitFor({ state: 'visible', timeout: 120_000 })
+      .then(async () => (await page.locator(selector).first().textContent().catch(() => '')) ?? '')
+      .catch(() => null);
+  const seen = { aWin: watch(pageA, '.viewer-win-banner'), bWin: watch(pageB, '.viewer-win-banner'), aLoss: watch(pageA, '.viewer-loss-badge'), bLoss: watch(pageB, '.viewer-loss-badge') };
+  // Whatever it saw within a few seconds of the hand ending (null: nothing).
+  const within = (p: Promise<string | null>): Promise<string | null> => Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 6000))]);
+
   // Check/call only, on both pages, until showdown — a real winner is decided by the cards.
   let guard = 0;
   while (guard < 300) {
@@ -37,48 +52,20 @@ test('the hand winner sees a celebratory banner, and the other player sees a sub
   }
   await expect(pageA.getByText('Verify hand fairness')).toBeVisible();
 
-  // The banner is transient (fades after ~2.4s — see
-  // WinCelebration.tsx's VIEWER_WIN_BANNER_MS), so a one-shot .isVisible()
-  // snapshot right here is a real flakiness risk under load (the render
-  // can lag slightly behind "Verify hand fairness" appearing) — retry
-  // each check instead of taking a single instant DOM read.
-  // A short timeout, not the full ~2.4s lifetime: the WINNING page's
-  // banner renders essentially instantly (a client-side state update off
-  // an already-received socket event, no round-trip involved) — the
-  // timeout here is really only how long the LOSING page's check has to
-  // block before concluding "never showed," and every other transient
-  // badge (loss cue, other-win badge) shares the same fading clock, so
-  // keeping this tight leaves them real time left to still be checked.
-  async function winBannerShown(page: typeof pageA): Promise<boolean> {
-    try {
-      await expect(page.locator('.viewer-win-banner')).toBeVisible({ timeout: 1000 });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  // Checked in parallel — sequential checks would burn pageA's full
-  // retry window before ever looking at pageB, racing the SAME 2.4s
-  // clock pageB's own banner is fading against.
-  const [aWon, bWon] = await Promise.all([winBannerShown(pageA), winBannerShown(pageB)]);
-  // At least one page must see its own win — but with random cards
-  // checked to a natural showdown, a genuine SPLIT POT (both players
-  // holding the same best five-card hand, e.g. both playing the board)
-  // is a real, not-rare outcome, and BOTH pages correctly show their own
-  // "You Win!" banner in that case — this isn't a bug to guard against,
-  // it's the same behavior asserted per-page below applying to two
-  // winners instead of one.
-  expect(aWon || bWon).toBe(true);
-
-  if (aWon) await expect(pageA.locator('.viewer-win-banner')).toContainText('You Win!');
-  if (bWon) await expect(pageB.locator('.viewer-win-banner')).toContainText('You Win!');
+  const [aWin, bWin] = await Promise.all([within(seen.aWin), within(seen.bWin)]);
+  // At least one page sees its own win. With random cards checked down to a
+  // showdown, a genuine split pot (both playing the board, say) is a real
+  // outcome, and then BOTH pages rightly show their own "You Win!".
+  expect(aWin !== null || bWin !== null).toBe(true);
+  if (aWin !== null) expect(aWin).toContain('You Win!');
+  if (bWin !== null) expect(bWin).toContain('You Win!');
 
   // Only test the loser-specific cue when there genuinely is a lone loser.
-  if (aWon !== bWon) {
-    const loserPage = aWon ? pageB : pageA;
-    await expect(loserPage.locator('.viewer-loss-badge')).toContainText('Not this hand');
-    // The loser's page never shows the big celebratory banner for themselves.
-    await expect(loserPage.locator('.viewer-win-banner')).toHaveCount(0);
+  if ((aWin !== null) !== (bWin !== null)) {
+    const loserLoss = await within(aWin !== null ? seen.bLoss : seen.aLoss);
+    expect(loserLoss).toContain('Not this hand');
+    // The loser's page never showed the big celebratory banner for themselves.
+    expect(aWin !== null ? bWin : aWin).toBeNull();
   }
 
   await ctxA.close();

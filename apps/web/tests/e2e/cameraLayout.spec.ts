@@ -136,15 +136,14 @@ test('more than 4 human cameras on a phone screen collapse to a 2-tile speaker b
 test('on the 3D table, more than 4 cameras on a phone screen stay on their own seats — no speaker bar', async ({ browser }) => {
   const { pages, contexts } = await seatHumans(browser, ['Olga', 'Pete', 'Quinn', 'Rosa'], PHONE_VIEWPORT);
   const [owner] = pages as [Page, Page, Page, Page, Page];
-  // Seated on the 2D table (every empty seat is in reach there), then everyone sits down to the 3D one.
-  for (const page of pages) {
-    await page.evaluate(() => {
-      localStorage.setItem('pokerclause.tableView', 'seated');
-      localStorage.setItem('pokerclause.tableQuality', 'low');
-    });
-    await page.reload();
-    await expect(page.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
-  }
+  // Seated on the 2D table (every empty seat is in reach there), then the owner switches to the 3D one.
+  // Only the owner: CI draws 3D in software, and five 3D tables at once would step themselves down to 2D.
+  await owner.evaluate(() => {
+    localStorage.setItem('pokerclause.tableView', 'seated');
+    localStorage.setItem('pokerclause.tableQuality', 'low');
+  });
+  await owner.reload();
+  await expect(owner.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
 
   for (const page of pages) {
     await page.getByRole('button', { name: '🎥 Join with video' }).click();

@@ -33,7 +33,10 @@ const API = opt('api', 'https://api.pokerclause.com');
 const HANDS = Number(opt('hands', '4'));
 const PLAYERS = Math.min(9, Math.max(2, Number(opt('players', '9'))));
 const STATE_FILE = opt('admin-state', join(homedir(), '.pokerclause-sim', `owner-${new URL(WEB).hostname}.json`));
-const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.');
+const now = new Date();
+const pad = (n) => String(n).padStart(2, '0');
+// Local time, the way it reads on the Desktop.
+const stamp = `${String(now.getFullYear())}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}.${pad(now.getMinutes())}`;
 const OUT = opt('out', join(homedir(), 'Desktop', `PokerClause ${String(PLAYERS)}-player sim ${stamp}`));
 const PHONE = devices['iPhone 15 Pro'];
 const NAMES = ['Owner', 'Ava', 'Ben', 'Cleo', 'Dev', 'Emi', 'Finn', 'Gus', 'Hana'];
@@ -223,8 +226,14 @@ class Player {
       cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => undefined);
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: width * 2, maxHeight: height * 2 });
+    // Paced by the clock, not the timer: when this machine is busy and a tick comes late, the
+    // latest frame is repeated to catch up, so the video runs at real speed.
+    const start = Date.now();
+    let written = 0;
     this.ticker = setInterval(() => {
-      if (frame) this.ffmpeg.stdin.write(frame);
+      if (!frame) return;
+      const due = Math.floor(((Date.now() - start) * 15) / 1000);
+      for (; written < due; written++) this.ffmpeg.stdin.write(frame);
     }, 1000 / 15);
   }
 
@@ -311,11 +320,16 @@ class Player {
     let did = null;
     const at = Date.now();
     try {
-      if (r < 0.1 && (await btn('Raise').isVisible())) {
+      // A big bet to call (over $30 of the $200 start): mostly let it go, so the table doesn't bust in one hand.
+      const toCall = Number(((await call.textContent({ timeout: 500 }).catch(() => '')) ?? '').replace(/[^0-9.]/g, '')) || 0;
+      if (toCall > 30 && r < 0.7 && (await btn('Fold').isVisible())) {
+        await btn('Fold').click();
+        did = 'fold';
+      } else if (r < 0.04 && toCall <= 10 && (await btn('Raise').isVisible())) {
         await btn('Raise').click();
         await this.sendHalfPot();
         did = 'raise';
-      } else if (r < 0.16 && (await btn('Bet').isVisible())) {
+      } else if (r < 0.1 && (await btn('Bet').isVisible())) {
         await btn('Bet').click();
         await this.sendHalfPot();
         did = 'bet';
@@ -388,10 +402,13 @@ if (opt('admin-password')) {
   await op.locator('form').getByRole('button', { name: 'Log in' }).click();
 }
 else await op.goto(`${WEB}/lobby`);
-await op.waitForURL(/\/lobby/, { timeout: 30_000 }).catch(() => {
+await op.waitForURL(/\/lobby/, { timeout: 30_000 }).then(() => op.getByRole('button', { name: 'Create table' }).waitFor({ timeout: 30_000 })).catch(() => {
   console.error('The owner is not signed in (the saved session may have expired). Run with --login again.');
   process.exit(1);
 });
+
+// The server rotates the sign-in on every use: keep the fresh one for the next run.
+if (!opt('admin-password')) await owner.ctx.storageState({ path: STATE_FILE });
 
 // The table: open invite, one link for everyone, $200 each.
 const tableName = `Sim ${String(PLAYERS)} humans ${stamp.slice(11)}`;
@@ -535,6 +552,7 @@ if (!flag('keep-table')) {
 }
 
 for (const p of players) await p.stopRecording();
+if (!opt('admin-password')) await owner.ctx.storageState({ path: STATE_FILE }).catch(() => undefined);
 for (const p of players) {
   await p.ctx.close();
   await p.browser.close();

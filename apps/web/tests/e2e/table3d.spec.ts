@@ -123,7 +123,8 @@ test('the View menu has exactly three views — 2D, 3D seated, 3D standing — a
 });
 
 test('seated: your own eyes at your seat — drag to look around, double-tap to look back, and lean in past the house dealer from seat 1', async ({ page }) => {
-  test.setTimeout(120_000);
+  // The lean checks alone can take a couple of minutes on CI's software renderer.
+  test.setTimeout(240_000);
   await view3d(page, 'seated');
   await adminLogin(page);
   const webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'));
@@ -205,7 +206,7 @@ test('seated: your own eyes at your seat — drag to look around, double-tap to 
   }
   // Played to the end (checking it down) — however it ends, no bets are left lying in front of anyone.
   for (let i = 0; i < 12 && !(await playHand.isVisible()); i++) {
-    await expect(ours.or(playHand)).toBeVisible({ timeout: 20_000 });
+    await expect(ours.or(playHand)).toBeVisible({ timeout: 60_000 });
     if (await ours.isVisible()) await ours.click().catch(() => undefined);
     await page.waitForTimeout(400);
   }

@@ -81,10 +81,12 @@ export interface SceneCallbacks {
 
 /**
  * A seated player's eyes: just behind their own stretch of rail (their
- * chest at the cushion) at a seated adult's eye height — about 42 cm above
- * the felt, in table units of half a metre.
+ * chest at the cushion), about 53 cm above the felt, in table units of half
+ * a metre — a seated adult's eye height (about 43 cm) plus 4 inches,
+ * sitting up straight, so the felt reads a little better from every seat.
+ * (To really read the board you lean in over it: BOARD_LEAN.)
  */
-const EYE = { out: 0.3, y: 0.86 } as const;
+const EYE = { out: 0.3, y: 1.063 } as const;
 
 /**
  * Bending forward over the rail: the eyes come in this far over the felt
@@ -93,6 +95,19 @@ const EYE = { out: 0.3, y: 0.86 } as const;
  * the way you'd lean in at a real table.
  */
 const LEAN = { forward: 0.7, down: 0.14 } as const;
+
+/**
+ * Leaning in over the community cards (drag the table toward you — see
+ * lookControls' vertical): the eyes come this far in toward the board, rise
+ * this much (head up over the felt, like standing half up out of the
+ * chair), and never closer than `nearest` to the board's middle. At full
+ * lean the view looks straight at the board.
+ */
+const BOARD_LEAN = { forward: 1.25, up: 0.3, nearest: 1.15 } as const;
+
+function smooth(t: number): number {
+  return t * t * (3 - 2 * t);
+}
 
 const FLOOR_Y = -1.56;
 /** The page's controls on the felt that seat boxes keep clear of (see Table.tsx). */
@@ -666,6 +681,17 @@ export class TableScene {
     const heading = Math.atan2(0 - sitting.x, HOUSE.boardZ - sitting.z);
     const p = edgePoint(own.s, -EYE.out + LEAN.forward * this.lean);
     const eye = new THREE.Vector3(p.x, EYE.y - LEAN.down * this.lean, p.z);
+    // Leaning in over the board: straight toward its middle, and up a little.
+    const b = this.boardLean;
+    if (b > 0) {
+      const toX = 0 - eye.x;
+      const toZ = HOUSE.boardZ - eye.z;
+      const dist = Math.hypot(toX, toZ);
+      const go = Math.max(0, Math.min(BOARD_LEAN.forward, dist - BOARD_LEAN.nearest)) * b;
+      eye.x += (toX / dist) * go;
+      eye.z += (toZ / dist) * go;
+      eye.y += BOARD_LEAN.up * b;
+    }
     return { eye, heading };
   }
 
@@ -677,6 +703,8 @@ export class TableScene {
    */
   private leanGoal(): number {
     if (this.leanManual) return 1;
+    // Leaning in over the board takes over from leaning past the dealer.
+    if (this.boardLean > 0.02) return 0;
     const own = this.viewerSeatId !== null ? this.placementBySeat.get(this.viewerSeatId) : undefined;
     if (!own || (own.s > 0.16 && own.s < 0.84)) return 0;
     const sitting = edgePoint(own.s, -EYE.out);
@@ -713,6 +741,11 @@ export class TableScene {
     return lo > hi ? hi : Math.min(hi, Math.max(lo, -toBoard));
   }
 
+  /** How far the seated viewer is leaning in over the board (eased), from their drag. */
+  private get boardLean(): number {
+    return this.eyes ? smooth(this.look.current.lean) : 0;
+  }
+
   /** Eases the lean toward its goal; true while it's still moving. */
   private updateLean(dt: number): boolean {
     const goal = this.eyes ? this.leanGoal() : 0;
@@ -739,8 +772,18 @@ export class TableScene {
   private eyeView(): CameraView {
     const base = this.eyeBase()!;
     const L = this.look.current;
-    const heading = base.heading + L.yaw;
-    const pitch = this.look.basePitch + L.pitch;
+    let heading = base.heading + L.yaw;
+    let pitch = this.look.basePitch + L.pitch;
+    // Leaning in, the eyes go to the board: by full lean, looking right at its middle.
+    const b = this.boardLean;
+    if (b > 0) {
+      const toX = 0 - base.eye.x;
+      const toZ = HOUSE.boardZ - base.eye.z;
+      const atBoard = Math.atan2(toX, toZ);
+      const down = -Math.atan2(base.eye.y, Math.hypot(toX, toZ));
+      heading += Math.atan2(Math.sin(atBoard - heading), Math.cos(atBoard - heading)) * b;
+      pitch += (down - pitch) * b;
+    }
     const dir = new THREE.Vector3(Math.sin(heading) * Math.cos(pitch), Math.sin(pitch), Math.cos(heading) * Math.cos(pitch));
     return { pos: base.eye.clone(), target: base.eye.clone().add(dir), fov: this.seatedFov() * L.zoom };
   }
@@ -1072,6 +1115,8 @@ export class TableScene {
       this.cards.muck(key);
     }
     if (snap.board.length < this.boardCount) this.boardCount = snap.board.length;
+    // Leaning in over the board: only once there's a flop to lean over.
+    this.look.leanAllowed = snap.board.length >= 3;
     this.boardCount = Math.max(this.boardCount, snap.board.length);
 
     // Bets, in front of each player.
@@ -1512,7 +1557,7 @@ export class TableScene {
   }
 
   /** For tests and the dev console: what the scene currently holds. */
-  debugState(): { cards: string[]; stacks: string[]; cameraYaw: number; lean: number; viewerSeatId: number | null; button: boolean; geometries: number; textures: number; objects: number } {
+  debugState(): { cards: string[]; stacks: string[]; cameraYaw: number; lean: number; boardLean: number; viewerSeatId: number | null; button: boolean; geometries: number; textures: number; objects: number } {
     let objects = 0;
     this.scene.traverse(() => objects++);
     return {
@@ -1520,6 +1565,7 @@ export class TableScene {
       stacks: this.chips.stackKeys(),
       cameraYaw: this.rig.yaw,
       lean: this.lean,
+      boardLean: this.boardLean,
       viewerSeatId: this.viewerSeatId,
       button: this.button.group.visible,
       geometries: this.renderer.info.memory.geometries,

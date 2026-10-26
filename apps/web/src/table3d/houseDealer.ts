@@ -134,21 +134,22 @@ function clipLibrary(): Record<Exclude<DealerClip, 'deal'>, THREE.AnimationClip>
       { t: 0.5, pose: { chest: off('chest', 4, -10), upperArmR: off('upperArmR', -18, 0, -18), foreArmR: off('foreArmR', 6) } },
       { t: 1, pose: {} },
     ]),
-    // Flop: three cards pulled out and spread across the board, right to left.
+    // Flop: three cards pulled out and spread across the board, from his left to his right.
     flop: buildClip('flop', T.dealerFlopS, [
       { t: 0, pose: {} },
-      { t: 0.3, pose: { chest: off('chest', 10, -8), upperArmR: off('upperArmR', -44, 0, -6), foreArmR: off('foreArmR', 34), head: off('head', 10) } },
-      { t: 0.65, pose: { chest: off('chest', 10, 8), upperArmR: off('upperArmR', -44, 0, 22), foreArmR: off('foreArmR', 34), head: off('head', 10) } },
+      { t: 0.3, pose: { chest: off('chest', 10, 8), upperArmR: off('upperArmR', -44, 0, 22), foreArmR: off('foreArmR', 34), head: off('head', 10) } },
+      { t: 0.65, pose: { chest: off('chest', 10, -8), upperArmR: off('upperArmR', -44, 0, -6), foreArmR: off('foreArmR', 34), head: off('head', 10) } },
       { t: 1, pose: {} },
     ]),
     turn: buildClip('turn', T.dealerStreetS, [
       { t: 0, pose: {} },
-      { t: 0.5, pose: { chest: off('chest', 10, 4), upperArmR: off('upperArmR', -46, 0, 10), foreArmR: off('foreArmR', 36), head: off('head', 10) } },
+      // The turn and river land on his right, past the flop.
+      { t: 0.5, pose: { chest: off('chest', 10, -4), upperArmR: off('upperArmR', -46, 0, 2), foreArmR: off('foreArmR', 36), head: off('head', 10) } },
       { t: 1, pose: {} },
     ]),
     river: buildClip('river', T.dealerStreetS, [
       { t: 0, pose: {} },
-      { t: 0.5, pose: { chest: off('chest', 10, 10), upperArmR: off('upperArmR', -46, 0, 18), foreArmR: off('foreArmR', 36), head: off('head', 10) } },
+      { t: 0.5, pose: { chest: off('chest', 10, -10), upperArmR: off('upperArmR', -46, 0, -6), foreArmR: off('foreArmR', 36), head: off('head', 10) } },
       { t: 1, pose: {} },
     ]),
     // Collect: both arms reach out over the felt and sweep the cards and chips in.

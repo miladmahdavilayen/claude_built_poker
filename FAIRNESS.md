@@ -35,6 +35,28 @@ to have mattered for this specific hand, and the deck derivation mixes in
 every seated player's `clientSeed`, no single party — not the house, not
 any one player — can unilaterally choose or predict the outcome.
 
+## Checking a hand at the table
+
+Players don't need any of the details below. After a hand, **Verify hand
+fairness** opens a short check in plain words, in three steps: sealed
+before the deal, shuffled with everyone's seed, opened and re-checked.
+- **Checked on the player's device:** the browser does the check itself and
+  doesn't take the server's word for it (`apps/web/src/fairness.ts`).
+  - It hashes the revealed server seed and compares it with the fairness
+    commitment shown before the deal.
+  - It re-derives the whole deck with the same HMAC counter-mode stream and
+    unbiased Fisher-Yates shuffle as `packages/rng`, and compares it card by
+    card with the deck that was dealt.
+  - It uses its own SHA-256/HMAC, not the browser's Web Crypto. Web Crypto
+    only exists on https pages (and localhost), and the check has to work
+    wherever the table is open.
+- **What it shows:** the rebuilt top of the deck, with this hand's board and
+  your cards highlighted. The raw numbers sit under "Check it yourself".
+- **Kept honest:** `apps/server/tests/browserFairness.test.ts` checks the
+  hashing against the standard test vectors. It also checks that the browser
+  and server agree hand after hand, and that both catch a tampered deck or
+  commitment.
+
 ## Verifying a hand
 
 ```

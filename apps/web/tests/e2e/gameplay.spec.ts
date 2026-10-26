@@ -32,9 +32,14 @@ test('two guests sit down, play a full hand with no hole-card leakage, and can v
 
   await playHandToCompletion([pageA, pageB]);
 
-  await expect(pageA.getByText('Verify hand fairness')).toBeVisible();
-  const fairnessHref = await pageA.getByText('Verify hand fairness').getAttribute('href');
+  // Verify hand fairness: the check runs in the player's own browser (see fairnessCheck.spec.ts), and
+  // the server's raw record it links to agrees.
+  await pageA.getByRole('button', { name: 'Verify hand fairness' }).click();
+  const dialog = pageA.getByRole('dialog', { name: 'Hand fairness' });
+  await expect(dialog).toContainText('This hand was dealt fairly', { timeout: 15_000 });
+  const fairnessHref = await dialog.locator('a', { hasText: 'Raw record (JSON)' }).getAttribute('href');
   expect(fairnessHref).toMatch(/\/fairness\//);
+  await dialog.getByRole('button', { name: 'Close' }).click();
 
   // Since this heads-up hand went to a natural showdown (only check/call was
   // ever clicked, nobody folded), both hole cards are now legitimately public.

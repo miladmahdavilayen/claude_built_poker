@@ -370,8 +370,8 @@ export class Cards3d {
     if (card.dest) return out.copy(card.dest);
     const s = card.slot;
     if (s.kind === 'board') {
-      // Left to right as the players across from the house dealer see it (their left is +X).
-      return out.set((2 - s.index) * HOUSE.boardSpacing + card.jitter.x * 0.5, CARD_T * 0.5, HOUSE.boardZ + card.jitter.z * 0.5);
+      // Dealt from the house dealer's left to his right, as dealers do (facing the table, his left is -X).
+      return out.set((s.index - 2) * HOUSE.boardSpacing + card.jitter.x * 0.5, CARD_T * 0.5, HOUSE.boardZ + card.jitter.z * 0.5);
     }
     if (s.kind === 'muck') {
       return out.set(HOUSE.muckX + card.jitter.x, CARD_T * (0.5 + (s.n % 12)), HOUSE.muckZ + card.jitter.z);

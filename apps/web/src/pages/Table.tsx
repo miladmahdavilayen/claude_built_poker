@@ -1,6 +1,5 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { API_BASE } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { ActionBar } from '../components/ActionBar.js';
 import { ActionLog } from '../components/ActionLog.js';
@@ -18,6 +17,7 @@ import { NO_SPLIT_EFFECTS, SplitPotAnnouncement, type SplitSeatEffects } from '.
 import { TableViewMenu } from '../components/TableViewMenu.js';
 import { DealerPicker } from '../components/DealerPicker.js';
 import { SeatMoveModal } from '../components/SeatMoveModal.js';
+import { FairnessCheck } from '../components/FairnessCheck.js';
 import { dealerModelUrl, useDealerCharacters } from '../table3d/dealers.js';
 import type { PotAnimator } from '../table3d/TableScene3D.js';
 import { useTableView } from '../table3d/useTableView.js';
@@ -138,6 +138,8 @@ export function TablePage(): React.JSX.Element {
   const [seatModal, setSeatModal] = useState<number | null>(null);
   // Moving your own seat to an empty one (anyone seated): the seat it's to.
   const [moveTarget, setMoveTarget] = useState<number | null>(null);
+  // The fairness check: the hand it's for, captured when opened (a new hand starting doesn't swap it).
+  const [fairness, setFairness] = useState<{ handId: string | null; commitment: string | null; board: string[]; mine: string[]; players: number } | null>(null);
   // '' is a real intermediate state (the field cleared, not yet retyped) —
   // coercing an empty string straight to 0 made the DOM input's value jump
   // to "0" mid-edit, so retyping "500" over a cleared "500" produced "0500".
@@ -626,6 +628,15 @@ export function TablePage(): React.JSX.Element {
   const emptySeatClickable = (seat: (typeof state.seats)[number]): boolean =>
     (user.role === 'admin' || sock.canManageTable || openSeatForMe) && !sock.isPractice && !mySeat && seat.status === 'empty';
 
+  const openFairness = (): void =>
+    setFairness({
+      handId: state.handId,
+      commitment: state.handCommitment,
+      board: [...state.board],
+      mine: [...(mySeat?.holeCards ?? [])],
+      players: state.seats.filter((s) => s.status === 'active' || s.status === 'folded' || s.status === 'all-in').length,
+    });
+
   /** An empty seat's options for this viewer: sitting down, a computer player, an invite — each only where it's allowed. */
   const emptySeatOptions = (seat: (typeof state.seats)[number]): SeatAction[] => {
     const id = seat.seatId;
@@ -831,9 +842,9 @@ export function TablePage(): React.JSX.Element {
           </div>
         )}
         {state.phase === 'hand-complete' && state.handId && (
-          <a className="fairness-link" href={`${API_BASE}/fairness/${state.handId}`} target="_blank" rel="noreferrer">
+          <button type="button" className="fairness-link" onClick={openFairness}>
             Verify hand fairness
-          </a>
+          </button>
         )}
         {/* Always mounted — ActionTimer.tsx handles `deadline === null` itself
             (fades out via CSS opacity, ticks nothing). Wrapping this in
@@ -960,6 +971,17 @@ export function TablePage(): React.JSX.Element {
         {dockOpen &&
           (bottomTab === 'chat' ? <ChatPanel messages={chatWithDealer} onSend={sock.sendChat} /> : <ActionLog events={sock.recentEvents} seats={state.seats} />)}
       </div>
+
+      {fairness && (
+        <FairnessCheck
+          handId={fairness.handId}
+          commitment={fairness.commitment}
+          board={fairness.board}
+          myCards={fairness.mine}
+          players={fairness.players}
+          onClose={() => setFairness(null)}
+        />
+      )}
 
       {moveTarget !== null && (
         <SeatMoveModal

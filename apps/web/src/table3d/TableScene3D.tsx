@@ -248,7 +248,7 @@ export default function TableScene3D({
       {mode === 'seated' && state.viewerSeatId !== null && (
         <>
           <div className="table3d-look-hint" aria-hidden="true">
-            Drag to look around · double-tap to center
+            Drag to look around · pull down to lean over the board · double-tap to center
           </div>
           {/* Bend forward over the rail for a closer look — at seats 1 and 9 you also lean in on your own when you turn toward the dealer. */}
           <button

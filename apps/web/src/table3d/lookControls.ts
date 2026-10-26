@@ -1,8 +1,10 @@
 // Turning your head at the table (the 3D seated view): press and drag to
 // look around — you drag the scene itself, the way a phone's 360° photos
-// work: drag left and the view turns right, drag down and it looks up —
-// with the motion smoothed and carried on a little after letting go, like
-// a head turning rather than a camera snapping. Pinch (or the mouse wheel)
+// work: drag left and the view turns right. Drag down — pulling the table
+// toward you — and you lean in over the community cards; drag up and you
+// sit back, then look down toward your lap. All of it smoothed and carried
+// on a little after letting go, like a head turning rather than a camera
+// snapping. Pinch (or the mouse wheel)
 // narrows or widens your field of view, as leaning in or sitting back
 // would. A double tap or double click looks back at the table. A press
 // that doesn't move is still a tap, for whatever's under it (an empty
@@ -19,6 +21,8 @@ const MAX_YAW = (115 * Math.PI) / 180;
 /** Down to your lap, up over the far players' heads. */
 const MIN_PITCH = (-62 * Math.PI) / 180;
 const MAX_PITCH = (24 * Math.PI) / 180;
+/** How much lean a vertical drag gives per radian of look: a drag of about a third of the screen takes you all the way in. */
+const LEAN_PER_RADIAN = 3;
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 1.35;
 /** A press that moves less than this (px) is a tap, not a drag. */
@@ -34,6 +38,8 @@ export interface LookState {
   yaw: number;
   pitch: number;
   zoom: number;
+  /** Leaning in over the community cards: 0 sitting back, 1 all the way in. */
+  lean: number;
 }
 
 /** How far past a zoom limit the gesture has to carry on before it changes the view. */
@@ -45,8 +51,8 @@ export class LookControls {
   zoomOnly = false;
   private overshoot = 0;
   /** Where the view is now (smoothed) and where it's heading. */
-  readonly current: LookState = { yaw: 0, pitch: 0, zoom: 1 };
-  private readonly goal: LookState = { yaw: 0, pitch: 0, zoom: 1 };
+  readonly current: LookState = { yaw: 0, pitch: 0, zoom: 1, lean: 0 };
+  private readonly goal: LookState = { yaw: 0, pitch: 0, zoom: 1, lean: 0 };
   private velocity = { yaw: 0, pitch: 0 };
   private readonly pointers = new Map<number, { x: number; y: number }>();
   private drag: { id: number; startX: number; startY: number; lastX: number; lastY: number; lastT: number; moved: boolean } | null = null;
@@ -58,6 +64,12 @@ export class LookControls {
   private readonly onTap: (ev: PointerEvent) => void;
   /** The base pitch the angles are added to, so the limits are absolute. */
   basePitch = 0;
+  /**
+   * Whether there's a board to lean over (the flop is down). Until then a
+   * downward drag looks up instead, and any lean eases back — a new hand
+   * sits everyone back.
+   */
+  leanAllowed = false;
 
   private readonly onZoomBeyond: (dir: 'in' | 'out') => void;
   private readonly onDoubleTap: (ev: PointerEvent) => boolean;
@@ -93,7 +105,7 @@ export class LookControls {
 
   /** Looking somewhere other than straight at the table. */
   get offCenter(): boolean {
-    return Math.abs(this.goal.yaw) > 0.04 || Math.abs(this.goal.pitch) > 0.04 || Math.abs(this.goal.zoom - 1) > 0.03;
+    return Math.abs(this.goal.yaw) > 0.04 || Math.abs(this.goal.pitch) > 0.04 || Math.abs(this.goal.zoom - 1) > 0.03 || this.goal.lean > 0.04;
   }
 
   get dragging(): boolean {
@@ -105,7 +117,31 @@ export class LookControls {
     this.goal.yaw = 0;
     this.goal.pitch = 0;
     this.goal.zoom = 1;
+    this.goal.lean = 0;
     this.velocity = { yaw: 0, pitch: 0 };
+  }
+
+  /**
+   * A vertical drag (radians; positive when the finger moves down). Down
+   * first lifts any look toward your lap back to level, then leans you in
+   * over the board; up first sits you back, then looks down. One motion
+   * either way, so it never jumps.
+   */
+  private vertical(d: number): void {
+    if (!this.leanAllowed) {
+      this.goal.pitch += d;
+      this.clampGoal();
+      return;
+    }
+    if (d > 0) {
+      const lift = Math.min(d, Math.max(0, -this.goal.pitch));
+      this.goal.pitch += lift;
+      this.goal.lean = Math.min(1, this.goal.lean + (d - lift) * LEAN_PER_RADIAN);
+    } else {
+      const back = Math.min(-d * LEAN_PER_RADIAN, this.goal.lean);
+      this.goal.lean -= back;
+      this.goal.pitch += d + back / LEAN_PER_RADIAN;
+    }
   }
 
   /** Straight to the goal, no easing (reduced motion, or a new seat). */
@@ -115,15 +151,19 @@ export class LookControls {
 
   private clampGoal(): void {
     this.goal.yaw = Math.max(-MAX_YAW, Math.min(MAX_YAW, this.goal.yaw));
-    this.goal.pitch = Math.max(MIN_PITCH - this.basePitch, Math.min(MAX_PITCH - this.basePitch, this.goal.pitch));
+    // With a board to lean over, a downward drag leans you in rather than looking up: level is the top.
+    const top = this.leanAllowed ? Math.min(0, MAX_PITCH - this.basePitch) : MAX_PITCH - this.basePitch;
+    this.goal.pitch = Math.max(MIN_PITCH - this.basePitch, Math.min(top, this.goal.pitch));
+    this.goal.lean = this.leanAllowed ? Math.max(0, Math.min(1, this.goal.lean)) : 0;
     this.goal.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.goal.zoom));
   }
 
   /** Advances the smoothing and any flick; true while the view is still moving. */
   update(dt: number, instant: boolean): boolean {
+    if (!this.leanAllowed && this.goal.lean > 0) this.goal.lean = 0;
     if (!this.drag && (this.velocity.yaw !== 0 || this.velocity.pitch !== 0)) {
       this.goal.yaw += this.velocity.yaw * dt;
-      this.goal.pitch += this.velocity.pitch * dt;
+      this.vertical(this.velocity.pitch * dt);
       this.clampGoal();
       const decay = Math.exp(-FRICTION * dt);
       this.velocity.yaw *= decay;
@@ -132,7 +172,7 @@ export class LookControls {
     }
     const k = instant ? 1 : 1 - Math.exp(-FOLLOW * dt);
     let moving = false;
-    for (const key of ['yaw', 'pitch', 'zoom'] as const) {
+    for (const key of ['yaw', 'pitch', 'zoom', 'lean'] as const) {
       const d = this.goal[key] - this.current[key];
       if (Math.abs(d) < 1e-4) {
         this.current[key] = this.goal[key];
@@ -184,11 +224,11 @@ export class LookControls {
     const dx = ev.clientX - drag.lastX;
     const dy = ev.clientY - drag.lastY;
     const k = this.radiansPerPx() * this.current.zoom;
-    // Dragging the scene: left turns the head right (a decreasing heading), down looks up.
+    // Dragging the scene: left turns the head right (a decreasing heading); down leans you in (see vertical).
     const dYaw = dx * k;
     const dPitch = dy * k;
     this.goal.yaw += dYaw;
-    this.goal.pitch += dPitch;
+    this.vertical(dPitch);
     this.clampGoal();
     const dt = Math.max(1, now - drag.lastT) / 1000;
     // A running average of the finger's speed, for the carry-on after letting go.

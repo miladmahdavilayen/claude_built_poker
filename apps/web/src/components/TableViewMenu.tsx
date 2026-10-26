@@ -4,7 +4,7 @@ import type { TableView } from '../table3d/useTableView.js';
 
 const CHOICES: { value: TableViewChoice; label: string; hint: string }[] = [
   { value: '2d', label: 'Classic 2D', hint: 'The flat table, seen from above' },
-  { value: 'seated', label: '3D — Seated', hint: 'Your own eyes at your seat. Drag to look around' },
+  { value: 'seated', label: '3D — Seated', hint: 'Your own eyes at your seat. Drag to look around; pull down to lean over the board' },
   { value: 'standing', label: '3D — Standing', hint: 'On your feet at your seat: the whole table in view' },
 ];
 

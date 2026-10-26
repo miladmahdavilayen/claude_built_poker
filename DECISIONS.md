@@ -2436,8 +2436,11 @@ frames are slow, ending at 2D. Without WebGL it's 2D.
   face to face across the felt, the house dealer between them at the side.
 - Positions are data in `seatLayout3d.ts`.
 
-**3D Seated.** The camera is your own eyes: at a seated player's eye
-height (about 42 cm above the felt), just behind your rail.
+**3D Seated.** The camera is your own eyes, just behind your rail, about
+53 cm above the felt. That's a seated adult's eye height plus 4 inches,
+sitting up straight. We tried 7.5 inches higher, but leaning in over the
+board reads better and keeps the view natural. To read the board, pull the
+table toward you (see "Leaning in over the board" below).
 - Turning your head: press and drag. You drag the scene: drag left and you
   look right, drag down and you look up. The motion is smoothed with a
   little carry-on after a flick, and stops before looking behind you
@@ -2664,3 +2667,26 @@ browser has to download a character to draw it, but only once:
   once.
 - **Compression:** files are gzipped. The `.fbx` characters shrink by about
   a third (The Boss: 6.2 → 4.2 MB).
+
+## Leaning in over the board
+
+From any seat in the 3D seated view, once at least the flop is on the
+table, dragging down (pulling the table toward you) leans you in over the
+community cards.
+- **Before the flop,** there's nothing to lean over: dragging down just
+  looks up, as before.
+- **When a new hand starts,** the board clears and everyone eases back to
+  sitting. Dragging up sits you back, and
+past that looks down toward your lap. It's one continuous motion with no
+jumps (`lookControls.ts`'s `vertical`).
+- **How the view moves:** your eyes come in toward the middle of the board
+  by up to about 60 cm, never closer than about 55 cm to it, and rise 15 cm.
+  Your gaze swings onto the board, so at full lean it sits big and centred
+  on screen. The lean is eased like the rest of the head movement.
+- **How far to drag:** about a quarter of a laptop screen, or less on a
+  phone, takes you all the way in.
+- **Once there's a board, dragging down no longer looks up.** Looking up
+  over the far players was rarely needed; seeing the board is.
+- **Getting back:** while you're leaned in, Center view (or a double tap)
+  sits you back. Leaning past the house dealer at seats 1 and 9 gives way
+  to this lean while you're over the board.

@@ -32,7 +32,7 @@ test('the deal goes clockwise from the seat after the button and ends on the but
   expect(dealOrder([1, 4], 1)).toEqual([4, 1]);
 });
 
-type Debug = { cards: string[]; stacks: string[]; cameraYaw: number; lean: number; viewerSeatId: number | null; button: boolean };
+type Debug = { cards: string[]; stacks: string[]; cameraYaw: number; lean: number; boardLean: number; viewerSeatId: number | null; button: boolean };
 const view3d = (page: Page, view: 'seated' | 'standing'): Promise<void> =>
   page.addInitScript((v) => {
     window.localStorage.setItem('pokerclause.tableView', v);
@@ -105,9 +105,10 @@ test('the View menu has exactly three views — 2D, 3D seated, 3D standing — a
   test.skip(!webgl, 'No WebGL in this browser');
   await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'standing', { timeout: 20_000 });
   await page.getByLabel(/3D — Seated/).check();
-  await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'seated');
+  await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'seated', { timeout: 20_000 });
+  // A reload loads the 3D table (and its dealer character) afresh: the same allowance as the first load.
   await page.reload();
-  await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'seated');
+  await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'seated', { timeout: 20_000 });
   await page.getByRole('button', { name: /View/ }).click();
   await page.getByLabel(/Classic 2D/).check();
   await expect(page.getByTestId('table-3d')).toHaveCount(0);
@@ -148,6 +149,21 @@ test('seated: your own eyes at your seat — drag to look around, double-tap to 
   await expect.poll(async () => (await debug(page))?.lean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.9);
   await page.getByRole('button', { name: /Sit back/ }).click();
   await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: 5000 }).toBeLessThan(0.1);
+  // Pulling the table toward you (dragging down) leans you in over the board; dragging up sits you back.
+  const pull = async (dy: number): Promise<void> => {
+    const x = canvas.x + canvas.width / 2;
+    const y = canvas.y + canvas.height * 0.4;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(x, y + (dy * i) / 10);
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+  };
+  // No board yet: pulling the table toward you doesn't lean you in (there's nothing to lean over).
+  await pull(400);
+  await page.waitForTimeout(800);
+  expect((await debug(page))?.boardLean ?? 1).toBe(0);
+  await page.getByRole('button', { name: /Center view/ }).click();
   // A hand dealt: your cards are face up on the felt, not in your box.
   await startHand(page);
   await expect.poll(async () => (await debug(page))?.cards.filter((c) => c.startsWith('hole:0')).length ?? 0, { timeout: 15_000 }).toBe(2);
@@ -160,8 +176,27 @@ test('seated: your own eyes at your seat — drag to look around, double-tap to 
   await expect(page.getByTestId('action-ticker')).toContainText(/(checks|calls|bets|raises|folds)/, { timeout: 20_000 });
   // The player in seat 9 — on the far side of the house dealer from seat 1 — has a marker with their stack.
   await expect(page.getByTestId('edge-8')).toContainText('$');
-  // Played to the end (checking it down) — however it ends, no bets are left lying in front of anyone.
   const playHand = page.getByRole('button', { name: 'Play Hand' });
+  // Once the flop is down, the same pull leans you in over it.
+  for (let i = 0; i < 40 && !/Board: \S+ \S+ \S+/.test(await page.getByTestId('board-3d').innerText()) && !(await playHand.isVisible()); i++) {
+    if (await ours.isVisible()) await ours.click().catch(() => undefined);
+    await page.waitForTimeout(300);
+  }
+  if (/Board: \S+ \S+ \S+/.test(await page.getByTestId('board-3d').innerText())) {
+    await pull(140);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.2);
+    await pull(260);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.95);
+    await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: 5000 }).toBeLessThan(0.1);
+    await pull(-400);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 1, { timeout: 5000 }).toBeLessThan(0.02);
+    // …and the Center view button (or a double tap) brings you back from leaning in, too.
+    await pull(400);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.95);
+    await page.getByRole('button', { name: /Center view/ }).click();
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 1, { timeout: 5000 }).toBeLessThan(0.02);
+  }
+  // Played to the end (checking it down) — however it ends, no bets are left lying in front of anyone.
   for (let i = 0; i < 12 && !(await playHand.isVisible()); i++) {
     await expect(ours.or(playHand)).toBeVisible({ timeout: 20_000 });
     if (await ours.isVisible()) await ours.click().catch(() => undefined);

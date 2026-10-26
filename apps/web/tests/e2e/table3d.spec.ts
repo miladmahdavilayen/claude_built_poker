@@ -38,6 +38,13 @@ const view3d = (page: Page, view: 'seated' | 'standing'): Promise<void> =>
     window.localStorage.setItem('pokerclause.tableView', v);
     window.localStorage.setItem('pokerclause.tableQuality', 'low');
   }, view);
+/**
+ * How long a lean gets to settle. On a real device it's well under a
+ * second, but CI draws the 3D table in software at a frame or two a second,
+ * and the easing advances at most 0.1 s per frame, so it needs real time.
+ */
+const LEAN_SETTLE_MS = 20_000;
+
 const debug = (page: Page): Promise<Debug | undefined> => page.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => Debug } }).__scene3d?.debugState());
 
 test('a hand on the standing 3D table: the camera goes to the seat taken, the seat boxes ride along, cards and button follow the game', async ({ page }) => {
@@ -139,16 +146,16 @@ test('seated: your own eyes at your seat — drag to look around, double-tap to 
   // Turning toward the house dealer from seat 1 (dragging the scene left turns you right): you bend forward to see past them.
   await drag(-0.5);
   await expect(page.getByRole('button', { name: /Center view/ })).toBeVisible();
-  await expect.poll(async () => (await debug(page))?.lean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.8);
+  await expect.poll(async () => (await debug(page))?.lean ?? 0, { timeout: LEAN_SETTLE_MS }).toBeGreaterThan(0.8);
   // Looking back at the table: sitting back.
   await page.getByRole('button', { name: /Center view/ }).click();
-  await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: 5000 }).toBeLessThan(0.1);
+  await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: LEAN_SETTLE_MS }).toBeLessThan(0.1);
   await expect(page.getByRole('button', { name: /Center view/ })).toHaveCount(0);
   // Leaning in on purpose, anywhere.
   await page.getByRole('button', { name: /Lean in/ }).click();
-  await expect.poll(async () => (await debug(page))?.lean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.9);
+  await expect.poll(async () => (await debug(page))?.lean ?? 0, { timeout: LEAN_SETTLE_MS }).toBeGreaterThan(0.9);
   await page.getByRole('button', { name: /Sit back/ }).click();
-  await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: 5000 }).toBeLessThan(0.1);
+  await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: LEAN_SETTLE_MS }).toBeLessThan(0.1);
   // Pulling the table toward you (dragging down) leans you in over the board; dragging up sits you back.
   const pull = async (dy: number): Promise<void> => {
     const x = canvas.x + canvas.width / 2;
@@ -184,17 +191,17 @@ test('seated: your own eyes at your seat — drag to look around, double-tap to 
   }
   if (/Board: \S+ \S+ \S+/.test(await page.getByTestId('board-3d').innerText())) {
     await pull(140);
-    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.2);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: LEAN_SETTLE_MS }).toBeGreaterThan(0.2);
     await pull(260);
-    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.95);
-    await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: 5000 }).toBeLessThan(0.1);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: LEAN_SETTLE_MS }).toBeGreaterThan(0.95);
+    await expect.poll(async () => (await debug(page))?.lean ?? 1, { timeout: LEAN_SETTLE_MS }).toBeLessThan(0.1);
     await pull(-400);
-    await expect.poll(async () => (await debug(page))?.boardLean ?? 1, { timeout: 5000 }).toBeLessThan(0.02);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 1, { timeout: LEAN_SETTLE_MS }).toBeLessThan(0.02);
     // …and the Center view button (or a double tap) brings you back from leaning in, too.
     await pull(400);
-    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: 5000 }).toBeGreaterThan(0.95);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 0, { timeout: LEAN_SETTLE_MS }).toBeGreaterThan(0.95);
     await page.getByRole('button', { name: /Center view/ }).click();
-    await expect.poll(async () => (await debug(page))?.boardLean ?? 1, { timeout: 5000 }).toBeLessThan(0.02);
+    await expect.poll(async () => (await debug(page))?.boardLean ?? 1, { timeout: LEAN_SETTLE_MS }).toBeLessThan(0.02);
   }
   // Played to the end (checking it down) — however it ends, no bets are left lying in front of anyone.
   for (let i = 0; i < 12 && !(await playHand.isVisible()); i++) {

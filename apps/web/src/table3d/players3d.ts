@@ -4,10 +4,15 @@ import type { SeatPlacement3d } from './seatLayout3d.js';
 
 // The other players, sitting at the table: a body in each occupied chair
 // (everyone's but your own — you're the one looking), leaning in with
-// their forearms on the rail, breathing, glancing about. Their seat's box
-// (camera, name, stack — the DOM layer over the scene) floats at their
-// head, so a player on camera is that body with their own face. Clothes
-// and looks come from their avatar colour, so each one stays recognisable.
+// their forearms on the rail, breathing, glancing about. Their name and
+// stack (the DOM layer over the scene) float above their head. Clothes and
+// looks come from their avatar colour, so each one stays recognisable.
+//
+// A player on camera wears it as their face: a screen in the scene itself,
+// on their head and turned the way they face (see FaceScreen). So it is
+// seen as it would be from your chair — big and square-on across the
+// table, narrow from the side, hidden behind the house dealer or another
+// player, and from behind not at all: there you see the back of their head.
 
 const FLOOR_Y = -1.56;
 const DEG = Math.PI / 180;
@@ -32,6 +37,119 @@ interface Body {
   disposables: { dispose: () => void }[];
   phase: number;
   key: string;
+  face: FaceScreen | null;
+}
+
+/** The screen's size, table units (about half a metre): a head and shoulders, 3:4 like the seat boxes' video. */
+export const FACE_SCREEN = { width: 0.62, height: 0.82 } as const;
+/** Where it sits on the neck bone: the head's middle a little above its own, just in front of the face. */
+const FACE_AT = { y: 0.14 + 0.1, z: 0.14 };
+const FRAME = 0.024;
+/** cos 78°: turned further from you than that, a face is a profile — the head shows instead. */
+const FACE_SIDE_ON = 0.2;
+
+/** A rounded-corner mask, shared: white inside, clear at the corners. */
+let roundMask: THREE.CanvasTexture | null = null;
+function roundedMask(): THREE.CanvasTexture {
+  if (roundMask) return roundMask;
+  const c = document.createElement('canvas');
+  c.width = 96;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  const r = 12;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.arcTo(96, 0, 96, 128, r);
+  ctx.arcTo(96, 128, 0, 128, r);
+  ctx.arcTo(0, 128, 0, 0, r);
+  ctx.arcTo(0, 0, 96, 0, r);
+  ctx.fill();
+  roundMask = new THREE.CanvasTexture(c);
+  return roundMask;
+}
+
+/** Off-page <video> elements the screens draw from — kept in the document so phones keep decoding them. */
+function videoShelf(): HTMLElement {
+  let shelf = document.getElementById('face-screen-videos');
+  if (!shelf) {
+    shelf = document.createElement('div');
+    shelf.id = 'face-screen-videos';
+    shelf.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;';
+    document.body.appendChild(shelf);
+  }
+  return shelf;
+}
+
+/**
+ * A player's camera as a screen in the scene: the video (cropped to fill,
+ * like the seat boxes' video), in a thin dark frame, only drawn from the
+ * front. Sound isn't here: the seat's own media element plays it.
+ */
+class FaceScreen {
+  readonly group = new THREE.Group();
+  readonly stream: MediaStream;
+  private readonly video: HTMLVideoElement;
+  private readonly texture: THREE.VideoTexture;
+  private readonly parts: { dispose: () => void }[] = [];
+
+  constructor(stream: MediaStream) {
+    this.stream = stream;
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.srcObject = stream;
+    videoShelf().appendChild(video);
+    void video.play().catch(() => undefined);
+    this.video = video;
+    const texture = new THREE.VideoTexture(video);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    this.texture = texture;
+    video.addEventListener('resize', this.fit);
+    video.addEventListener('loadedmetadata', this.fit);
+
+    const { width, height } = FACE_SCREEN;
+    const screenGeo = new THREE.PlaneGeometry(width, height);
+    const screenMat = new THREE.MeshBasicMaterial({ map: texture, alphaMap: roundedMask(), alphaTest: 0.5, toneMapped: false });
+    const frameGeo = new THREE.PlaneGeometry(width + FRAME * 2, height + FRAME * 2);
+    const frameMat = new THREE.MeshBasicMaterial({ color: 0x10151c, alphaMap: roundedMask(), alphaTest: 0.5 });
+    const screen = new THREE.Mesh(screenGeo, screenMat);
+    const frame = new THREE.Mesh(frameGeo, frameMat);
+    frame.position.z = -0.004;
+    screen.name = 'face-screen';
+    frame.name = 'face-screen';
+    this.group.add(frame, screen);
+    this.group.position.set(0, FACE_AT.y, FACE_AT.z);
+    this.parts.push(texture, screenGeo, screenMat, frameGeo, frameMat);
+  }
+
+  /** Fills the screen with the picture, cropping the overflow — never stretched. */
+  private readonly fit = (): void => {
+    const vw = this.video.videoWidth;
+    const vh = this.video.videoHeight;
+    if (!vw || !vh) return;
+    const want = FACE_SCREEN.width / FACE_SCREEN.height;
+    const have = vw / vh;
+    const t = this.texture;
+    if (have > want) {
+      t.repeat.set(want / have, 1);
+      t.offset.set((1 - want / have) / 2, 0);
+    } else {
+      t.repeat.set(1, have / want);
+      t.offset.set(0, (1 - have / want) / 2);
+    }
+  };
+
+  dispose(): void {
+    this.group.removeFromParent();
+    this.video.removeEventListener('resize', this.fit);
+    this.video.removeEventListener('loadedmetadata', this.fit);
+    this.video.pause();
+    this.video.srcObject = null;
+    this.video.remove();
+    for (const p of this.parts) p.dispose();
+  }
 }
 
 export interface SeatedPlayer {
@@ -46,6 +164,14 @@ export class SeatedPlayers {
   readonly group = new THREE.Group();
   private readonly bodies = new Map<number, Body>();
   private readonly castShadows: boolean;
+  /** Who is on camera (seat → their stream), whether or not their body is built yet. */
+  private videos = new Map<number, MediaStream>();
+  private readonly toCamera = new THREE.Vector3();
+  private readonly facePos = new THREE.Vector3();
+  private readonly faceNormal = new THREE.Vector3();
+  private readonly faceQuat = new THREE.Quaternion();
+  private readonly upright = new THREE.Quaternion();
+  private readonly yaw = new THREE.Euler();
 
   constructor(castShadows: boolean) {
     this.castShadows = castShadows;
@@ -67,7 +193,7 @@ export class SeatedPlayers {
       if (!body) {
         const root = new THREE.Group();
         const built = buildHumanBody(root, playerStyle(p.hue, p.seed), this.castShadows);
-        body = { root, bones: built.bones, disposables: built.disposables, phase: (p.seed % 628) / 100, key };
+        body = { root, bones: built.bones, disposables: built.disposables, phase: (p.seed % 628) / 100, key, face: null };
         this.bodies.set(p.seatId, body);
         this.group.add(root);
       }
@@ -82,17 +208,85 @@ export class SeatedPlayers {
       }
     }
     for (const id of [...this.bodies.keys()]) if (!wanted.has(id)) this.remove(id);
+    this.attachFaces();
   }
 
-  /** Breathing, and an occasional look around — small, so it never distracts. */
-  update(time: number): void {
+  /** The players on camera, by seat (the viewer's own is never here: they have no body). */
+  setVideos(videos: ReadonlyMap<number, MediaStream>): void {
+    this.videos = new Map(videos);
+    this.attachFaces();
+  }
+
+  /** Each body gets the screen for its stream — a new one when the stream changes, none when it's gone. */
+  private attachFaces(): void {
+    for (const [seatId, b] of this.bodies) {
+      const stream = this.videos.get(seatId) ?? null;
+      if (b.face && b.face.stream === stream) continue;
+      b.face?.dispose();
+      b.face = null;
+      b.bones.get('head')!.visible = true;
+      if (!stream) continue;
+      b.face = new FaceScreen(stream);
+      b.bones.get('neck')!.add(b.face.group);
+    }
+  }
+
+  /** Whether this seat's player is wearing their camera as a screen. */
+  hasFace(seatId: number): boolean {
+    return !!this.bodies.get(seatId)?.face;
+  }
+
+  /**
+   * Breathing, and an occasional look around — small, so it never distracts.
+   * A screen turns with its player's head, and shows only from the front:
+   * from behind (`eye` is the camera) the head itself is what you see.
+   */
+  update(time: number, eye: THREE.Vector3): void {
     const t = time / 1000;
     for (const b of this.bodies.values()) {
       const chest = b.bones.get('chest')!;
       chest.rotation.x = (SEATED.chest![0] + Math.sin(t * 1.3 + b.phase) * 1.2) * DEG;
       const head = b.bones.get('head')!;
       head.rotation.y = Math.sin(t * 0.23 + b.phase * 3) * 14 * DEG * Math.max(0, Math.sin(t * 0.11 + b.phase));
+      if (!b.face) continue;
+      // Upright like a face, however far they lean in, and turned the way they sit. Not with the
+      // modelled head's idle glances: where the real person looks is in their video.
+      const g = b.face.group;
+      g.parent!.getWorldQuaternion(this.faceQuat).invert();
+      this.upright.setFromEuler(this.yaw.set(0, b.root.rotation.y, 0));
+      g.quaternion.copy(this.faceQuat).multiply(this.upright);
+      const front = this.faceFront(b, eye);
+      g.visible = front;
+      head.visible = !front;
     }
+  }
+
+  /**
+   * Whether `eye` sees the player's face: in front of their screen, and not
+   * so far round to the side that it would be their profile (past about 78°
+   * — the two players either side of the house dealer, say, both facing down
+   * the table: to each other they're side-on).
+   */
+  private faceFront(b: Body, eye: THREE.Vector3): boolean {
+    const g = b.face!.group;
+    g.updateWorldMatrix(true, false);
+    g.getWorldPosition(this.facePos);
+    g.getWorldQuaternion(this.faceQuat);
+    this.faceNormal.set(0, 0, 1).applyQuaternion(this.faceQuat);
+    return this.toCamera.subVectors(eye, this.facePos).normalize().dot(this.faceNormal) > FACE_SIDE_ON;
+  }
+
+  /** For tests: each screen's middle and its left and right edges (world), and whether it shows its face to `eye`. */
+  faces(eye: THREE.Vector3): { seatId: number; at: THREE.Vector3; edges: [THREE.Vector3, THREE.Vector3]; front: boolean; object: THREE.Object3D }[] {
+    const out: { seatId: number; at: THREE.Vector3; edges: [THREE.Vector3, THREE.Vector3]; front: boolean; object: THREE.Object3D }[] = [];
+    for (const [seatId, b] of this.bodies) {
+      if (!b.face) continue;
+      const front = this.faceFront(b, eye);
+      const g = b.face.group;
+      const half = FACE_SCREEN.width / 2;
+      out.push({ seatId, at: this.facePos.clone(), edges: [g.localToWorld(new THREE.Vector3(-half, 0, 0)), g.localToWorld(new THREE.Vector3(half, 0, 0))], front, object: g });
+    }
+    return out;
   }
 
   /** Where a player's head is (world), or null with nobody there. */
@@ -103,12 +297,6 @@ export class SeatedPlayers {
     return b.bones.get('head')!.localToWorld(out.set(0, 0.17, 0.02));
   }
 
-  /** A player on camera: their video is their face, so the modelled head steps aside. */
-  setHeadVisible(seatId: number, visible: boolean): void {
-    const head = this.bodies.get(seatId)?.bones.get('head');
-    if (head && head.visible !== visible) head.visible = visible;
-  }
-
   get count(): number {
     return this.bodies.size;
   }
@@ -116,6 +304,7 @@ export class SeatedPlayers {
   private remove(seatId: number): void {
     const b = this.bodies.get(seatId);
     if (!b) return;
+    b.face?.dispose();
     this.group.remove(b.root);
     for (const d of b.disposables) d.dispose();
     this.bodies.delete(seatId);

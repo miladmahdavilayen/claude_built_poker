@@ -27,6 +27,8 @@ async function seatHumans(
   guestNames: string[],
   viewport: { width: number; height: number },
   maxSeats = 6,
+  /** Which seat each guest takes (default: 1, 2, 3…). */
+  guestSeats: number[] = guestNames.map((_, i) => i + 1),
 ): Promise<{ pages: Page[]; contexts: BrowserContext[] }> {
   const ownerCtx = await browser.newContext({ viewport });
   const ownerPage = await ownerCtx.newPage();
@@ -40,7 +42,7 @@ async function seatHumans(
     const ctx = await browser.newContext({ viewport });
     const page = await ctx.newPage();
     await guestSignup(page, guestNames[i]!);
-    await inviteToSeat(ownerPage, page, i + 1, 100);
+    await inviteToSeat(ownerPage, page, guestSeats[i]!, 100);
     contexts.push(ctx);
     pages.push(page);
   }
@@ -130,11 +132,18 @@ test('more than 4 human cameras on a phone screen collapse to a 2-tile speaker b
   await closeAll(contexts);
 });
 
+type Face = { seatId: number; front: boolean; blocked: boolean; inView: boolean; px: number };
+const faces = (page: Page): Promise<Face[]> =>
+  page.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => { faces: Face[] } } }).__scene3d?.debugState().faces ?? []);
+
 // The speaker bar is the 2D table's answer to a crowded felt. On the 3D
-// table every camera rides on its player's head, and you see them by
-// turning to look — so nothing collapses there, on a phone too.
-test('on the 3D table, more than 4 cameras on a phone screen stay on their own seats — no speaker bar', async ({ browser }) => {
-  const { pages, contexts } = await seatHumans(browser, ['Olga', 'Pete', 'Quinn', 'Rosa'], PHONE_VIEWPORT);
+// table each player wears their camera as a screen on their head, in the
+// scene itself (players3d.ts's FaceScreen): seen as it would be from your
+// chair — square-on across the table, never from behind or side-on, and not
+// through the house dealer. So nothing collapses there, on a phone too.
+test('on the 3D table, each camera is a screen on its player’s head, seen as it would be from your seat — seat 9 is hidden from seat 1', async ({ browser }) => {
+  // Seat 1 (the owner), seat 2 beside them at the end, seats 5 and 7 across, seat 9 the other side of the house dealer.
+  const { pages, contexts } = await seatHumans(browser, ['Olga', 'Pete', 'Quinn', 'Rosa'], PHONE_VIEWPORT, 9, [1, 4, 6, 8]);
   const [owner] = pages as [Page, Page, Page, Page, Page];
   // Seated on the 2D table (every empty seat is in reach there), then the owner switches to the 3D one.
   // Only the owner: CI draws 3D in software, and five 3D tables at once would step themselves down to 2D.
@@ -149,13 +158,24 @@ test('on the 3D table, more than 4 cameras on a phone screen stay on their own s
     await page.getByRole('button', { name: '🎥 Join with video' }).click();
   }
 
-  // Every player's box carries their camera (seats out of view are hidden until you turn to them, but keep their video)...
-  for (let seatId = 0; seatId <= 4; seatId++) {
-    await expect(owner.locator(`[data-testid="seat-${String(seatId)}"] .seat-video video`)).toHaveCount(1, { timeout: 30_000 });
-  }
-  // ...and the bar never comes.
+  // Everyone else's camera is a screen in the scene; their seat boxes are just name and stack.
+  await expect.poll(async () => (await faces(owner)).map((f) => f.seatId).sort(), { timeout: 30_000 }).toEqual([1, 4, 6, 8]);
+  for (const seatId of [1, 4, 6, 8]) await expect(owner.locator(`[data-testid="seat-${String(seatId)}"] .seat-video`)).toHaveCount(0);
+  // Your own camera stays in your own box, and the bar never comes.
+  await expect(owner.locator('[data-testid="seat-0"] .seat-video video')).toHaveCount(1);
   await expect(owner.locator('.speaker-bar')).toHaveCount(0);
-  await expect(owner.locator('.speaker-bar-tile')).toHaveCount(0);
+
+  const seen = (f: Face | undefined): boolean => !!f && f.front && !f.blocked;
+  const at = async (seatId: number): Promise<Face | undefined> => (await faces(owner)).find((f) => f.seatId === seatId);
+  // Across the table, facing you: seen.
+  expect(seen(await at(4))).toBe(true);
+  expect(seen(await at(6))).toBe(true);
+  // Seat 9 sits the other side of the house dealer, facing down the table as you do: never seen,
+  // wherever you look (sampled over a while, as the dealer moves).
+  for (let i = 0; i < 6; i++) {
+    expect(seen(await at(8))).toBe(false);
+    await owner.waitForTimeout(300);
+  }
 
   await closeAll(contexts);
 });

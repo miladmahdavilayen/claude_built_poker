@@ -2691,19 +2691,38 @@ jumps (`lookControls.ts`'s `vertical`).
   sits you back. Leaning past the house dealer at seats 1 and 9 gives way
   to this lean while you're over the board.
 
-## Cameras on the 3D table: every face on its seat, on phones too
+## Cameras on the 3D table: a screen on each player's head, seen from your seat
 
 On a phone, the 2D table swaps the seats' videos for a two-person speaker
 bar once more than 4 players have their cameras on, because nine small
 videos would crowd the felt. On the 3D table this rule no longer applies.
 
-- **Where the cameras go:** each player's camera rides on their head, sized
-  for how far away they are.
-- **Seeing everyone:** you look at someone by dragging to turn your head,
-  the same as you'd see them at a real table.
+- **Where the cameras go:** each player wears their camera as their face —
+  a screen in the 3D scene itself, on their head (`players3d.ts`'s
+  `FaceScreen`). It is not a box laid over the picture.
+- **How each screen sits:** it stays upright and faces the way the player
+  sits, into the table from their chair. It ignores the modelled head's idle
+  glances, because where the real person looks is in their video.
+- **Seen from your own chair:** each screen is drawn in true perspective,
+  so its size and angle depend on where you sit:
+  - **Across the table:** square-on and small.
+  - **Beside you:** steep and narrow.
+  - **Behind someone in between:** hidden. The house dealer and other
+    players block it.
+  - **From behind or side-on:** past about 78° from straight-on you see the
+    back or side of their modelled head instead.
+- **Seats 1 and 9:** they sit either side of the house dealer and both face
+  down the table, so to each other they are side-on behind the dealer. Each
+  never sees the other's camera.
+- **Name and stack:** they stay a small tag over the head, readable from
+  anywhere.
+- **Your own camera:** it stays in your own box at the bottom, as a mirror
+  would.
+- **Seeing everyone:** you look at someone by dragging to turn your head.
 - **Players out of view:** you get the marker at the screen's edge until
   you turn to them.
-- **Where it's set:** `speakerBarActive` in `Table.tsx` is now 2D only.
+- **Where it's set:** `speakerBarActive` in `Table.tsx` is now 2D only, and
+  the seat boxes carry video only for your own seat in 3D.
 
 `scripts/liveTableSim.mjs` checks this under load. It runs nine players in
 iPhone-sized browsers, with every camera and mic on, against a live server.

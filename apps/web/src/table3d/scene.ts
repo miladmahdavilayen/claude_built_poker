@@ -811,6 +811,12 @@ export class TableScene {
   }
 
   /** Which character deals (a model file under public/models/dealers), or null for the built-in one. */
+  /** The other players' cameras (seat → stream): each worn as a screen on their head (see players3d.ts). */
+  setSeatVideos(videos: ReadonlyMap<number, MediaStream>): void {
+    this.players.setVideos(videos);
+    this.layoutDirty = true;
+  }
+
   setDealerModel(url: string | null): void {
     this.dealerModelUrl = url;
     this.realDealer?.setModel(url);
@@ -1244,7 +1250,7 @@ export class TableScene {
       this.cb.onBoardShown?.(shown);
     }
     this.button.update(now, this.rig.yaw);
-    this.players.update(now);
+    this.players.update(now, this.rig.camera.position);
     this.room.update(now);
     this.renderer.render(this.scene, this.rig.camera);
     // The page's own controls on the felt (the Play Hand panel, the full-screen
@@ -1319,11 +1325,9 @@ export class TableScene {
     /** Players out of view right now (seated): where they are, for their markers at the screen's edge. */
     const away: { id: number; at: THREE.Vector3 }[] = [];
     const head = new THREE.Vector3();
-    const halfFov = Math.tan(((this.rig.camera.fov / 2) * Math.PI) / 180);
     for (const p of this.placements) {
       const o = this.overlays.get(`seat:${String(p.seatId)}`);
       if (!o) continue;
-      const hasVideo = o.el.querySelector('.seat-has-video') !== null;
       if (p.seatId === this.viewerSeatId) {
         // Your own box (your camera, your stack — in big type) sits at the bottom middle of the screen,
         // clear of your cards (the view keeps them above it — see ownBand) and of the corners' controls.
@@ -1334,7 +1338,6 @@ export class TableScene {
       }
       delete o.el.dataset.hud;
       const body = this.players.headWorld(p.seatId, head);
-      this.players.setHeadVisible(p.seatId, !hasVideo);
       if (!body) {
         // Nobody sitting there (an empty seat's "Sit here"), or your own seat seen standing: over the chair.
         const pr = this.project(p.chair.x, SEAT_SPOTS.overlayHeight, p.chair.z);
@@ -1347,23 +1350,9 @@ export class TableScene {
         seats.push({ id: p.seatId, x: pr.x, y: pr.y, w: o.w * s, h: o.h * s, s, el: o.el, fixed: false });
         continue;
       }
-      if (hasVideo) {
-        // On camera: the video is their face — at their head, the size a real
-        // head and shoulders would be at that distance (kept big enough to see).
-        const pr = this.project(head.x, head.y - 0.04, head.z);
-        if (eyes && !this.onScreen(pr, 80)) {
-          hidden.push(o.el);
-          away.push({ id: p.seatId, at: head.clone() });
-          continue;
-        }
-        const pxPerUnit = this.height / (2 * halfFov * Math.max(0.3, pr.depth));
-        // Kept big enough for the stack over the video to be read.
-        const s = Math.max(0.62, Math.min(1.6, (0.66 * pxPerUnit) / Math.max(1, o.w)));
-        seats.push({ id: p.seatId, x: pr.x, y: pr.y, w: o.w * s, h: o.h * s, s, el: o.el, fixed: false });
-        continue;
-      }
-      // Off camera: their own face shows, with a nameplate (name, stack, cards) just above their head.
-      const pr = this.project(head.x, head.y + 0.3, head.z);
+      // Their face — modelled, or their camera as a screen in the scene (see players3d.ts's
+      // FaceScreen) — with a nameplate (name, stack, cards) just above it.
+      const pr = this.project(head.x, head.y + (this.players.hasFace(p.seatId) ? 0.42 : 0.3), head.z);
       if (eyes && !this.onScreen(pr, 60)) {
         hidden.push(o.el);
         away.push({ id: p.seatId, at: head.clone() });
@@ -1556,11 +1545,60 @@ export class TableScene {
     this.overlays.clear();
   }
 
+  /**
+   * Each camera screen as you see it right now: facing you or not, blocked
+   * by something solid in between (the house dealer, another player), in the
+   * view at all, and how wide it looks on screen, px.
+   */
+  private faceViews(): { seatId: number; front: boolean; blocked: boolean; inView: boolean; px: number }[] {
+    const eye = this.rig.camera.position;
+    this.scene.updateMatrixWorld();
+    const ray = new THREE.Raycaster();
+    const dir = new THREE.Vector3();
+    return this.players.faces(eye).map((f) => {
+      const dist = dir.subVectors(f.at, eye).length();
+      ray.set(eye, dir.normalize());
+      ray.far = dist - 0.05;
+      const inFace = (o: THREE.Object3D): boolean => {
+        for (let x: THREE.Object3D | null = o; x; x = x.parent) if (x === f.object) return true;
+        return false;
+      };
+      const visibleChain = (o: THREE.Object3D): boolean => {
+        for (let x: THREE.Object3D | null = o; x; x = x.parent) if (!x.visible) return false;
+        return true;
+      };
+      // Only what's drawn: not the house dealer's invisible tap zone, say.
+      const drawn = (m: THREE.Mesh): boolean => [m.material].flat().some((mat) => mat.visible);
+      const blocked = ray.intersectObjects(this.scene.children, true).some((h) => {
+        const m = h.object as THREE.Mesh;
+        return m.isMesh && drawn(m) && !inFace(m) && visibleChain(m);
+      });
+      const pr = this.project(f.at.x, f.at.y, f.at.z);
+      // As wide as it looks from here: narrower the more it's turned away.
+      const a = this.project(f.edges[0].x, f.edges[0].y, f.edges[0].z);
+      const b = this.project(f.edges[1].x, f.edges[1].y, f.edges[1].z);
+      return { seatId: f.seatId, front: f.front, blocked, inView: this.onScreen(pr, 0), px: Math.round(Math.hypot(a.x - b.x, a.y - b.y)) };
+    });
+  }
+
   /** For tests and the dev console: what the scene currently holds. */
-  debugState(): { cards: string[]; stacks: string[]; cameraYaw: number; lean: number; boardLean: number; viewerSeatId: number | null; button: boolean; geometries: number; textures: number; objects: number } {
+  debugState(): {
+    cards: string[];
+    stacks: string[];
+    cameraYaw: number;
+    lean: number;
+    boardLean: number;
+    viewerSeatId: number | null;
+    button: boolean;
+    geometries: number;
+    textures: number;
+    objects: number;
+    faces: { seatId: number; front: boolean; blocked: boolean; inView: boolean; px: number }[];
+  } {
     let objects = 0;
     this.scene.traverse(() => objects++);
     return {
+      faces: this.faceViews(),
       cards: this.cards.keys(),
       stacks: this.chips.stackKeys(),
       cameraYaw: this.rig.yaw,

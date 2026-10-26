@@ -481,6 +481,8 @@ export function TablePage(): React.JSX.Element {
     }
     return null;
   };
+  // The other players' cameras, worn in the 3D scene (see players3d.ts's FaceScreen).
+  const seatVideos3d = new Map(canSeeVideo ? humanCameraSeats.filter((s) => !s.isLocal && s.seatId !== state.viewerSeatId).map((s) => [s.seatId, s.stream] as const) : []);
   const speakerTiles = speakerBarActive ? pickSpeakerTiles(humanCameraSeats, activeSpeakerIds) : [];
   // Voice participants with no seat at this table (spectators using voice chat) —
   // shown in the compact VoicePanel strip instead, since there's no seat to
@@ -677,7 +679,8 @@ export function TablePage(): React.JSX.Element {
           showCards={handEverDealt}
           justRevealed={justRevealedSeats.has(seatId)}
           voice={voiceStreamForSeat(seat)}
-          showVideo={canSeeVideo && (immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive)}
+          // On the 3D table the others' cameras are screens in the scene itself (seatVideos below); the box keeps only your own.
+          showVideo={canSeeVideo && (is3d ? seatId === state.viewerSeatId : immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive)}
           // Self-serve seating/bots are admin-only on any table, OR
           // open to a signed-in (non-guest) human on the ONE table
           // they created (sock.canManageTable — see
@@ -835,6 +838,7 @@ export function TablePage(): React.JSX.Element {
               onLayout={onLayout3d}
               potAnimatorRef={potAnimatorRef}
               winningCards={splitEffects.cards}
+              seatVideos={seatVideos3d}
             />
           </Suspense>
         )}

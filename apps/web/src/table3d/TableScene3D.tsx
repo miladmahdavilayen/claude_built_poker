@@ -43,6 +43,8 @@ export interface TableScene3DProps {
   potAnimatorRef: React.MutableRefObject<PotAnimator | null>;
   /** A split pot's winning cards, raised while it's announced. */
   winningCards: ReadonlySet<string>;
+  /** The other players' cameras, by seat — each worn as a screen on their head in the scene. */
+  seatVideos: ReadonlyMap<number, MediaStream>;
 }
 
 /**
@@ -77,6 +79,7 @@ export default function TableScene3D({
   onLayout,
   potAnimatorRef,
   winningCards,
+  seatVideos,
 }: TableScene3DProps): React.JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
@@ -183,6 +186,12 @@ export default function TableScene3D({
   useEffect(() => {
     scene?.setDealerModel(dealerModel);
   }, [scene, dealerModel]);
+
+  // After the seats are applied (a layout effect), so the bodies wearing them exist.
+  const videoKey = [...seatVideos].map(([id, s]) => `${String(id)}:${s.id}`).join(',');
+  useEffect(() => {
+    scene?.setSeatVideos(seatVideos);
+  }, [scene, videoKey]);
 
   const seatIds = useMemo(
     () => state.seats.map((s) => s.seatId).filter((id) => !state.removedSeatIds.includes(id)),

@@ -2649,3 +2649,18 @@ that hasn't picked one. That's The Boss.
 sometimes draws the wrong texture on the felt and the room at medium and
 high quality: the card back, chip edges, or black. Real GPUs never do (seen
 on Apple M-series under ANGLE/Metal). Don't chase it as an app bug.
+
+## Serving the big files: once per device
+
+The dealer characters (`public/models/dealers`, about 4–20 MB each) and the
+card faces ship inside the web image like every other static file. A
+browser has to download a character to draw it, but only once:
+`apps/web/nginx.conf` caches the files below in every browser.
+- **Characters and card faces:** kept for 30 days. To replace a character,
+  give the new file a new name; under the same name, players keep the old
+  one for up to 30 days.
+- **Vite's hashed bundles:** kept for a year.
+- **The page itself:** always rechecked, so a deploy reaches everyone at
+  once.
+- **Compression:** files are gzipped. The `.fbx` characters shrink by about
+  a third (The Boss: 6.2 → 4.2 MB).

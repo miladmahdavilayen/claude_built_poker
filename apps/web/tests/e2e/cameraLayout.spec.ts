@@ -130,6 +130,37 @@ test('more than 4 human cameras on a phone screen collapse to a 2-tile speaker b
   await closeAll(contexts);
 });
 
+// The speaker bar is the 2D table's answer to a crowded felt. On the 3D
+// table every camera rides on its player's head, and you see them by
+// turning to look — so nothing collapses there, on a phone too.
+test('on the 3D table, more than 4 cameras on a phone screen stay on their own seats — no speaker bar', async ({ browser }) => {
+  const { pages, contexts } = await seatHumans(browser, ['Olga', 'Pete', 'Quinn', 'Rosa'], PHONE_VIEWPORT);
+  const [owner] = pages as [Page, Page, Page, Page, Page];
+  // Seated on the 2D table (every empty seat is in reach there), then everyone sits down to the 3D one.
+  for (const page of pages) {
+    await page.evaluate(() => {
+      localStorage.setItem('pokerclause.tableView', 'seated');
+      localStorage.setItem('pokerclause.tableQuality', 'low');
+    });
+    await page.reload();
+    await expect(page.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
+  }
+
+  for (const page of pages) {
+    await page.getByRole('button', { name: '🎥 Join with video' }).click();
+  }
+
+  // Every player's box carries their camera (seats out of view are hidden until you turn to them, but keep their video)...
+  for (let seatId = 0; seatId <= 4; seatId++) {
+    await expect(owner.locator(`[data-testid="seat-${String(seatId)}"] .seat-video video`)).toHaveCount(1, { timeout: 30_000 });
+  }
+  // ...and the bar never comes.
+  await expect(owner.locator('.speaker-bar')).toHaveCount(0);
+  await expect(owner.locator('.speaker-bar-tile')).toHaveCount(0);
+
+  await closeAll(contexts);
+});
+
 test('the same 5-camera scenario never collapses on a laptop-sized screen', async ({ browser }) => {
   const { pages, contexts } = await seatHumans(browser, ['Kate', 'Leo', 'Mona', 'Nate'], LAPTOP_VIEWPORT);
   const [owner] = pages as [Page, Page, Page, Page, Page];

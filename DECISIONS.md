@@ -2690,3 +2690,21 @@ jumps (`lookControls.ts`'s `vertical`).
 - **Getting back:** while you're leaned in, Center view (or a double tap)
   sits you back. Leaning past the house dealer at seats 1 and 9 gives way
   to this lean while you're over the board.
+
+## Cameras on the 3D table: every face on its seat, on phones too
+
+On a phone, the 2D table swaps the seats' videos for a two-person speaker
+bar once more than 4 players have their cameras on, because nine small
+videos would crowd the felt. On the 3D table this rule no longer applies.
+
+- **Where the cameras go:** each player's camera rides on their head, sized
+  for how far away they are.
+- **Seeing everyone:** you look at someone by dragging to turn your head,
+  the same as you'd see them at a real table.
+- **Players out of view:** you get the marker at the screen's edge until
+  you turn to them.
+- **Where it's set:** `speakerBarActive` in `Table.tsx` is now 2D only.
+
+`scripts/liveTableSim.mjs` checks this under load. It runs nine players in
+iPhone-sized browsers, with every camera and mic on, against a live server.
+It records each screen and writes a report.

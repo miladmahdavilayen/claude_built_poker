@@ -324,8 +324,10 @@ export function TablePage(): React.JSX.Element {
 
   // More than 4 human players on camera, collapsed only on a phone-sized
   // screen — laptops/tablets keep full per-seat video regardless of count.
+  // The 2D table only: on the 3D table every camera stays on its player's
+  // head, and you see each one by turning to look at them.
   // See useIsCompactScreen.ts and useActiveSpeakers.ts.
-  const speakerBarActive = isCompactScreen && humanCameraSeats.length > 4;
+  const speakerBarActive = !is3d && isCompactScreen && humanCameraSeats.length > 4;
   const activeSpeakerIds = useActiveSpeakers(
     humanCameraSeats.map((s) => ({ id: String(s.seatId), stream: s.stream })),
     speakerBarActive,

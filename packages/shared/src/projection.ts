@@ -16,6 +16,7 @@ export interface SeatMeta {
   pendingChips?: number;
   leavingAfterHand?: boolean;
   joiningNextHand?: boolean;
+  movingToSeatId?: number | null;
 }
 
 export interface ProjectionContext {
@@ -103,6 +104,7 @@ export function projectStateForSeat(
       pendingChips: meta.pendingChips ?? 0,
       leavingAfterHand: meta.leavingAfterHand ?? false,
       joiningNextHand: meta.joiningNextHand ?? false,
+      movingToSeatId: meta.movingToSeatId ?? null,
     };
   });
 

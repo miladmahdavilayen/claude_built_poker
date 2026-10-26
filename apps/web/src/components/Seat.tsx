@@ -1,4 +1,6 @@
 import type { ProjectedSeat } from '@pokerclause/shared';
+import { useEffect, useRef, useState } from 'react';
+import { TIMINGS } from '../animationTimings.js';
 import { avatarHue } from '../avatarColor.js';
 import { formatChips } from '../chips.js';
 import { PlayingCard } from './PlayingCard.js';
@@ -22,6 +24,36 @@ function describeAction(action: { type: string; amountTo?: number } | null): str
   }
 }
 
+/**
+ * A number that, while `active`, counts up smoothly to each new value
+ * instead of jumping — a split pot's winner watching their stack grow as
+ * their chips land. Anything else (and any decrease) just shows the value.
+ */
+function useCountUp(value: number, active: boolean): number {
+  const [shown, setShown] = useState(value);
+  const shownRef = useRef(value);
+  useEffect(() => {
+    const from = shownRef.current;
+    if (!active || value <= from) {
+      shownRef.current = value;
+      setShown(value);
+      return;
+    }
+    const start = performance.now();
+    let raf = 0;
+    const tick = (): void => {
+      const t = Math.min(1, (performance.now() - start) / TIMINGS.stackCountUpMs);
+      const v = Math.round(from + (value - from) * (1 - (1 - t) ** 3));
+      shownRef.current = v;
+      setShown(v);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, active]);
+  return shown;
+}
+
 export interface SeatVoiceStream {
   stream: MediaStream;
   isLocal: boolean;
@@ -41,6 +73,13 @@ export function Seat({
   onAddBotClick,
   onRemoveBotClick,
   onAssignHumanClick,
+  splitEffect = null,
+  winningCards,
+  stackDisplay,
+  hideOwnCards = false,
+  compact = false,
+  ownMark,
+  emptyTap,
 }: {
   seat: ProjectedSeat;
   isButton: boolean;
@@ -62,7 +101,32 @@ export function Seat({
   onRemoveBotClick?: (() => void) | undefined;
   /** Owner-only — generates a one-time invite link for a human to redeem into this exact seat. */
   onAssignHumanClick?: (() => void) | undefined;
+  /** While a split pot is announced: this pot's winners glow, everyone else in the hand dims (see SplitPotAnnouncement.tsx). */
+  splitEffect?: 'winner' | 'dim' | null | undefined;
+  /** A split pot's winning cards, raised. */
+  winningCards?: ReadonlySet<string> | undefined;
+  /** The stack to show instead of `seat.stack` while a split pot's chips are still on their way — it counts up as they land. */
+  stackDisplay?: number | undefined;
+  /** The viewer's own cards are shown elsewhere (on the 3D table's felt), not in their box. */
+  hideOwnCards?: boolean;
+  /**
+   * The 3D table's box: only what a player needs mid-hand — who it is and
+   * their stack, big; on camera, their face with the stack over it. Cards
+   * lie on the felt, the button is a puck there, actions are in the ticker,
+   * and the owner's controls are on a double tap.
+   */
+  compact?: boolean;
+  /** 3D, your own box: the button or blind you have this hand, shown big on top of it — just below your cards. */
+  ownMark?: 'D' | 'SB' | 'BB' | undefined;
+  /**
+   * An empty seat is one big tap target: the table opens its options (sit
+   * here, a computer player, an invite) in a large menu — or, when sitting
+   * down is the only thing this viewer can do there, goes straight to it.
+   * `label` is what the seat says ("Sit here", or "Tap to fill").
+   */
+  emptyTap?: { label: string; onTap: (x: number, y: number) => void } | undefined;
 }): React.JSX.Element {
+  const shownStack = useCountUp(stackDisplay ?? seat.stack, stackDisplay !== undefined);
   // `status === 'empty'` is the authoritative "is this seat occupied?"
   // signal from the engine. `playerId` is NOT a reliable proxy for that —
   // a computer player is a genuinely occupied, active seat that always
@@ -70,6 +134,23 @@ export function Seat({
   // An earlier version of this check used `|| seat.playerId === null`,
   // which meant every bot seat rendered as permanently empty regardless
   // of its real status.
+  if (seat.status === 'empty' && emptyTap) {
+    return (
+      <div className="seat seat-empty">
+        <button
+          type="button"
+          className="seat-empty-tap"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            emptyTap.onTap(e.clientX || r.left + r.width / 2, e.clientY || r.top + r.height / 2);
+          }}
+        >
+          <span className="seat-empty-tap-seat">Seat {seat.seatId + 1}</span>
+          <span className="seat-empty-tap-label">{emptyTap.label}</span>
+        </button>
+      </div>
+    );
+  }
   if (seat.status === 'empty') {
     return (
       <div className="seat seat-empty">
@@ -93,14 +174,50 @@ export function Seat({
     );
   }
 
+  if (compact) {
+    const hasCam = !!voice?.stream.getVideoTracks().length && showVideo;
+    return (
+      <div
+        className={`seat seat--compact${isActing ? ' seat-acting' : ''}${seat.status === 'folded' ? ' seat-folded' : ''}${isViewer ? ' seat-viewer' : ''}${hasCam ? ' seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
+      >
+        {voice && hasCam && (
+          <div className="seat-video">
+            <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
+          </div>
+        )}
+        {voice && !hasCam && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
+        {/* A hand shown down: the cards, big, over their head — what everyone at the table wants to see. */}
+        {!isViewer && seat.holeCards.length > 0 && (
+          <div className="seat-compact-cards" data-testid="showdown-cards">
+            {seat.holeCards.map((c, i) => (
+              <PlayingCard key={`${c}-${String(i)}`} card={c} justRevealed={justRevealed} winning={!!winningCards?.has(c)} />
+            ))}
+          </div>
+        )}
+        {ownMark && (
+          <div className={`seat-own-mark seat-own-mark--${ownMark.toLowerCase()}`} data-testid="own-mark">
+            {ownMark}
+          </div>
+        )}
+        <div className="seat-compact-info">
+          <div className="seat-compact-name">
+            {!seat.isConnected && <span className="disconnected-dot" title="Disconnected" />}
+            {seat.displayName ?? 'Player'}
+          </div>
+          <div className={`seat-stack${stackDisplay !== undefined ? ' seat-stack--counting' : ''}`}>{formatChips(shownStack)}</div>
+        </div>
+      </div>
+    );
+  }
+
   const actionLabel = describeAction(seat.lastAction);
   const hasVideo = !!voice?.stream.getVideoTracks().length;
   const showSeatVideo = hasVideo && showVideo;
   const inVoiceCall = !!voice;
-  const holeCards = showCards ? (
+  const holeCards = showCards && !(isViewer && hideOwnCards) ? (
     <>
-      <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} />
-      <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} />
+      <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} winning={!!seat.holeCards[0] && !!winningCards?.has(seat.holeCards[0])} />
+      <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} winning={!!seat.holeCards[1] && !!winningCards?.has(seat.holeCards[1])} />
     </>
   ) : null;
   // The video overlay never shows a face-down card-back placeholder for
@@ -135,13 +252,15 @@ export function Seat({
       {/* Owner changes made mid-hand that land when it ends — see LiveTable.applyHandEndChanges. */}
       {seat.joiningNextHand && <span className="seat-tag seat-tag-pending">next hand</span>}
       {seat.leavingAfterHand && <span className="seat-tag seat-tag-leaving">leaving</span>}
+      {seat.movingToSeatId !== null && <span className="seat-tag seat-tag-pending">to seat {seat.movingToSeatId + 1}</span>}
+      {seat.missedBigBlind && <span className="seat-tag seat-tag-pending">posts BB</span>}
       {seat.pendingChips > 0 && <span className="seat-tag seat-tag-pending">+{formatChips(seat.pendingChips)}</span>}
       {seat.status === 'all-in' && <span className="seat-tag seat-tag-allin">all-in</span>}
     </div>
   );
   const stackRow = (
     <>
-      <div className="seat-stack">{formatChips(seat.stack)}</div>
+      <div className={`seat-stack${stackDisplay !== undefined ? ' seat-stack--counting' : ''}`}>{formatChips(shownStack)}</div>
       {/* The current-street bet itself renders as chip visuals on the felt, in front of the seat (see Table.tsx's bet-chips-slot) — not duplicated as plain text here. */}
       {seat.isBot && onRemoveBotClick && (
         <button type="button" className="seat-remove-bot" onClick={onRemoveBotClick}>
@@ -152,8 +271,10 @@ export function Seat({
   );
 
   return (
-    <div className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}`}>
-      {isButton && <div className="dealer-button">D</div>}
+    <div
+      className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
+    >
+      {isButton && <div className={`dealer-button${isViewer ? ' dealer-button--mine' : ''}`}>D</div>}
       {/* The button already gets the "D" disc — a "BTN" text badge on top of it too would be redundant clutter. */}
       {positionLabel && !isButton && <div className="position-label">{positionLabel}</div>}
       {voice && showSeatVideo && (

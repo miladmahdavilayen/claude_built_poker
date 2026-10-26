@@ -125,6 +125,27 @@ export function prepareAndDealHand(draft: Draft, deck: readonly Card[]): Prepare
   }
   draft.straddleSeat = straddleSeat;
 
+  // A player who changed seats away from the big blind owes one (see
+  // DECISIONS.md, "Changing seats"): they post it on the first hand
+  // they're dealt into, live — it counts toward their call, so they can
+  // check if nobody raises — wherever they sit. A seat already in for that
+  // much (the big blind, a straddle) owes nothing more; the small blind
+  // tops up to a full big blind. A seat not dealt in keeps owing it.
+  for (const seat of draft.seats) {
+    if (!seat.missedBigBlind) continue;
+    if (seat.status !== 'active' && seat.status !== 'all-in') continue;
+    seat.missedBigBlind = false;
+    // Never more than what's to call (a short all-in big blind can leave that below a full one).
+    const target = Math.min(draft.config.bigBlind, draft.betting.currentBet);
+    const delta = Math.min(target - seat.committedThisStreet, seat.stack);
+    if (seat.status !== 'active' || delta <= 0) continue;
+    seat.stack -= delta;
+    seat.committedThisStreet += delta;
+    seat.committedThisHand += delta;
+    if (seat.stack === 0) seat.status = 'all-in';
+    posts.push({ seatId: seat.seatId, kind: 'missed-big-blind', amount: delta, allIn: seat.status === 'all-in' });
+  }
+
   events.push({ type: 'blinds-posted', posts });
 
   draft.lastBigBlindSeat = assignment.bbSeat;

@@ -26,7 +26,9 @@ test('no hand deals automatically — seating players only enables "Play Hand", 
   await expect(page.locator('.dealer-button')).toHaveCount(0);
   await expect(page.locator('[data-testid="seat-0"] .seat-cards')).toHaveCount(0);
 
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   // Explicitly "The Nit" — this test's whole second half depends on BOTH
   // stacks surviving a single check/call-only hand so hand #2 can start;
   // leaving the persona at whatever the dropdown defaults to is fragile

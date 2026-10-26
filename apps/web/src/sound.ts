@@ -402,3 +402,45 @@ export function playTrophyFanfare(tier: 1 | 2 | 3 | 4 | 5 | 6): void {
       break;
   }
 }
+
+/**
+ * The split-pot cue — deliberately unlike any win sound: one bell note
+ * that divides in two, the halves gliding apart (a fourth down and a fifth
+ * up) and panning to opposite sides, over a soft chip shimmer. More
+ * winners, more voices: each extra one adds a higher, quieter echo.
+ */
+export function playSplitPotSound(ways = 2): void {
+  const c = getCtx();
+  if (!c) return;
+  const now = c.currentTime;
+  const out = c.createGain();
+  out.gain.value = 0.9;
+  out.connect(c.destination);
+  // The single note before it divides.
+  bell(c, out, now, NOTE.E5, 0.09, 0.5);
+  const voices = Math.min(4, Math.max(2, ways));
+  const targets = [NOTE.B4, NOTE.B5, NOTE.E6, NOTE.A5];
+  const pans = [-0.7, 0.7, -0.35, 0.35];
+  for (let i = 0; i < voices; i++) {
+    const t = now + 0.16 + i * 0.07;
+    const osc = c.createOscillator();
+    const g = c.createGain();
+    const pan = c.createStereoPanner();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(NOTE.E5, t);
+    osc.frequency.exponentialRampToValueAtTime(targets[i]!, t + 0.22);
+    pan.pan.setValueAtTime(0, t);
+    pan.pan.linearRampToValueAtTime(pans[i]!, t + 0.3);
+    const peak = 0.07 / (1 + i * 0.4);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.75);
+    osc.connect(g).connect(pan).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.8);
+  }
+  // Chips sliding away to each side.
+  burst(c, now + 0.3, 0.06, 5200, 0.05);
+  burst(c, now + 0.42, 0.06, 4600, 0.045);
+  burst(c, now + 0.54, 0.05, 5600, 0.035);
+}

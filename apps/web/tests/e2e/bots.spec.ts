@@ -8,7 +8,9 @@ test('a solo player can add a computer opponent, play a full hand against it, an
 
   await takeSeat(page, 0, 100);
 
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await expect(page.getByRole('heading', { name: 'Add a computer player' })).toBeVisible();
   // Leave the default persona selected; just set a buy-in and confirm.
   await page.getByLabel(/Buy-in/).fill('100');

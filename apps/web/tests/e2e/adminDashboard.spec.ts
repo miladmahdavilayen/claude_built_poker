@@ -7,7 +7,8 @@ test('a guest ticks "I agree" to join by an invite, and the owner finds them —
   const owner = await (await browser.newContext()).newPage();
   await adminLogin(owner);
   await createTable(owner, { name: 'Terms Table', smallBlind: 1, bigBlind: 2, maxSeats: 4, isPrivate: false });
-  await owner.locator('[data-testid="seat-1"]').getByText('+ Assign human').click();
+  await owner.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await owner.getByRole('menuitem', { name: 'Invite a player to this seat' }).click();
   await owner.getByLabel('Nickname (only visible to you)').fill('Cousin Vinny');
   await owner.getByLabel(/Buy-in/).fill('100');
   await owner.getByRole('button', { name: 'Generate link' }).click();

@@ -8,6 +8,7 @@ export function BoardAndPot({
   pots,
   liveTotal,
   top,
+  winningCards,
 }: {
   board: readonly Card[];
   pots: readonly Pot[];
@@ -15,13 +16,15 @@ export function BoardAndPot({
   liveTotal: number;
   /** The board's center as a % of the felt's height — chosen by the table layout (useTableLayout.ts); the stylesheet's default otherwise. */
   top?: number | undefined;
+  /** A split pot's winning cards, raised while it's announced. */
+  winningCards?: ReadonlySet<string> | undefined;
 }): React.JSX.Element {
   const total = liveTotal;
   return (
     <div className="board-area" style={top !== undefined ? { top: `${String(top)}%` } : undefined}>
       <div className="board-cards">
         {board.map((c, i) => (
-          <PlayingCard key={`${c}-${String(i)}`} card={c} />
+          <PlayingCard key={`${c}-${String(i)}`} card={c} winning={winningCards?.has(c) ?? false} />
         ))}
         {Array.from({ length: 5 - board.length }).map((_, i) => (
           <div key={`ph-${String(i)}`} className="card card-placeholder" />

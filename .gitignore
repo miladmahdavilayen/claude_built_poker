@@ -16,3 +16,7 @@ blob-report/
 
 # Claude Code's own session state, not project source.
 .claude/
+
+# Raw character downloads (the app uses the copies in apps/web/public/models/dealers)
+/chars/
+/vipchars/

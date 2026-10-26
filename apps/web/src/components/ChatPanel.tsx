@@ -16,7 +16,8 @@ export function ChatPanel({ messages, onSend }: { messages: ChatMessageRecord[];
     <div className="chat-panel">
       <div className="chat-messages">
         {messages.map((m) => (
-          <div key={m.id} className="chat-message">
+          // The dealer's own lines (a split pot, in plain words) are local to each viewer — see Table.tsx.
+          <div key={m.id} className={`chat-message${m.id.startsWith('dealer-') ? ' chat-message--dealer' : ''}`}>
             <span className="chat-author">{m.displayName ?? 'System'}:</span> {m.message}
           </div>
         ))}

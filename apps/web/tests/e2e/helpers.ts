@@ -139,20 +139,33 @@ export function tableIdFromUrl(url: string): string {
 }
 
 /**
+ * Taps an empty seat and picks one of its options from the menu that opens
+ * (see Seat.tsx's emptyTap) — or, when that's the only thing this viewer
+ * can do there, the tap itself does it.
+ */
+export async function chooseSeatOption(page: Page, seatId: number, option: 'Sit here' | 'Add a computer player' | 'Invite a player to this seat' | 'Move to this seat'): Promise<void> {
+  await page.locator(`[data-testid="seat-${String(seatId)}"] .seat-empty-tap`).click();
+  const item = page.getByRole('menuitem', { name: option });
+  const modal = page.locator('.modal');
+  await item.or(modal).first().waitFor();
+  if (await item.isVisible()) await item.click();
+}
+
+/**
  * Owner-only now (see DECISIONS.md) — self-serve seating no longer
  * exists for a regular player. `page` must be logged in as the owner
  * (see `adminLogin`); this seats the OWNER's own account directly. For
  * anyone else, use `inviteToSeat` instead.
  */
 export async function takeSeat(page: Page, seatId: number, buyIn: number): Promise<void> {
-  await page.locator(`[data-testid="seat-${String(seatId)}"]`).getByText('Sit here').click();
+  await chooseSeatOption(page, seatId, 'Sit here');
   await page.getByLabel(/Buy-in/).fill(String(buyIn));
   await page.getByRole('button', { name: 'Sit down' }).click();
 }
 
 /** Owner-only — adds a computer player. `page` must be logged in as the owner. */
 export async function addBot(page: Page, seatId: number, persona: string, buyIn: number): Promise<void> {
-  await page.locator(`[data-testid="seat-${String(seatId)}"]`).getByText('+ Add bot').click();
+  await chooseSeatOption(page, seatId, 'Add a computer player');
   await page.getByLabel('Persona').selectOption(persona);
   await page.getByLabel(/Buy-in/).fill(String(buyIn));
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
@@ -167,7 +180,7 @@ export async function addBot(page: Page, seatId: number, persona: string, buyIn:
  * via `guestSignup`) but not yet on this table.
  */
 export async function inviteToSeat(ownerPage: Page, targetPage: Page, seatId: number, buyIn: number, nickname?: string): Promise<void> {
-  await ownerPage.locator(`[data-testid="seat-${String(seatId)}"]`).getByText('+ Assign human').click();
+  await chooseSeatOption(ownerPage, seatId, 'Invite a player to this seat');
   if (nickname) await ownerPage.getByLabel('Nickname (only visible to you)').fill(nickname);
   await ownerPage.getByLabel(/Buy-in/).fill(String(buyIn));
   await ownerPage.getByRole('button', { name: 'Generate link' }).click();

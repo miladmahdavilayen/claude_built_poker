@@ -58,6 +58,16 @@ test('a raise-capable turn on a phone-width viewport shows left/right bet-overla
   await expect(raiseFirst.locator('.bet-overlay')).toBeVisible();
   await expect(raiseFirst.locator('.action-bar')).toHaveCount(0);
 
+  // Folded away until wanted: the right rail is just a Raise button — no
+  // slider covering the table — and pressing it opens the sizer.
+  await expect(raiseFirst.locator('.vbs-track')).toHaveCount(0);
+  const foldedRail = await raiseFirst.locator('.bet-overlay-rail--right').boundingBox();
+  expect(foldedRail!.height).toBeLessThan(90);
+  await raiseFirst.locator('.bet-overlay-open').click();
+  await expect(raiseFirst.locator('.vbs-track')).toBeVisible();
+  // Nothing picked yet: the handle is a plain $, not a button.
+  await expect(raiseFirst.getByTestId('vbs-thumb')).toHaveText('$');
+
   const leftRailBox = await raiseFirst.locator('.bet-overlay-rail--left').boundingBox();
   const rightRailBox = await raiseFirst.locator('.bet-overlay-rail--right').boundingBox();
   const fairnessBox = await raiseFirst.locator('.fairness-commitment').boundingBox();
@@ -122,7 +132,12 @@ test('a raise-capable turn on a phone-width viewport shows left/right bet-overla
   const draggedAmount = Number(await amountInput.inputValue());
   expect(draggedAmount).toBeGreaterThan(initialAmount);
 
-  await raiseFirst.locator('.bet-overlay-confirm').click();
+  // Let go, and the $ handle has become the button: "Raise $X". One tap on it sends exactly that.
+  const thumb = raiseFirst.getByTestId('vbs-thumb');
+  await expect(thumb).toContainText(`$${draggedAmount}`);
+  await expect(thumb).toContainText(/raise/i);
+  const t = (await thumb.boundingBox())!;
+  await raiseFirst.mouse.click(t.x + t.width / 2, t.y + t.height / 2);
 
   // The action bubble on the raiser's own seat states the exact amountTo
   // the server accepted — a direct check that the dragged amount is what

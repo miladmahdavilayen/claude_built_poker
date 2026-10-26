@@ -4156,3 +4156,1160 @@ button.admin-user-row:hover:not(:disabled) {
   user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* ---- The 3D table (see table3d/) ---- */
+.felt.felt-3d {
+  border: none;
+  border-radius: 18px;
+  /* The room around the table: warm, dark, lit from above. */
+  background: radial-gradient(ellipse 80% 70% at 50% 45%, #3a2318 0%, #1c110d 55%, #0b0706 100%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  min-height: 320px;
+}
+.table3d {
+  position: absolute;
+  inset: 0;
+}
+.table3d-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Every gesture on the felt is ours (look, pinch, double tap) — the browser mustn't pan, zoom or cancel the touch mid-tap. */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.table3d-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 75% 70% at 50% 48%, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
+}
+.table3d-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.table3d-overlays > * {
+  pointer-events: auto;
+}
+.table3d-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+/* Anchored by the scene, which writes each box's transform every frame the view moves. */
+.seat-slot.seat-slot--3d {
+  left: 0;
+  top: 0;
+  transform-origin: center;
+  will-change: transform;
+  z-index: 3;
+}
+.seat-slot.seat-slot--3d:not([style*='transform']) {
+  visibility: hidden;
+}
+.bet-chips-slot.bet-chips-slot--3d {
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.bet-chips-slot--3d .chip-stack-amount {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(8, 12, 16, 0.72);
+  border: 1px solid rgba(242, 189, 77, 0.35);
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffe9b0;
+  white-space: nowrap;
+}
+.pot-display.pot-display--3d {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  pointer-events: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(8, 12, 16, 0.7);
+  border: 1px solid rgba(242, 189, 77, 0.4);
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffe9b0;
+  white-space: nowrap;
+}
+.pot-display--3d.pot-display--empty {
+  visibility: hidden;
+}
+/* An invisible box over the 3D board, so the trophy show keeps clear of it. */
+.board-area.board-area--3d {
+  left: 0;
+  top: 0;
+  transform: none;
+  visibility: hidden;
+  pointer-events: none;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- The table's View menu ---- */
+.table-view-menu {
+  position: relative;
+}
+.table-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.table-view-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  width: min(280px, calc(100vw - 32px));
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(24, 31, 42, 0.98);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.table-view-now {
+  font-size: 12px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--panel-border);
+  margin-bottom: 4px;
+}
+.table-view-choice {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+.table-view-choice:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.table-view-choice input {
+  margin-top: 3px;
+}
+.table-view-choice span {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+.table-view-choice small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---- Split pot (see components/SplitPotAnnouncement.tsx): gold and teal, unlike any win ---- */
+.split-pot-banner {
+  position: absolute;
+  z-index: 12;
+  transform: translate(-50%, -100%);
+  /* Sized to its words, not squeezed by sitting at left: 50%. */
+  width: max-content;
+  min-width: 200px;
+  max-width: min(92vw, 440px);
+  padding: 10px 18px 12px;
+  border-radius: 16px;
+  text-align: center;
+  cursor: pointer;
+  color: #f6fffd;
+  background: linear-gradient(160deg, rgba(10, 52, 56, 0.96), rgba(8, 26, 34, 0.96));
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  box-shadow:
+    0 0 0 2px rgba(242, 189, 77, 0.85),
+    0 0 26px rgba(63, 224, 197, 0.45),
+    0 14px 36px rgba(0, 0, 0, 0.55);
+  animation: split-pot-in 0.42s cubic-bezier(0.2, 0.9, 0.25, 1.25) both;
+}
+.split-pot-banner--single {
+  box-shadow:
+    0 0 0 2px rgba(242, 189, 77, 0.6),
+    0 14px 36px rgba(0, 0, 0, 0.55);
+  background: linear-gradient(160deg, rgba(36, 30, 14, 0.96), rgba(18, 16, 10, 0.96));
+}
+.split-pot-banner--still {
+  animation: none;
+}
+.split-pot-label {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: rgba(242, 189, 77, 0.18);
+  color: #ffd977;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.split-pot-count {
+  color: rgba(255, 233, 176, 0.75);
+  font-weight: 600;
+}
+.split-pot-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: #ffd977;
+  text-shadow:
+    0 0 14px rgba(63, 224, 197, 0.55),
+    0 2px 3px rgba(0, 0, 0, 0.6);
+}
+.split-pot-banner--single .split-pot-title {
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.02em;
+  font-size: 20px;
+}
+.split-pot-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+.split-pot-sub {
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #b8fff1;
+}
+.split-pot-banner--single .split-pot-sub {
+  color: var(--good);
+}
+.split-pot-hand {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(246, 255, 253, 0.8);
+  font-style: italic;
+}
+.split-pot-pile {
+  position: absolute;
+  z-index: 11;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.split-pot-float {
+  position: absolute;
+  z-index: 13;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 900;
+  color: #08221f;
+  background: linear-gradient(135deg, #ffe08a, #3fe0c5);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  animation: split-pot-float 1.6s ease-out both;
+}
+.split-pot-float--still {
+  animation: none;
+  opacity: 1;
+}
+.seat.seat-split-winner {
+  box-shadow:
+    0 0 0 2px #3fe0c5,
+    0 0 18px rgba(63, 224, 197, 0.75),
+    0 0 34px rgba(242, 189, 77, 0.45);
+  animation: split-seat-glow 1.2s ease-in-out infinite alternate;
+}
+.seat.seat-split-dim {
+  opacity: 0.45;
+  filter: saturate(0.4);
+  transition: opacity 0.3s ease;
+}
+.card.card-winning {
+  transform: translateY(-5px);
+  box-shadow:
+    0 0 0 2px #ffd977,
+    0 6px 12px rgba(0, 0, 0, 0.45);
+  transition: transform 0.25s ease;
+}
+.seat-stack.seat-stack--counting {
+  color: #ffd977;
+}
+.chat-message--dealer {
+  font-style: italic;
+  color: #b8fff1;
+}
+@keyframes split-pot-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -80%) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%) scale(1);
+  }
+}
+@keyframes split-pot-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -80%) scale(1.08);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -260%) scale(1);
+  }
+}
+@keyframes split-seat-glow {
+  from {
+    box-shadow:
+      0 0 0 2px #3fe0c5,
+      0 0 10px rgba(63, 224, 197, 0.5);
+  }
+  to {
+    box-shadow:
+      0 0 0 2px #ffd977,
+      0 0 24px rgba(63, 224, 197, 0.85),
+      0 0 40px rgba(242, 189, 77, 0.5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .split-pot-banner,
+  .seat.seat-split-winner {
+    animation: none;
+  }
+  .split-pot-float {
+    animation: none;
+    opacity: 1;
+  }
+}
+/* On the 3D table the house dealer does the shuffling, and the middle of
+   the felt belongs to the board: the break's countdown and the Play Hand
+   button sit up top, in the room above the table. */
+.felt-3d .hand-break-shuffle {
+  display: none;
+}
+.felt-3d .start-hand-panel {
+  top: 44px;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+.felt-3d .start-hand-hint {
+  background: rgba(8, 12, 16, 0.7);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+@media (max-width: 600px) {
+  .split-pot-banner {
+    padding: 8px 12px 10px;
+  }
+  .split-pot-title {
+    font-size: 18px;
+  }
+  .split-pot-icon {
+    width: 24px;
+    height: 24px;
+  }
+  .split-pot-sub {
+    font-size: 13px;
+  }
+  .split-pot-float {
+    font-size: 13px;
+  }
+}
+/* The seated view: drag to look around. */
+.table3d--seated .table3d-canvas {
+  cursor: grab;
+}
+.table3d-recenter {
+  position: absolute;
+  right: 12px;
+  top: 44px;
+  z-index: 8;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(242, 189, 77, 0.6);
+  background: rgba(8, 12, 16, 0.78);
+  color: #ffe9b0;
+  font-weight: 700;
+  font-size: 13px;
+}
+.table3d-look-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(8, 12, 16, 0.6);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  white-space: nowrap;
+  animation: look-hint 6s ease forwards;
+}
+@keyframes look-hint {
+  0%,
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* The seated view's own box sits in the bottom-right corner: the fairness link moves up out of its way. */
+.felt-3d .fairness-link {
+  top: 14px;
+  bottom: auto;
+  right: 16px;
+}
+.table3d-vignette {
+  background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 65%, rgba(0, 0, 0, 0.35) 100%);
+}
+.table3d-lean {
+  position: absolute;
+  right: 12px;
+  top: 124px;
+  z-index: 8;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(8, 12, 16, 0.72);
+  color: #f2f4f7;
+  font-weight: 700;
+  font-size: 13px;
+}
+.table3d-lean--on {
+  border-color: rgba(63, 224, 197, 0.8);
+  color: #b8fff1;
+}
+.table3d-whole {
+  position: absolute;
+  right: 12px;
+  top: 84px;
+  z-index: 8;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(8, 12, 16, 0.72);
+  color: #f2f4f7;
+  font-weight: 700;
+  font-size: 13px;
+}
+.table3d--standing .table3d-whole {
+  top: 44px;
+}
+/* Only the panel's own button and words take taps — the empty space around them lets taps through to the seat boxes. */
+.felt-3d .start-hand-panel {
+  pointer-events: none;
+}
+.felt-3d .start-hand-panel > * {
+  pointer-events: auto;
+}
+/* The View menu on a phone: across the screen under its button, scrolling if it must. */
+.table-view-popover.table-view-popover--phone {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  width: auto;
+  overflow-y: auto;
+  z-index: 1000;
+}
+/* On a phone the seated view's controls are smaller and start below the Play Hand panel; the drag hint sits above the Full screen button. */
+@media (max-width: 600px) {
+  .table3d-recenter,
+  .table3d-whole,
+  .table3d-lean {
+    font-size: 11px;
+    padding: 4px 9px;
+    min-height: 34px;
+  }
+  .table3d-recenter {
+    top: 200px;
+  }
+  .table3d-whole {
+    top: 242px;
+  }
+  .table3d-lean {
+    top: 284px;
+  }
+  .table3d--standing .table3d-whole {
+    top: 200px;
+  }
+  .table3d-look-hint {
+    bottom: 96px;
+    font-size: 11px;
+  }
+}
+/* The board strip over the 3D table (see TableScene3D.tsx). */
+.board-hud {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: rgba(8, 12, 16, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  --card-w: 44px;
+  --card-h: 62px;
+  --card-font: 19px;
+}
+.board-hud .card {
+  width: var(--card-w);
+  height: var(--card-h);
+  font-size: var(--card-font);
+  animation: board-hud-in 0.25s ease-out both;
+}
+@keyframes board-hud-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.9);
+  }
+}
+/* The break's Play Hand panel moves down under the board strip. */
+.felt-3d .start-hand-panel {
+  top: 88px;
+}
+@media (max-width: 600px) {
+  .board-hud {
+    top: 24px;
+    gap: 3px;
+    padding: 4px 6px;
+    --card-w: 34px;
+    --card-h: 48px;
+    --card-font: 15px;
+  }
+  .felt-3d .fairness-commitment {
+    top: 6px;
+    left: 12px;
+    font-size: 9px;
+  }
+}
+/* ---- Seeing everyone's actions (see ActionTicker.tsx and the seated view's edge markers) ---- */
+.action-ticker {
+  position: absolute;
+  left: 12px;
+  top: 34px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(260px, 46%);
+  pointer-events: none;
+}
+.action-ticker-line {
+  padding: 3px 9px;
+  border-radius: 8px;
+  background: rgba(8, 12, 16, 0.78);
+  border-left: 3px solid #8a94a3;
+  color: #f2f4f7;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: ticker-in 0.25s ease-out both;
+}
+.action-ticker-name {
+  font-weight: 800;
+}
+.action-ticker-line--fold {
+  border-left-color: #6b7280;
+  color: #c4c9d1;
+}
+.action-ticker-line--check {
+  border-left-color: #3fae5c;
+}
+.action-ticker-line--call {
+  border-left-color: #4f8bff;
+}
+.action-ticker-line--bet,
+.action-ticker-line--raise {
+  border-left-color: #f2bd4d;
+}
+.action-ticker-line--allin {
+  border-left-color: #ff4d6d;
+  color: #ffd1d9;
+}
+@keyframes ticker-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+}
+.seat-edge-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 104px;
+  max-width: 150px;
+  padding: 4px 9px;
+  border-radius: 9px;
+  background: rgba(8, 12, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f2f4f7;
+  font-size: 12px;
+  pointer-events: none;
+}
+/* Until the scene has placed it. */
+.seat-edge-marker:not([style*='transform']) {
+  visibility: hidden;
+}
+.seat-edge-marker--acting {
+  border-color: #f2bd4d;
+  box-shadow: 0 0 10px rgba(242, 189, 77, 0.55);
+}
+.seat-edge-marker--folded {
+  opacity: 0.6;
+}
+.seat-edge-arrow::before {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #f2bd4d;
+  font-size: 12px;
+}
+.seat-edge-marker[data-side='left'] .seat-edge-arrow::before {
+  content: '◀';
+  left: -14px;
+}
+.seat-edge-marker[data-side='right'] .seat-edge-arrow::before {
+  content: '▶';
+  right: -14px;
+}
+.seat-edge-marker[data-side='left'] {
+  padding-left: 9px;
+  margin-left: 12px;
+}
+.seat-edge-marker[data-side='right'] {
+  margin-left: -12px;
+}
+.seat-edge-name {
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat-edge-stack {
+  color: #ffd977;
+  font-weight: 700;
+}
+.seat-edge-bet {
+  color: #b8fff1;
+  font-size: 11px;
+}
+.seat-edge-act {
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-left: 3px solid #8a94a3;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+  font-size: 11px;
+  animation: edge-act-flash 1.2s ease-out both;
+}
+@keyframes edge-act-flash {
+  0% {
+    background: rgba(242, 189, 77, 0.55);
+  }
+  100% {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+@media (max-width: 600px) {
+  .action-ticker {
+    top: 84px;
+    left: 8px;
+  }
+  .action-ticker-line {
+    font-size: 11px;
+    padding: 2px 7px;
+  }
+  .seat-edge-marker {
+    min-width: 88px;
+    font-size: 11px;
+    padding: 3px 7px;
+  }
+}
+/* Stacks on the 3D table are read at a glance from across the room: big type in every seat's box,
+   bigger still in your own corner box. */
+.seat-slot--3d .seat-stack {
+  font-size: 19px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+.seat-slot--3d[data-hud='true'] .seat-stack {
+  font-size: 28px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.seat-slot--3d[data-hud='true'] .seat-name {
+  font-size: 13px;
+}
+.seat-edge-stack {
+  font-size: 16px;
+  font-weight: 800;
+}
+@media (max-width: 600px) {
+  .seat-slot--3d .seat-stack {
+    font-size: 17px;
+  }
+  .seat-slot--3d[data-hud='true'] .seat-stack {
+    font-size: 24px;
+  }
+  .seat-edge-stack {
+    font-size: 14px;
+  }
+}
+/* A finger held on the 3D table is a look-around, never a text selection or iOS's press-and-hold menu. */
+.felt-3d,
+.felt-3d * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* On a phone the seated view's buttons are round icons, out of the table's way. */
+@media (max-width: 600px) {
+  .table3d-btn-label {
+    display: none;
+  }
+  .table3d-recenter,
+  .table3d-whole,
+  .table3d-lean {
+    width: 38px;
+    height: 38px;
+    min-height: 38px;
+    padding: 0;
+    font-size: 17px;
+    display: grid;
+    place-items: center;
+  }
+}
+/* The 3D table's seat box (Seat.tsx, compact): name and a big stack; on camera, the face with the stack over it. */
+.seat.seat--compact {
+  width: auto;
+  min-width: 96px;
+  padding: 5px 12px 6px;
+  align-items: center;
+  text-align: center;
+  gap: 0;
+}
+.seat--compact .seat-compact-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.seat--compact .seat-compact-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e8ecf1;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat--compact.seat-has-video {
+  width: 150px;
+  padding: 0;
+  aspect-ratio: 3 / 4;
+}
+.seat--compact.seat-has-video .seat-compact-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px 6px 5px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent);
+  border-radius: 0 0 10px 10px;
+}
+/* Shown-down cards on a 3D seat box: big, side by side above the name — and above the video for a player on camera. */
+.seat--compact .seat-compact-cards {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.seat--compact .seat-compact-cards .card {
+  width: 42px;
+  height: 60px;
+  font-size: 19px;
+}
+.seat--compact.seat-has-video .seat-compact-cards {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 6px;
+}
+/* Between hands on the 3D table, Play Hand (and its countdown) sits in the bottom-right corner: in thumb's reach on a phone, clear of your cards and stack. */
+.felt-3d .start-hand-panel {
+  top: auto;
+  bottom: 14px;
+  left: auto;
+  right: 14px;
+  transform: none;
+  align-items: flex-end;
+  max-width: 180px;
+  text-align: right;
+}
+@media (max-width: 600px) {
+  .felt-3d .start-hand-panel {
+    right: 10px;
+    bottom: 12px;
+    max-width: 112px;
+  }
+  .felt-3d .btn-start-hand {
+    padding: 12px 14px;
+    font-size: 15px;
+  }
+  .felt-3d .start-hand-hint {
+    font-size: 11px;
+  }
+}
+/* Full screen with the 3D table: the table runs edge to edge — no margin, no rounded frame — and its own
+   controls keep clear of the notch and the home bar (launched from the Home Screen, the page is under them). */
+.table-page.immersive .felt.felt-3d {
+  margin: 0;
+  border-radius: 0;
+}
+.table-page.immersive .felt-3d .board-hud {
+  top: calc(10px + env(safe-area-inset-top));
+}
+.table-page.immersive .felt-3d .action-ticker {
+  top: calc(34px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
+}
+.table-page.immersive .felt-3d .fairness-commitment {
+  top: calc(20px + env(safe-area-inset-top));
+}
+.table-page.immersive .felt-3d .immersive-toggle {
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  left: calc(14px + env(safe-area-inset-left));
+}
+.table-page.immersive .felt-3d .start-hand-panel {
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  right: calc(14px + env(safe-area-inset-right));
+}
+.home-screen-tip {
+  position: absolute;
+  left: 50%;
+  top: calc(84px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: min(92%, 380px);
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(10, 14, 20, 0.92);
+  border: 1px solid rgba(242, 189, 77, 0.55);
+  color: #f2f4f7;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.home-screen-tip button {
+  flex: none;
+  min-height: 0;
+  padding: 2px 8px;
+  background: transparent;
+  border: none;
+  color: #c4c9d1;
+}
+@media (max-width: 600px) {
+  .table-page.immersive .felt-3d .action-ticker {
+    top: calc(96px + env(safe-area-inset-top));
+    left: calc(8px + env(safe-area-inset-left));
+  }
+  .table-page.immersive .felt-3d .fairness-commitment {
+    top: calc(4px + env(safe-area-inset-top));
+    font-size: 9px;
+  }
+}
+/* An empty seat: one big target — tap it for the seat's options (see Seat.tsx's emptyTap). */
+.seat-empty-tap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1.5px dashed rgba(242, 189, 77, 0.6);
+  background: rgba(242, 189, 77, 0.08);
+  color: #ffe9b0;
+  cursor: pointer;
+}
+.seat-empty-tap:hover,
+.seat-empty-tap:active {
+  background: rgba(242, 189, 77, 0.18);
+}
+.seat-empty-tap-seat {
+  font-size: 11px;
+  color: var(--muted);
+}
+.seat-empty-tap-label {
+  font-size: 14px;
+  font-weight: 800;
+}
+/* The empty seat's options: big and easy to hit with a thumb. */
+.seat-action-menu.seat-action-menu--large {
+  min-width: 270px;
+  padding: 10px;
+  gap: 6px;
+}
+.seat-action-menu--large .seat-action-menu-title {
+  font-size: 15px;
+  padding: 4px 6px 8px;
+}
+.seat-action-menu--large .seat-action-item {
+  min-height: 52px;
+  font-size: 17px;
+  font-weight: 700;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+/* The owner's house-dealer picker (DealerPicker.tsx): big, tappable names. */
+.dealer-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+.dealer-picker-option {
+  min-height: 50px;
+  font-size: 17px;
+  font-weight: 700;
+  text-align: left;
+  padding: 10px 16px;
+  border-radius: 10px;
+}
+.dealer-picker-option--active {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.dealer-picker-heading {
+  margin: 10px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.dealer-picker-option--vip {
+  border-color: rgba(242, 189, 77, 0.6);
+  background: linear-gradient(135deg, rgba(242, 189, 77, 0.16), rgba(242, 189, 77, 0.04));
+}
+/* Phones: Raise opens the sizer (ActionBar.tsx). Folded, the right rail is one button. */
+.bet-overlay-open {
+  min-height: 51px;
+  width: 100%;
+  font-size: 15px;
+  font-weight: 800;
+  border-radius: 10px;
+  padding: 5px 4px;
+}
+.bet-overlay-rail--sizing {
+  overflow: visible;
+}
+.bet-overlay-close {
+  align-self: flex-end;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+}
+/* Let go of the $ and it becomes the button that sends the amount: "Raise $12". */
+.vbs-track--armed .vbs-thumb {
+  width: 76px;
+  height: 52px;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 3px rgba(242, 189, 77, 0.35),
+    0 3px 10px rgba(0, 0, 0, 0.5);
+  animation: vbs-arm 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.vbs-thumb-submit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+  color: #10151c;
+}
+.vbs-thumb-verb {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.vbs-thumb-amount {
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+@keyframes vbs-arm {
+  0% {
+    transform: translate(-50%, 50%) scale(0.7);
+  }
+  100% {
+    transform: translate(-50%, 50%) scale(1);
+  }
+}
+/* The owner double-taps a seat for its menu: the browser mustn't take that as a zoom. */
+.seat-slot-owner {
+  touch-action: manipulation;
+}
+/* The small and big blind's tags, on the felt in front of their seats (3+ players; positionLabels.ts's blindTags). */
+.blind-tag {
+  position: absolute;
+  transform: translate(-50%, -50%) scale(var(--fit-scale, 1));
+  z-index: 3;
+  pointer-events: none;
+  min-width: 26px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: center;
+  line-height: 1.2;
+  border: 1.5px solid;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.blind-tag--sb {
+  background: #1d4f8f;
+  border-color: #9cc6ff;
+  color: #eaf3ff;
+}
+.blind-tag--bb {
+  background: #f2bd4d;
+  border-color: #fff1c9;
+  color: #2a1c05;
+}
+.blind-tag.blind-tag--3d {
+  left: 0;
+  top: 0;
+  transform: none;
+}
+/* Yours — your blind, your button: bigger, and gently pulsing, so you can't miss them. */
+.blind-tag--mine {
+  font-size: 13px;
+  padding: 3px 9px;
+  min-width: 34px;
+  animation: own-mark-pulse 1.6s ease-in-out infinite;
+}
+.dealer-button.dealer-button--mine {
+  --dealer-size: 30px;
+  top: -13px;
+  right: -13px;
+  z-index: 3;
+  border: 2px solid #fff1c9;
+  animation: own-mark-pulse 1.6s ease-in-out infinite;
+}
+@keyframes own-mark-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(255, 201, 77, 0.55),
+      0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px rgba(255, 201, 77, 0),
+      0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .blind-tag--mine,
+  .dealer-button.dealer-button--mine {
+    animation: none;
+  }
+}
+/* 3D, your own box: your button or blind this hand, big, on its top edge — right under your cards. */
+.seat-own-mark {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -78%);
+  z-index: 3;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  border: 2px solid;
+  pointer-events: none;
+  animation: own-mark-pulse 1.6s ease-in-out infinite;
+}
+.seat-own-mark--d {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 22px;
+  background: radial-gradient(circle at 35% 30%, #ffffff, #e9e2cf);
+  border-color: #c9a24a;
+  color: #1a1a1a;
+}
+.seat-own-mark--sb {
+  background: #1d4f8f;
+  border-color: #9cc6ff;
+  color: #eaf3ff;
+}
+.seat-own-mark--bb {
+  background: #f2bd4d;
+  border-color: #fff1c9;
+  color: #2a1c05;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat-own-mark {
+    animation: none;
+  }
+}

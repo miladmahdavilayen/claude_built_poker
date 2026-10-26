@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../api.js';
 import { useAuth } from '../AuthContext.js';
@@ -12,8 +12,16 @@ import { DealAnimation } from '../components/DealAnimation.js';
 import { HandBreakPanel } from '../components/HandBreakPanel.js';
 import { MoneyInput } from '../components/MoneyInput.js';
 import { OwnerMenu } from '../components/OwnerMenu.js';
-import { SeatActionMenu, useSeatMenuGesture, type SeatAction } from '../components/SeatActionMenu.js';
+import { SeatActionMenu, useSeatDoubleTap, useSeatMenuGesture, type SeatAction } from '../components/SeatActionMenu.js';
 import { SeatOfferBanner } from '../components/SeatOfferBanner.js';
+import { NO_SPLIT_EFFECTS, SplitPotAnnouncement, type SplitSeatEffects } from '../components/SplitPotAnnouncement.js';
+import { TableViewMenu } from '../components/TableViewMenu.js';
+import { DealerPicker } from '../components/DealerPicker.js';
+import { SeatMoveModal } from '../components/SeatMoveModal.js';
+import { dealerModelUrl, useDealerCharacters } from '../table3d/dealers.js';
+import type { PotAnimator } from '../table3d/TableScene3D.js';
+import { useTableView } from '../table3d/useTableView.js';
+import type { ChatMessageRecord } from '../types.js';
 import { requestSeatAlerts, useSeatOfferAlert } from '../useSeatOfferAlert.js';
 import { RevealHandButton } from '../components/RevealHandButton.js';
 import { Seat } from '../components/Seat.js';
@@ -24,9 +32,9 @@ import { WinCelebration } from '../components/WinCelebration.js';
 import { BOT_PERSONAS } from '../botPersonas.js';
 import { formatChips } from '../chips.js';
 import { isBluffHand } from '../handStrength.js';
-import { computePositionLabels } from '../positionLabels.js';
+import { blindTags, computePositionLabels } from '../positionLabels.js';
 import { livePotTotal } from '../potTotal.js';
-import { seatPositionsFor, seatSizeVars } from '../seatLayout.js';
+import { seatPositionsFor, seatSizeVars, type SeatPosition } from '../seatLayout.js';
 import { useActiveSpeakers } from '../useActiveSpeakers.js';
 import { useCameraFit } from '../useCameraFit.js';
 import { useTableLayout } from '../useTableLayout.js';
@@ -46,6 +54,9 @@ import { useVoiceChat } from '../useVoiceChat.js';
  * anyone's spoken yet. `limit` is 2 for the speaker bar; immersive mode
  * uses the full ordering as its keep-priority — see useCameraFit.ts.
  */
+// The 3D table and Three.js load only when a table is shown in 3D.
+const TableScene3D = lazy(() => import('../table3d/TableScene3D.js'));
+
 function pickSpeakerSeatIds(seats: { seatId: number }[], activeSpeakerIds: string[], limit: number): string[] {
   const seatIds = new Set(seats.map((s) => String(s.seatId)));
   const chosen: string[] = [];
@@ -81,9 +92,52 @@ export function TablePage(): React.JSX.Element {
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
   const immersive = useImmersiveMode();
+  // 3D (and at what quality) or the classic 2D table — the header's View menu.
+  const view = useTableView();
+  const is3d = view.effective !== '2d';
+  // Where the 3D scene put each seat and the pot on screen (% of the felt), for the DOM layers over it.
+  const [layout3d, setLayout3d] = useState<{ seats: SeatPosition[]; pot: { left: number; top: number }; boardTop: { left: number; top: number } } | null>(null);
+  const potAnimatorRef = useRef<PotAnimator | null>(null);
+  const [splitEffects, setSplitEffects] = useState<SplitSeatEffects>(NO_SPLIT_EFFECTS);
+  // On the 3D table, your action buttons wait until your cards are actually in front of you —
+  // never more than a few seconds, though: the clock on your turn is already running.
+  // Tied to the hand it was reported for, so a new hand starts with them not yet down.
+  const [ownCardsDown, setOwnCardsDown] = useState<{ hand: string | null; landed: boolean }>({ hand: null, landed: false });
+  const handIdRef = useRef<string | null>(null);
+  handIdRef.current = sock.state?.handId ?? null;
+  const onOwnCards = useCallback((landed: boolean) => setOwnCardsDown({ hand: handIdRef.current, landed }), []);
+  const [waitedForCards, setWaitedForCards] = useState(false);
+  const myTurnHand = sock.state?.legalActions ? sock.state.handId : null;
+  useEffect(() => {
+    setWaitedForCards(false);
+    if (!myTurnHand) return;
+    const t = setTimeout(() => setWaitedForCards(true), 3000);
+    return () => clearTimeout(t);
+  }, [myTurnHand]);
+  // The dealer's plain-text lines in the chat (a split pot) — made the same way by every viewer, never sent.
+  const [dealerChat, setDealerChat] = useState<ChatMessageRecord[]>([]);
+  // The house dealer: the table's chosen character, and the owner's picker (double-tap her).
+  const dealerCharacters = useDealerCharacters();
+  const [dealerPickerOpen, setDealerPickerOpen] = useState(false);
+  const onSplitLog = useCallback(
+    (lines: string[]) => {
+      const at = new Date().toISOString();
+      setDealerChat((prev) => [
+        ...prev.slice(-30),
+        ...lines.map((message, i) => ({ id: `dealer-${String(Date.now())}-${String(i)}`, tableId: tableId ?? '', userId: null, displayName: 'Dealer', message, createdAt: at })),
+      ]);
+    },
+    [tableId],
+  );
+  const onLayout3d = useCallback(
+    (seats: SeatPosition[], pot: { left: number; top: number }, boardTop: { left: number; top: number }) => setLayout3d({ seats, pot, boardTop }),
+    [],
+  );
   const isCompactScreen = useIsCompactScreen();
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
+  // Moving your own seat to an empty one (anyone seated): the seat it's to.
+  const [moveTarget, setMoveTarget] = useState<number | null>(null);
   // '' is a real intermediate state (the field cleared, not yet retyped) —
   // coercing an empty string straight to 0 made the DOM input's value jump
   // to "0" mid-edit, so retyping "500" over a cleared "500" produced "0500".
@@ -103,6 +157,8 @@ export function TablePage(): React.JSX.Element {
     }
   });
   const [bottomTab, setBottomTab] = useState<'chat' | 'log'>('chat');
+  // On an iPhone in the browser, Full screen can hide this page's own bars but not Safari's: a tip, once, on the Home Screen way.
+  const [homeScreenTip, setHomeScreenTip] = useState(false);
   // Chat and the hand log start folded into a slim bar (they took a lot of
   // the screen); open state is remembered per browser.
   const [dockOpen, setDockOpen] = useState(() => {
@@ -113,7 +169,7 @@ export function TablePage(): React.JSX.Element {
     }
   });
   const [lastSeenChatId, setLastSeenChatId] = useState<string | null | undefined>(undefined);
-  const [seatMenu, setSeatMenu] = useState<{ seatId: number; x: number; y: number } | null>(null);
+  const [seatMenu, setSeatMenu] = useState<{ seatId: number; x: number; y: number; empty?: boolean } | null>(null);
   const [addBotModal, setAddBotModal] = useState<number | null>(null);
   const [botPersona, setBotPersona] = useState(BOT_PERSONAS[0]!.id);
   // Each persona actually added sinks to the bottom of the list — so
@@ -288,11 +344,13 @@ export function TablePage(): React.JSX.Element {
   // nothing ever overlaps — seats, the board, bets — see useTableLayout.ts.
   // `positions` (the plain oval) is the first-frame fallback and the ring order.
   const ringSeatIds = useMemo(() => positions.map((p) => p.seatId), [positions]);
-  const tableLayout = useTableLayout(feltRef, ringSeatIds);
-  const placedPositions = useMemo(
-    () => (tableLayout ? positions.map((p) => ({ ...p, ...(tableLayout.seats.get(p.seatId) ?? {}) })) : positions),
-    [positions, tableLayout],
-  );
+  // The 2D table's layout solver; the 3D table places its own seats (see table3d/scene.ts).
+  const tableLayout2d = useTableLayout(feltRef, is3d ? [] : ringSeatIds);
+  const tableLayout = is3d ? null : tableLayout2d;
+  const placedPositions = useMemo(() => {
+    if (is3d) return layout3d?.seats ?? positions;
+    return tableLayout ? positions.map((p) => ({ ...p, ...(tableLayout.seats.get(p.seatId) ?? {}) })) : positions;
+  }, [positions, tableLayout, is3d, layout3d]);
   // On a phone, 1-3 human cameras have enough felt space to run noticeably
   // (~20%) bigger tiles than the baseline per-seat-count sizing gives them.
   // Deliberately NOT extended to exactly 4 (the highest count that still
@@ -307,8 +365,10 @@ export function TablePage(): React.JSX.Element {
   // sock.state can be null pre-connect.
   const justRevealedSeats = useJustRevealedSeats(sock.latestEvents, sock.state?.board ?? []);
 
-  // The owner's per-seat menu: hold a seat for a second, or right-click it.
+  // The owner's per-seat menu: double-tap a player's seat (hold an empty one — a single tap there
+  // already offers its options), or right-click either.
   const seatGesture = useSeatMenuGesture((seatId, x, y) => setSeatMenu({ seatId, x, y }), user?.role === 'admin');
+  const playerSeatGesture = useSeatDoubleTap((seatId: number, x, y) => setSeatMenu({ seatId, x, y }), user?.role === 'admin');
   // On a phone, during the viewer's turn, the bet overlay's Fold/Call rail
   // sits in the screen's bottom-left corner — where the full-screen toggle
   // lives. While it's up, lift the toggle to just above it (measured, since
@@ -340,6 +400,10 @@ export function TablePage(): React.JSX.Element {
     else if (chatSeen && latestChatId !== lastSeenChatId) setLastSeenChatId(latestChatId);
   }, [chatSeen, latestChatId, lastSeenChatId, sock.chatHistoryLoaded]);
   const unreadChat = lastSeenChatId === undefined ? 0 : sock.chat.length - 1 - sock.chat.findIndex((m) => m.id === lastSeenChatId);
+  const chatWithDealer = useMemo(
+    () => (dealerChat.length === 0 ? sock.chat : [...sock.chat, ...dealerChat].sort((a, b) => a.createdAt.localeCompare(b.createdAt))),
+    [sock.chat, dealerChat],
+  );
 
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
@@ -376,6 +440,7 @@ export function TablePage(): React.JSX.Element {
   const mySeat = state.viewerSeatId !== null ? state.seats.find((s) => s.seatId === state.viewerSeatId) : null;
   const hasEmptySeat = state.seats.some((s) => s.status === 'empty');
   const positionLabels = computePositionLabels(state.seats, state.buttonSeat);
+  const blinds = blindTags(state.seats, state.buttonSeat, state.phase === 'in-hand');
   const myWaitlistIndex = state.waitlist.findIndex((w) => w.userId === user.id);
   // Nothing about a hand's structure (dealer button, position labels, hole
   // cards) should show before this table's very first deal — it only
@@ -534,6 +599,16 @@ export function TablePage(): React.JSX.Element {
             // Storage unavailable — it simply pulses again next visit.
           }
         }
+        if (!immersive.active && immersive.iphoneInBrowser) {
+          try {
+            if (window.localStorage.getItem('pokerclause.homeScreenTip') !== '1') {
+              window.localStorage.setItem('pokerclause.homeScreenTip', '1');
+              setHomeScreenTip(true);
+            }
+          } catch {
+            setHomeScreenTip(true);
+          }
+        }
         immersive.toggle();
       }}
       title={immersive.active ? 'Show the rest of the page' : 'Hide the rest of the page while playing'}
@@ -546,6 +621,88 @@ export function TablePage(): React.JSX.Element {
       </span>
     </button>
   );
+
+  // Who may click an empty seat to sit — the owner, a table's own creator, or anyone with an open-invite link.
+  const emptySeatClickable = (seat: (typeof state.seats)[number]): boolean =>
+    (user.role === 'admin' || sock.canManageTable || openSeatForMe) && !sock.isPractice && !mySeat && seat.status === 'empty';
+
+  /** An empty seat's options for this viewer: sitting down, a computer player, an invite — each only where it's allowed. */
+  const emptySeatOptions = (seat: (typeof state.seats)[number]): SeatAction[] => {
+    const id = seat.seatId;
+    const out: SeatAction[] = [];
+    // Seated already: move here (when, and any blind it costs, are shown first).
+    if (mySeat && seat.status === 'empty') out.push({ label: 'Move to this seat', onSelect: () => setMoveTarget(id) });
+    if (emptySeatClickable(seat)) out.push({ label: 'Sit here', onSelect: () => openSeatModal(id) });
+    if (user.role === 'admin' || sock.canManageTable) out.push({ label: 'Add a computer player', onSelect: () => openAddBotModal(id) });
+    if (user.role === 'admin' && !sock.isPractice) out.push({ label: 'Invite a player to this seat', onSelect: () => openAssignModal(id) });
+    return out;
+  };
+
+  /** A seat's box — placed by % on the 2D table, or anchored in 3D by the scene (`ref`). */
+  const seatSlot = (seatId: number, place: { style?: React.CSSProperties; ref?: (el: HTMLElement | null) => void }): React.ReactNode => {
+    const seat = state.seats.find((s) => s.seatId === seatId);
+    if (!seat) return null;
+    const pending = splitEffects.pending.get(seatId);
+    // What this viewer can do with an empty seat — offered as large options on a tap.
+    const emptyOptions = seat.status === 'empty' ? emptySeatOptions(seat) : [];
+    return (
+      <div
+        key={seatId}
+        ref={place.ref}
+        className={`seat-slot${user.role === 'admin' ? ' seat-slot-owner' : ''}${place.ref ? ' seat-slot--3d' : ''}`}
+        data-testid={`seat-${String(seatId)}`}
+        data-seat-status={seat.status}
+        style={place.style}
+        {...(seat.status === 'empty' ? seatGesture(seatId) : playerSeatGesture(seatId))}
+      >
+        <Seat
+          seat={seat}
+          isButton={handEverDealt && state.buttonSeat === seatId}
+          isActing={state.betting.actingSeat === seatId}
+          isViewer={state.viewerSeatId === seatId}
+          positionLabel={handEverDealt ? positionLabels.get(seatId) : undefined}
+          showCards={handEverDealt}
+          justRevealed={justRevealedSeats.has(seatId)}
+          voice={voiceStreamForSeat(seat)}
+          showVideo={canSeeVideo && (immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive)}
+          // Self-serve seating/bots are admin-only on any table, OR
+          // open to a signed-in (non-guest) human on the ONE table
+          // they created (sock.canManageTable — see
+          // socketServer.ts's canManageTable and its own doc
+          // comment). Inviting another real human (onAssignHumanClick)
+          // and rebuying (the seat's hold/right-click menu) stay admin-only everywhere,
+          // full stop — see DECISIONS.md. Nobody but its own
+          // player ever sits at a practice table.
+          onEmptySeatClick={emptySeatClickable(seat) ? () => openSeatModal(seatId) : undefined}
+          onAddBotClick={(user.role === 'admin' || sock.canManageTable) && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined}
+          onAssignHumanClick={user.role === 'admin' && !sock.isPractice && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
+          // Owner-only, like every table control (the server rejects anyone else).
+          onRemoveBotClick={seat.isBot && canManage ? () => sock.removeBot(seatId) : undefined}
+          splitEffect={splitEffects.winners.has(seatId) ? 'winner' : splitEffects.dimmed.has(seatId) ? 'dim' : null}
+          winningCards={splitEffects.cards}
+          stackDisplay={pending !== undefined ? seat.stack - pending : undefined}
+          emptyTap={
+            emptyOptions.length === 0
+              ? undefined
+              : {
+                  label: emptyOptions.length === 1 ? emptyOptions[0]!.label : 'Tap to fill',
+                  onTap: (x, y) => (emptyOptions.length === 1 ? emptyOptions[0]!.onSelect() : setSeatMenu({ seatId, x, y, empty: true })),
+                }
+          }
+          // On the 3D table your own cards lie face up on the felt in front of you — not twice.
+          hideOwnCards={is3d}
+          ownMark={
+            is3d && seatId === state.viewerSeatId && state.phase === 'in-hand'
+              ? state.buttonSeat === seatId
+                ? 'D'
+                : blinds.get(seatId)
+              : undefined
+          }
+          compact={is3d}
+        />
+      </div>
+    );
+  };
 
   return (
     <div className={`table-page${immersive.active ? ' immersive' : ''}`}>
@@ -580,6 +737,7 @@ export function TablePage(): React.JSX.Element {
               Leave table
             </button>
           )}
+          <TableViewMenu view={view} />
           {canManageLayout && (
             <button type="button" className="owner-menu-toggle" aria-label="Table menu" title="Table controls" onClick={() => setOwnerMenuOpen(true)}>
               <span aria-hidden="true">☰</span> Menu
@@ -625,7 +783,7 @@ export function TablePage(): React.JSX.Element {
 
       <div
         ref={feltRef}
-        className={`felt${videoBoostActive ? ' felt-video-boost' : ''}`}
+        className={`felt${videoBoostActive ? ' felt-video-boost' : ''}${is3d ? ' felt-3d' : ''}`}
         style={
           {
             ...seatSizeVars(positions.length),
@@ -635,7 +793,38 @@ export function TablePage(): React.JSX.Element {
           } as React.CSSProperties
         }
       >
-        <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} top={tableLayout?.boardTop} />
+        {!is3d && (
+          <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} top={tableLayout?.boardTop} winningCards={splitEffects.cards} />
+        )}
+        {is3d && (
+          <Suspense fallback={<div className="table3d-loading">Setting up the table…</div>}>
+            <TableScene3D
+              tier={view.effective === '2d' ? 'low' : view.effective.tier}
+              mode={view.effective === '2d' ? 'seated' : view.effective.mode}
+              reduceMotion={view.reduceMotion}
+              state={state}
+              events={sock.latestEvents}
+              handEverDealt={handEverDealt}
+              renderSeat={(seatId, ref) => seatSlot(seatId, { ref })}
+              onChairClick={(seatId) => {
+                // An empty chair tapped in 3D: the same options as its seat box.
+                const seat = state.seats.find((s) => s.seatId === seatId);
+                const options = seat ? emptySeatOptions(seat) : [];
+                if (options.length === 1) options[0]!.onSelect();
+                else if (options.length > 1) setSeatMenu({ seatId, x: window.innerWidth / 2 - 135, y: window.innerHeight / 2 - 120, empty: true });
+              }}
+              onPerf={view.reportFrameTime}
+              onRequestMode={view.setChoice}
+              onOwnCards={onOwnCards}
+              dealerModel={dealerModelUrl(dealerCharacters, state.settings.houseDealer)}
+              onDealerDoubleTap={canManageLayout && !sock.isPractice ? () => setDealerPickerOpen(true) : undefined}
+              onFail={view.reportFailure}
+              onLayout={onLayout3d}
+              potAnimatorRef={potAnimatorRef}
+              winningCards={splitEffects.cards}
+            />
+          </Suspense>
+        )}
         {state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
             Fairness commitment: {state.handCommitment.slice(0, 12)}&hellip;
@@ -656,8 +845,38 @@ export function TablePage(): React.JSX.Element {
             doc comment and DECISIONS.md. */}
         <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
         {fullScreenButton}
-        <DealAnimation events={sock.latestEvents} positions={placedPositions} />
+        {homeScreenTip && immersive.active && (
+          <div className="home-screen-tip" role="status">
+            <span>
+              For the whole screen on iPhone: tap <strong>Share</strong> <span aria-hidden="true">⬆︎</span>, then <strong>Add to Home Screen</strong>, and open
+              PokerClause from there.
+            </span>
+            <button type="button" aria-label="Close tip" onClick={() => setHomeScreenTip(false)}>
+              ✕
+            </button>
+          </div>
+        )}
+        {/* The 3D table deals its own cards and moves its own chips. */}
+        {!is3d && <DealAnimation events={sock.latestEvents} positions={placedPositions} />}
         <WinCelebration events={sock.latestEvents} positions={placedPositions} viewerSeatId={state.viewerSeatId} />
+        <SplitPotAnnouncement
+          events={sock.latestEvents}
+          nameOf={(seatId) => state.seats.find((s) => s.seatId === seatId)?.displayName ?? `Seat ${String(seatId + 1)}`}
+          board={state.board}
+          inHandSeatIds={state.seats.filter((s) => s.status === 'active' || s.status === 'all-in' || s.status === 'folded').map((s) => s.seatId)}
+          positions={placedPositions}
+          potPosition={is3d ? (layout3d?.pot ?? { left: 50, top: 60 }) : { left: 50, top: (tableLayout?.boardTop ?? 42) + 11 }}
+          bannerAnchor={
+            is3d
+              ? { left: layout3d?.boardTop.left ?? 50, top: (layout3d?.boardTop.top ?? 40) - 1.5 }
+              : { left: 50, top: (tableLayout?.boardTop ?? 42) - 7 }
+          }
+          potAnimator={is3d ? potAnimatorRef.current : null}
+          reduceMotion={view.reduceMotion}
+          slow={view.slowAnimations}
+          onEffects={setSplitEffects}
+          onLog={onSplitLog}
+        />
         {state.phase !== 'in-hand' && (
           <HandBreakPanel
             nextHandAt={state.nextHandAt}
@@ -666,64 +885,38 @@ export function TablePage(): React.JSX.Element {
             onStartHand={() => sock.startHand()}
           />
         )}
-        {placedPositions.map(({ seatId, left, top, betLeft, betTop }) => {
-          const seat = state.seats.find((s) => s.seatId === seatId);
-          if (!seat) return null;
-          return (
-            <Fragment key={seatId}>
-              <div
-                className={`seat-slot${user.role === 'admin' ? ' seat-slot-owner' : ''}`}
-                data-testid={`seat-${String(seatId)}`}
-                data-seat-status={seat.status}
-                style={{ left: `${String(left)}%`, top: `${String(top)}%` }}
-                {...seatGesture(seatId)}
-              >
-                <Seat
-                  seat={seat}
-                  isButton={handEverDealt && state.buttonSeat === seatId}
-                  isActing={state.betting.actingSeat === seatId}
-                  isViewer={state.viewerSeatId === seatId}
-                  positionLabel={handEverDealt ? positionLabels.get(seatId) : undefined}
-                  showCards={handEverDealt}
-                  justRevealed={justRevealedSeats.has(seatId)}
-                  voice={voiceStreamForSeat(seat)}
-                  showVideo={canSeeVideo && (immersiveCameraFitActive ? !immersiveHiddenCameraSeatIds.has(String(seatId)) : !speakerBarActive)}
-                  // Self-serve seating/bots are admin-only on any table, OR
-                  // open to a signed-in (non-guest) human on the ONE table
-                  // they created (sock.canManageTable — see
-                  // socketServer.ts's canManageTable and its own doc
-                  // comment). Inviting another real human (onAssignHumanClick)
-                  // and rebuying (the seat's hold/right-click menu) stay admin-only everywhere,
-                  // full stop — see DECISIONS.md. Nobody but its own
-                  // player ever sits at a practice table.
-                  onEmptySeatClick={
-                    (user.role === 'admin' || sock.canManageTable || openSeatForMe) && !sock.isPractice && !mySeat && seat.status === 'empty'
-                      ? () => openSeatModal(seatId)
-                      : undefined
-                  }
-                  onAddBotClick={
-                    (user.role === 'admin' || sock.canManageTable) && seat.status === 'empty' ? () => openAddBotModal(seatId) : undefined
-                  }
-                  onAssignHumanClick={user.role === 'admin' && !sock.isPractice && seat.status === 'empty' ? () => openAssignModal(seatId) : undefined}
-                  // Owner-only, like every table control (the server rejects anyone else).
-                  onRemoveBotClick={seat.isBot && canManage ? () => sock.removeBot(seatId) : undefined}
-                />
-              </div>
-              {seat.status !== 'empty' && seat.committedThisStreet > 0 && (
-                <div
-                  className="bet-chips-slot"
-                  data-testid={`bet-chips-${String(seatId)}`}
-                  style={{ left: `${String(betLeft)}%`, top: `${String(betTop)}%` }}
-                >
-                  <ChipStack amount={seat.committedThisStreet} />
-                </div>
-              )}
-            </Fragment>
-          );
-        })}
+        {!is3d &&
+          placedPositions.map(({ seatId, left, top, betLeft, betTop }) => {
+            const seat = state.seats.find((s) => s.seatId === seatId);
+            if (!seat) return null;
+            return (
+              <Fragment key={seatId}>
+                {seatSlot(seatId, { style: { left: `${String(left)}%`, top: `${String(top)}%` } })}
+                {blinds.has(seatId) && (
+                  // In front of the seat: just past where its bet goes, toward the middle.
+                  <div
+                    className={`blind-tag blind-tag--${blinds.get(seatId)!.toLowerCase()}${seatId === state.viewerSeatId ? ' blind-tag--mine' : ''}`}
+                    data-testid={`blind-tag-${String(seatId)}`}
+                    style={{ left: `${String(betLeft + (betLeft - left) * 0.4)}%`, top: `${String(betTop + (betTop - top) * 0.4)}%` }}
+                  >
+                    {blinds.get(seatId)}
+                  </div>
+                )}
+                {seat.status !== 'empty' && seat.committedThisStreet > 0 && (
+                  <div
+                    className="bet-chips-slot"
+                    data-testid={`bet-chips-${String(seatId)}`}
+                    style={{ left: `${String(betLeft)}%`, top: `${String(betTop)}%` }}
+                  >
+                    <ChipStack amount={seat.committedThisStreet} />
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
       </div>
 
-      {state.legalActions && (
+      {state.legalActions && (!is3d || (ownCardsDown.landed && ownCardsDown.hand === state.handId) || waitedForCards) && (
         <ActionBar
           legalActions={state.legalActions}
           potSize={livePotTotal(state)}
@@ -765,8 +958,29 @@ export function TablePage(): React.JSX.Element {
           </button>
         </div>
         {dockOpen &&
-          (bottomTab === 'chat' ? <ChatPanel messages={sock.chat} onSend={sock.sendChat} /> : <ActionLog events={sock.recentEvents} seats={state.seats} />)}
+          (bottomTab === 'chat' ? <ChatPanel messages={chatWithDealer} onSend={sock.sendChat} /> : <ActionLog events={sock.recentEvents} seats={state.seats} />)}
       </div>
+
+      {moveTarget !== null && (
+        <SeatMoveModal
+          seatNumber={moveTarget + 1}
+          quote={() => sock.changeSeat(moveTarget, true)}
+          onConfirm={() => sock.changeSeat(moveTarget)}
+          onClose={() => setMoveTarget(null)}
+        />
+      )}
+
+      {dealerPickerOpen && canManageLayout && (
+        <DealerPicker
+          characters={dealerCharacters}
+          current={state.settings.houseDealer}
+          onClose={() => setDealerPickerOpen(false)}
+          onPick={(id) => {
+            void sock.updateTableSettings({ houseDealer: id });
+            setDealerPickerOpen(false);
+          }}
+        />
+      )}
 
       {seatMenu &&
         (() => {
@@ -777,7 +991,8 @@ export function TablePage(): React.JSX.Element {
               x={seatMenu.x}
               y={seatMenu.y}
               title={seat.status === 'empty' ? `Seat ${String(seat.seatId + 1)} — empty` : (seat.displayName ?? `Seat ${String(seat.seatId + 1)}`)}
-              actions={seatActions(seat)}
+              actions={seatMenu.empty ? emptySeatOptions(seat) : seatActions(seat)}
+              large={!!seatMenu.empty}
               onClose={() => setSeatMenu(null)}
             />
           );

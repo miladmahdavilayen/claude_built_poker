@@ -15,7 +15,8 @@ test('toggling full screen after a hand has already been dealt does not replay t
   await adminLogin(page);
   await createTable(page, { name: 'Immersive Mode Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 200);
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await page.getByLabel(/Buy-in/).fill('200');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
   await startHand(page);

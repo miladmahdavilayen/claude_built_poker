@@ -99,6 +99,8 @@ export interface LiveSeat {
   pendingRemoval: 'player' | 'seat' | null;
   /** Seated mid-hand (status 'sitting-out' meanwhile, so the engine leaves them out of the hand in progress) — switched to 'active' when that hand ends. See takeSeat. */
   joinsNextHand: boolean;
+  /** Asked mid-hand to move to this empty seat (held for them meanwhile): moved when the hand ends. See moveSeat. */
+  pendingMoveTo: number | null;
 }
 
 /** A seat the table emptied on its own (a deferred owner removal finishing at hand end) — the caller refunds `refund` to `userId` and moves their socket to spectating. */
@@ -334,6 +336,7 @@ export class LiveTable {
       pendingChips: 0,
       pendingRemoval: null,
       joinsNextHand: false,
+      pendingMoveTo: null,
     };
   }
 
@@ -361,6 +364,7 @@ export class LiveTable {
     const engineSeat = this.state.seats[seatId];
     if (!engineSeat || this.removedSeatIds.has(seatId)) return { ok: false, code: 'NO_SUCH_SEAT', message: 'That seat does not exist.' };
     if (engineSeat.status !== 'empty') return { ok: false, code: 'SEAT_TAKEN', message: 'That seat is not empty.' };
+    if (this.seats.some((s) => s.pendingMoveTo === seatId)) return { ok: false, code: 'SEAT_TAKEN', message: 'Another player is moving to that seat.' };
     return { ok: true };
   }
 
@@ -925,6 +929,96 @@ export class LiveTable {
       .filter((s) => s.status === 'active' && s.stack > 0)
       .map((s) => s.seatId)
       .sort((a, b) => a - b);
+  }
+
+  /** Seats that will be dealt into the next hand, as a sorted ring (between hands, a folded or all-in seat still counts — see dealtInCount). */
+  private nextHandRing(): number[] {
+    return this.state.seats
+      .filter((s) => s.status !== 'empty' && s.status !== 'sitting-out' && s.stack > 0 && !this.seats[s.seatId]?.pendingRemoval)
+      .map((s) => s.seatId)
+      .sort((a, b) => a - b);
+  }
+
+  /**
+   * What moving from one seat to another costs: a big blind if the move
+   * would put the big blind further away than it is now — skipping blinds
+   * by changing seats — and nothing if it brings it nearer or keeps it as
+   * close (Robert's Rules of Poker; see DECISIONS.md "Changing seats").
+   * Nothing before a table's first hand, or for a player sitting out (they
+   * aren't in the blind rotation at all).
+   */
+  seatMoveCost(fromSeatId: number, toSeatId: number): number {
+    const lastBb = this.state.lastBigBlindSeat;
+    const ring = this.nextHandRing();
+    if (lastBb === null || !ring.includes(fromSeatId)) return 0;
+    const after = [...ring.filter((id) => id !== fromSeatId), toSeatId].sort((a, b) => a - b);
+    // Hands until the big blind reaches a seat: 0 when it's that seat's next hand.
+    const handsUntilBb = (r: readonly number[], seatId: number): number => {
+      const next = (from: number): number => r.find((id) => id > from) ?? r[0]!;
+      let bb = next(lastBb);
+      let n = 0;
+      while (bb !== seatId && n < r.length) {
+        bb = next(bb);
+        n++;
+      }
+      return n;
+    };
+    return handsUntilBb(after, toSeatId) > handsUntilBb(ring, fromSeatId) ? this.state.config.bigBlind : 0;
+  }
+
+  /**
+   * A seated player moving to an empty seat at this table. Between hands
+   * (or for a player not in the hand being played) it happens at once;
+   * mid-hand it waits for the hand to end, the new seat held for them
+   * meanwhile. A move that skips the big blind owes one, posted live on
+   * their next hand (the engine's `missedBigBlind` — see seatMoveCost).
+   * Their stack, time bank and everything else about them go with them.
+   */
+  moveSeat(fromSeatId: number, toSeatId: number): { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string } {
+    const live = this.seats[fromSeatId];
+    const engineSeat = this.state.seats[fromSeatId];
+    if (!live?.userId || !engineSeat || engineSeat.status === 'empty') return { ok: false, code: 'NOT_SEATED', message: 'You are not seated at this table.' };
+    if (fromSeatId === toSeatId) return { ok: false, code: 'SAME_SEAT', message: 'You are already in that seat.' };
+    if (live.pendingRemoval) return { ok: false, code: 'LEAVING', message: 'You are leaving this table after the hand.' };
+    if (live.pendingMoveTo === toSeatId) return { ok: true, when: 'after-hand', owes: this.seatMoveCost(fromSeatId, toSeatId) };
+    const usable = this.checkSeatUsable(toSeatId);
+    if (!usable.ok) return usable;
+    const owes = this.seatMoveCost(fromSeatId, toSeatId);
+    if (this.isInCurrentHand(fromSeatId)) {
+      live.pendingMoveTo = toSeatId;
+      return { ok: true, when: 'after-hand', owes };
+    }
+    this.applySeatMove(fromSeatId, toSeatId);
+    return { ok: true, when: 'now', owes };
+  }
+
+  /** Quoting a move without making it — see ChangeSeatSchema. */
+  quoteSeatMove(fromSeatId: number, toSeatId: number): { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string } {
+    if (fromSeatId === toSeatId) return { ok: false, code: 'SAME_SEAT', message: 'You are already in that seat.' };
+    const usable = this.checkSeatUsable(toSeatId);
+    if (!usable.ok) return usable;
+    return { ok: true, when: this.isInCurrentHand(fromSeatId) ? 'after-hand' : 'now', owes: this.seatMoveCost(fromSeatId, toSeatId) };
+  }
+
+  private applySeatMove(fromSeatId: number, toSeatId: number): void {
+    const owes = this.seatMoveCost(fromSeatId, toSeatId) > 0;
+    const from = this.state.seats[fromSeatId]!;
+    this.state = {
+      ...this.state,
+      seats: this.state.seats.map((s, i) => {
+        if (i === toSeatId) return { ...from, seatId: toSeatId, holeCards: [], missedBigBlind: from.missedBigBlind || owes };
+        if (i === fromSeatId) return { ...s, playerId: '', stack: 0, status: 'empty' as const, holeCards: [], missedSmallBlind: false, missedBigBlind: false };
+        return s;
+      }),
+    };
+    this.seats[toSeatId] = { ...this.seats[fromSeatId]!, seatId: toSeatId, pendingMoveTo: null };
+    this.seats[fromSeatId] = this.emptyLiveSeat(fromSeatId);
+    const added = this.handChipAdds.get(fromSeatId);
+    if (added !== undefined) {
+      this.handChipAdds.delete(fromSeatId);
+      this.handChipAdds.set(toSeatId, added);
+    }
+    if (this.revealedSeatIds.delete(fromSeatId)) this.revealedSeatIds.add(toSeatId);
   }
 
   canStartHand(): boolean {
@@ -1492,6 +1586,14 @@ export class LiveTable {
         }
       }
     }
+    // Seat moves asked for during the hand, once everything else about each seat is settled.
+    for (const liveSeat of [...this.seats]) {
+      const to = liveSeat.pendingMoveTo;
+      if (to === null) continue;
+      liveSeat.pendingMoveTo = null;
+      // Held for them since they asked — but a seat deleted meanwhile is gone.
+      if (liveSeat.userId && this.checkSeatUsable(to).ok) this.applySeatMove(liveSeat.seatId, to);
+    }
     if (vacated.length > 0) this.callbacks.onSeatsVacated?.(this.tableId, vacated);
   }
 
@@ -1511,6 +1613,7 @@ export class LiveTable {
         pendingChips: s.pendingChips,
         leavingAfterHand: s.pendingRemoval !== null,
         joiningNextHand: s.joinsNextHand,
+        movingToSeatId: s.pendingMoveTo,
       });
     }
     return map;

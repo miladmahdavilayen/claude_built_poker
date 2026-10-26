@@ -27,9 +27,10 @@ test('a regular player has no self-serve options; the owner assigns a seat via l
   await expect(pageAlice.locator('[data-testid="seat-1"]').getByText('Empty')).toBeVisible();
 
   // The owner sees all three on an empty seat.
-  await expect(pageOwner.locator('[data-testid="seat-1"]').getByText('Sit here')).toBeVisible();
-  await expect(pageOwner.locator('[data-testid="seat-1"]').getByText('+ Add bot')).toBeVisible();
-  await expect(pageOwner.locator('[data-testid="seat-1"]').getByText('+ Assign human')).toBeVisible();
+  // The owner taps an empty seat for its options, big: sit, a computer player, an invite.
+  await pageOwner.locator('[data-testid="seat-1"] .seat-empty-tap').click();
+  await expect(pageOwner.getByRole('menuitem')).toHaveText(['Sit here', 'Add a computer player', 'Invite a player to this seat']);
+  await pageOwner.keyboard.press('Escape');
 
   // The owner assigns seat 1 to Alice with an exact buy-in via a generated link.
   await inviteToSeat(pageOwner, pageAlice, 1, 120);
@@ -69,7 +70,8 @@ test('a fresh visitor (not yet signed in) opening an invite link lands directly 
   const tableUrl = pageOwner.url();
 
   // Generate the invite link without seating anyone yet.
-  await pageOwner.locator('[data-testid="seat-1"]').getByText('+ Assign human').click();
+  await pageOwner.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await pageOwner.getByRole('menuitem', { name: 'Invite a player to this seat' }).click();
   await pageOwner.getByLabel(/Buy-in/).fill('130');
   await pageOwner.getByRole('button', { name: 'Generate link' }).click();
   const link = await pageOwner.locator('.assign-link-input').inputValue();
@@ -106,7 +108,8 @@ for (const form of ['link', 'code'] as const) {
     await adminLogin(pageOwner);
     await createTable(pageOwner, { name: `Pasted Invite ${form}`, smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
     const tableUrl = pageOwner.url();
-    await pageOwner.locator('[data-testid="seat-2"]').getByText('+ Assign human').click();
+    await pageOwner.locator('[data-testid="seat-2"]').locator('.seat-empty-tap').click();
+    await pageOwner.getByRole('menuitem', { name: 'Invite a player to this seat' }).click();
     await pageOwner.getByLabel(/Buy-in/).fill('90');
     await pageOwner.getByRole('button', { name: 'Generate link' }).click();
     const link = await pageOwner.locator('.assign-link-input').inputValue();

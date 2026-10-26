@@ -23,6 +23,13 @@ export interface TableSettings extends TableConfig {
    * sits with what they left with instead. Absent on every other table.
    */
   openSeatStack?: number;
+  /**
+   * Which character deals on the 3D table (an id from
+   * apps/web/public/models/dealers/index.json); absent or '' for the
+   * built-in dealer. Purely how the table looks — the owner picks it by
+   * double-tapping the house dealer, and everyone at the table sees it.
+   */
+  houseDealer?: string;
 }
 
 /** On an open-invite table, a free seat held for the first person on the waitlist until `expiresAt` (epoch ms). */
@@ -71,6 +78,8 @@ export interface ProjectedSeat {
   leavingAfterHand: boolean;
   /** Seated mid-hand — dealt in from the next hand. */
   joiningNextHand: boolean;
+  /** This player asked to move to that empty seat mid-hand: they move the moment the hand ends. Null otherwise. */
+  movingToSeatId: number | null;
 }
 
 /** Blind/ante/straddle changes the owner made mid-hand, applied from the next deal. */

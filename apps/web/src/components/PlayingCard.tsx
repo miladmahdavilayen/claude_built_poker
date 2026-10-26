@@ -14,10 +14,13 @@ export function PlayingCard({
   card,
   faceDown = false,
   justRevealed = false,
+  winning = false,
 }: {
   card: Card | null;
   faceDown?: boolean;
   justRevealed?: boolean;
+  /** Part of a split pot's winning hand — raised while the split is announced (see SplitPotAnnouncement.tsx). */
+  winning?: boolean;
 }): React.JSX.Element {
   if (faceDown || card === null) {
     return <div className="card card-back" aria-hidden="true" />;
@@ -26,7 +29,7 @@ export function PlayingCard({
   const suit = card.slice(-1);
   const isRed = RED_SUITS.has(suit);
   const front = (
-    <div className={`card ${isRed ? 'card-red' : 'card-black'}`}>
+    <div className={`card ${isRed ? 'card-red' : 'card-black'}${winning ? ' card-winning' : ''}`}>
       <span className="card-rank">{rank}</span>
       <span className="card-suit">{SUIT_SYMBOL[suit] ?? suit}</span>
     </div>

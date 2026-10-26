@@ -31,6 +31,20 @@ const POSITION_NAMES_BY_SIZE: Readonly<Record<number, readonly string[]>> = {
  * `packages/engine/src/button.ts`'s `dealtInRing`), so the labels always
  * agree with where the actual button and blinds landed.
  */
+/**
+ * The small and big blind of the hand being played — for the little SB/BB
+ * tags in front of those seats. Only with three or more players: heads-up,
+ * the button is the small blind, and two seats need no tags.
+ */
+export function blindTags(seats: readonly ProjectedSeat[], buttonSeat: number, inHand: boolean): ReadonlyMap<number, 'SB' | 'BB'> {
+  const tags = new Map<number, 'SB' | 'BB'>();
+  if (!inHand) return tags;
+  const labels = computePositionLabels(seats, buttonSeat);
+  if (labels.size <= 2) return tags;
+  for (const [seatId, label] of labels) if (label === 'SB' || label === 'BB') tags.set(seatId, label);
+  return tags;
+}
+
 export function computePositionLabels(seats: readonly ProjectedSeat[], buttonSeat: number): ReadonlyMap<number, string> {
   const ring = seats
     .filter((s) => s.status === 'active' || s.status === 'folded' || s.status === 'all-in')

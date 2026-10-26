@@ -1,13 +1,14 @@
 import { formatChips } from './chips.js';
 import type { Card } from '@pokerclause/engine';
 import type { ProjectedGameEvent } from '@pokerclause/shared';
+import { splitLogLine } from './splitPot.js';
 
 function cardsToStr(cards: readonly Card[]): string {
   return cards.join(' ');
 }
 
-/** Turns a raw engine event into one human-readable log line, or null for events not worth showing. */
-export function describeEvent(event: ProjectedGameEvent, seatName: (seatId: number) => string): string | null {
+/** Turns a raw engine event into one human-readable log line, or null for events not worth showing. `potCount` is how many pots its hand awarded (for naming a split side pot). */
+export function describeEvent(event: ProjectedGameEvent, seatName: (seatId: number) => string, potCount = 1): string | null {
   switch (event.type) {
     case 'hand-started':
       return `— Hand #${String(event.handNumber)} —`;
@@ -39,9 +40,13 @@ export function describeEvent(event: ProjectedGameEvent, seatName: (seatId: numb
     case 'showdown-reveal':
       return `${seatName(event.seatId)} shows ${cardsToStr(event.holeCards)}`;
     case 'pot-awarded':
-      return event.winners
-        .map((w) => `${seatName(w.seatId)} wins ${formatChips(w.amount)}${w.handName ? ` with ${w.handName}` : ''}`)
-        .join(', ');
+      // A split reads as one: "Alice and Bob split the pot, $5 each".
+      return (
+        splitLogLine(event, seatName, potCount) ??
+        event.winners
+          .map((w) => `${seatName(w.seatId)} wins ${formatChips(w.amount)}${w.handName ? ` with ${w.handName}` : ''}`)
+          .join(', ')
+      );
     case 'hand-complete':
       return null;
     case 'cards-dealt':
@@ -52,4 +57,22 @@ export function describeEvent(event: ProjectedGameEvent, seatName: (seatId: numb
     default:
       return null;
   }
+}
+
+/** Every event's log line, in order — each pot award knowing how many pots its hand had. */
+export function describeEvents(events: readonly ProjectedGameEvent[], seatName: (seatId: number) => string): string[] {
+  const potCounts = new Map<number, number>();
+  let hand = 0;
+  events.forEach((e) => {
+    if (e.type === 'hand-started') hand++;
+    if (e.type === 'pot-awarded') potCounts.set(hand, (potCounts.get(hand) ?? 0) + 1);
+  });
+  const lines: string[] = [];
+  hand = 0;
+  for (const e of events) {
+    if (e.type === 'hand-started') hand++;
+    const line = describeEvent(e, seatName, potCounts.get(hand) ?? 1);
+    if (line !== null) lines.push(line);
+  }
+  return lines;
 }

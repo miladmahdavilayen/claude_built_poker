@@ -2412,3 +2412,240 @@ the same one the owner menu at the table shows) sits at the top of that
 editor with a Copy button, so the owner can grab it from the lobby and
 share it. A public table has no link there. If a public table is made
 private, its new link appears as soon as the change is saved.
+
+**The table is 3D, seen from your own seat.** It's a presentation layer
+(`apps/web/src/table3d/`) over the same state and events the 2D table
+reads; it decides nothing about the game.
+
+The View menu has exactly three views: Classic 2D, 3D Seated and
+3D Standing. It also has Reduce motion and Slow animations. The 3D quality
+tier is picked for the device: it starts from a guess and steps down while
+frames are slow, ending at 2D. Without WebGL it's 2D.
+`pokerclause.tableQuality` in localStorage pins a tier (tests use it).
+
+**The room.**
+- A rounded table with a padded rail, a wooden racetrack, a betting line
+  and the house dealer's chip tray, under a hanging lamp.
+- A painted room sphere behind; a soft environment map for reflections.
+- Nine seats. The house dealer stands fixed at the middle of the near long
+  edge.
+- Seats run clockwise from the house dealer's left: seat 1 beside them,
+  2–3 the left end, 4–6 the far side, 7–8 the right end, 9 on their right.
+  Seats 1 and 9 sit a natural arm's length from the dealer.
+- Heads-up (a 2-seat table): one seat at the middle of each short end,
+  face to face across the felt, the house dealer between them at the side.
+- Positions are data in `seatLayout3d.ts`.
+
+**3D Seated.** The camera is your own eyes: at a seated player's eye
+height (about 42 cm above the felt), just behind your rail.
+- Turning your head: press and drag. You drag the scene: drag left and you
+  look right, drag down and you look up. The motion is smoothed with a
+  little carry-on after a flick, and stops before looking behind you
+  (`lookControls.ts`).
+- Zooming: pinch or scroll narrows or widens your view. Past the widest
+  view it stands you up (3D Standing); pinching back in sits you down.
+  Buttons do the same: Whole table / My seat.
+- Double-tap or Center view looks back at the table.
+- A finger held on the table never selects text or opens the phone's
+  press-and-hold menu: there's no selection on the 3D table, and
+  `contextmenu`/`selectstart` are cancelled on the canvas.
+- The default look-down angle is worked out per seat. Your own two cards
+  sit just inside the bottom of the screen, with the board and the far
+  players in view.
+- Leaning in: at seats 1 and 9, turning toward the house dealer bends you
+  forward over the rail, so you can see past the dealer to the player on
+  the other side. The Lean in button does it on purpose at any seat.
+
+**3D Standing.** An orbit from your seat, higher up. Its distance is solved
+so the whole table and every seat's box fit the screen. A spectator gets
+it from the far side (from the table's end on a tall phone).
+
+**Cards.**
+- The classic deck: Adrian Kennard's designs, released CC0 (public
+  domain), via the CC0 npm package @letele/playing-cards. Its SVGs were
+  read as data, rasterised to WebP in `public/cards/`, and the Ace of
+  Spades' QR code and web address removed.
+- Each face loads the first time that card shows. A face drawn in code
+  stands in until then, and if the file can't load.
+- The board lies in a row parallel to the house dealer's edge, face up
+  toward the players across from them, the same for everyone.
+- Your own cards lie face up in front of you, the right way up for you,
+  apart from each other and from the button.
+- A hand shown down at another seat turns to face you.
+- Because the board on the felt reads upside down or edge-on from many
+  seats, a Board strip at the top of the screen shows it upright for
+  everyone. A card appears there only once it's down and turned on the
+  table.
+
+**Players and their cameras.**
+- A seated body in every occupied chair but yours, from the same
+  code-built body as the house dealer: rounded limbs, hands, a face. It
+  breathes and glances around, and its looks come from the avatar colour.
+- A player on camera has their video at their head, sized like a real
+  head and shoulders at that distance, and the modelled head steps aside.
+- Off camera, their face shows with a nameplate above.
+- Your own box (camera, stack in big type) sits in the bottom-right
+  corner in both 3D views, clear of your cards.
+- Stacks are set large on every seat box and edge marker, and boxes never
+  shrink below a size where a stack can be read at a glance.
+- Seat boxes keep clear of the board strip, the action ticker and the
+  page's own controls.
+- A player out of view gets an edge marker on their side of the screen:
+  name, stack, bet and latest action. So every stack and bet is always
+  visible somewhere.
+
+**Actions.** The action ticker (`ActionTicker.tsx`) announces every
+action, colour-coded, a few at a time, each fading: "Nit · calls $2",
+"raises to $12 · ALL-IN".
+
+**The house dealer and the button.**
+- The house dealer is code-built and rigged, with keyframed clips:
+  shuffle, riffle, bridge, cut, burn, deal, flop, turn, river, collect,
+  idle. The clips are queued with crossfades, and cards leave the dealer's
+  hand on cue.
+- Cards are dealt clockwise from the seat after the button, ending on the
+  button (`dealOrder`). The button is read from the game state. The house
+  dealer and the button share only the hand-start and street events.
+- The button puck slides clockwise to its new seat (0.6 s) before the
+  shuffle.
+
+**The house dealer's character.** A table's dealer is a Mixamo character
+(free with an Adobe account, and licensed by Adobe for use in commercial
+games), kept in `apps/web/public/models/dealers/` with an `index.json`
+listing each one's id, name and file. The model is loaded as-is (`.fbx`,
+or a `.glb`), and its skeleton follows the built-in dealer's: every frame
+her spine, neck, head and arm bones are turned to point the way the
+built-in skeleton's do. So all the dealing clips play on any character, in
+step with the cards. If a file won't load, the built-in dealer stays.
+- Which character deals is the table's `houseDealer` setting: saved like
+  any setting, seen by everyone at the table.
+- With no setting, the first character in the list deals; `''` means the
+  built-in dealer.
+- The owner changes her by double-tapping her on the 3D table, which opens
+  a picker of the characters by name. A double tap anywhere else still
+  looks back at the table.
+- VIP dealers are characters marked `vip` in `index.json`. They come
+  first in the picker, in their own section.
+- Any rig works, not only Mixamo's. Bones are recognised by name across
+  Mixamo, Blender/Rigify, Unreal and VRM naming (`boneRole`). A file that
+  holds several copies of its skeleton (one per clothing piece) has every
+  copy posed.
+
+**Sounds.** The 3D table plays the game's sounds itself, since there's no
+2D deal animation there: the shuffle and riffle with the dealer's hands,
+a flick per card as it leaves the hand, chips for blinds, calls, bets and
+raises, the sweep into the pot, and each pile reaching its winner.
+
+**Performance.**
+- Chips are one instanced mesh; face-down cards are another.
+- A person is about a dozen draw calls: their parts are merged per bone
+  and material.
+- The device pixel ratio is capped per tier, rendering pauses in a hidden
+  tab, and an idle table renders at a low frame rate.
+- Everything is disposed on unmount, and each scene gets its own canvas.
+- A WebGL context is never forced lost: Chrome blocks WebGL for a site
+  that loses contexts repeatedly, and a viewer switching views did exactly
+  that. The WebGL check only runs when a 3D view is wanted.
+- Three.js and the house dealer load lazily.
+
+**Camera upload.** What a player's camera sends to the others is capped
+near 240p (`capVideoSender`); their own preview stays full size.
+
+**Tests.** The e2e suite plays on the 2D table (`playwright.config.ts`
+sets the view); `table3d.spec.ts` covers 3D.
+
+**A split pot says it was split.** `SplitPotAnnouncement.tsx` takes over
+from WinCelebration whenever any pot in a hand has two or more winners.
+Every pot is announced in the server's award order: side pots first,
+labelled ("Side Pot 1", "Main Pot"), one at a time, never two banners at
+once.
+- **The banner.** Gold and teal with a split icon and its own sound. It
+  shows "SPLIT POT" (or "SPLIT POT: 3 WAYS"), who shared the pot and
+  exactly how much each got, as the server sent it: odd chips included,
+  nothing recomputed. It names the shared hand once ("Both have an
+  Ace-high straight", "Board plays"). Wording is in `splitPot.ts`.
+- **The chips.** The pot divides into one pile per winner, and the piles
+  slide off to their winners, staggered. This happens in 3D on the 3D
+  table and in the DOM on the 2D one.
+- **The seats.** Each winner gets a rising "+$X" and a glow, and their
+  stack counts up as their chips land. Everyone else in the hand dims,
+  and the winning cards rise.
+- **The log and chat.** The hand log reads "Alice and Bob split the pot,
+  $5 each". The same line appears in the chat as the dealer's, built
+  locally by every client, so nothing new goes over the wire.
+- **Timing and skipping.** Timings are in `animationTimings.ts`. A tap
+  skips to the end, and the next hand being dealt ends it at once. Reduce
+  motion keeps the banner still and the stacks instant.
+- **Unchanged:** a hand where every pot has a single winner shows the
+  usual celebration exactly as before. `__splitPot([...])` in the console
+  (dev only) announces any awards at a real table.
+
+## Raising on a phone: the sizer opens on demand, and its handle sends
+
+On a phone, a turn where you can bet or raise shows Fold/Check/Call on the
+left edge and a single **Raise** (or **Bet**) button on the right. The
+slider, presets and amount box stay folded away, so the table stays in view.
+- Pressing Raise opens the sizer; ✕ folds it away again.
+- Once an amount is picked (a drag let go, a preset, a ± nudge, or a typed
+  amount), the slider's **$ handle becomes the button**: "RAISE $75". One tap
+  on it sends that amount. Dragging it again still adjusts it.
+- Letting go never sends by itself: a mis-drag mustn't cost a raise, so the
+  tap is the decision.
+- Desktop keeps its inline bar, which sits below the table and doesn't cover
+  it.
+
+## Changing seats
+
+Any seated player (the admin included) can move to an empty seat at their
+table: tap it, choose "Move to this seat", and a short note first says when
+and at what cost. A taken seat is never anyone's to take; only the admin can
+empty one, by removing its player. On the server this is `LiveTable.moveSeat`
+and `seatMoveCost`; the client sends the `change-seat` intent.
+- **When:** at once if you aren't in the hand being played. If you are, the
+  move waits for the hand to end, and the new seat is held for you meanwhile
+  ("to seat N" shows on your seat).
+- **What it costs:** Robert's Rules of Poker (buttons and blinds). Moving is
+  free if the big blind reaches your new seat no later than it would have
+  reached your old one. If the move puts the big blind further away (so it
+  skips blinds), you post one big blind on your next hand.
+  - The post is live: it counts toward your call, so you can check if
+    nobody raises.
+  - The engine already had `missedBigBlind` on every seat but never used
+    it. `prepareAndDealHand` now posts it for any dealt-in seat that owes
+    it (kind `missed-big-blind`).
+  - The small blind tops up to a full big blind. The big blind or a
+    straddler owes nothing more. A seat that's sitting out keeps owing it
+    until it's dealt in.
+  - Before a table's first hand, or for a player sitting out (not in the
+    blind rotation), a move is free.
+  - We don't offer "wait for the big blind instead": posting is the one
+    option, so a move never costs anyone hands.
+
+## Blind tags and your own markers
+
+With three or more players, the small and big blind get a small SB/BB tag
+on the felt in front of their seat for the hand being played. Heads-up has
+no tags: the button is the small blind.
+- **In 3D:** another seat's tag, and its dealer button, sit in the same
+  spot: straight in front of that player, just past their cards. From any
+  angle it plainly belongs to them.
+- **Your own (3D):** your button or blind is shown big and pulsing on top of
+  your own stack box, right under your cards. Your 3D button also sits
+  beside your cards, bigger and ringed in gold.
+- **Your own (2D):** the D badge on your box is bigger and pulses.
+
+## The deck in a character's hand
+
+The dealing moves are animated on the built-in skeleton, and a character's
+arms follow it by bone direction. But a character's arm doesn't end exactly
+where the built-in one does, so a deck hung on the built-in hand floated
+near her. With a character showing, the deck is set into her own palm
+instead: halfway from her wrist to her knuckles, resting on it.
+
+**Default dealer:** the first character in `index.json` deals at a table
+that hasn't picked one. That's The Boss.
+
+**Testing note:** the browser tests' software renderer (SwiftShader)
+sometimes draws the wrong texture on the felt and the room at medium and
+high quality: the card back, chip edges, or black. Real GPUs never do (seen
+on Apple M-series under ANGLE/Metal). Don't chase it as an app bug.

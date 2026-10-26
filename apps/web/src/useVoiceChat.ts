@@ -83,6 +83,28 @@ export interface VoiceChatApi {
   toggleCamera: () => void;
 }
 
+/**
+ * Everyone else sees a player's camera as a small box at their seat, so
+ * what's sent to them is capped near 240p (and its bitrate with it) — the
+ * player's own preview, straight from their camera, stays full size. Only
+ * the outgoing encoding changes; nothing about the connection itself. A
+ * browser that won't take the cap (or isn't ready to yet) just sends as before.
+ */
+function capVideoSender(sender: RTCRtpSender): void {
+  const track = sender.track;
+  if (track?.kind !== 'video') return;
+  const height = track.getSettings().height ?? 480;
+  const params = sender.getParameters();
+  if (!params.encodings || params.encodings.length === 0) return;
+  for (const enc of params.encodings) {
+    enc.scaleResolutionDownBy = Math.max(1, height / 240);
+    enc.maxBitrate = 300_000;
+  }
+  sender.setParameters(params).catch(() => {
+    // Not supported here — fine, it sends uncapped.
+  });
+}
+
 /** Per-pair state for the "perfect negotiation" pattern — see this file's own doc comment. */
 interface NegotiationState {
   polite: boolean;
@@ -133,7 +155,7 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
       negotiationRef.current.set(info.socketId, { polite, makingOffer: false, ignoreOffer: false });
 
       const stream = localStreamRef.current;
-      if (stream) for (const track of stream.getTracks()) pc.addTrack(track, stream);
+      if (stream) for (const track of stream.getTracks()) capVideoSender(pc.addTrack(track, stream));
 
       pc.ontrack = (e): void => {
         const [remoteStream] = e.streams;
@@ -314,7 +336,7 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
           // which is what actually sends the offer. No separate
           // "announce myself" step needed.
           for (const pc of pcsRef.current.values()) {
-            for (const track of stream.getTracks()) pc.addTrack(track, stream);
+            for (const track of stream.getTracks()) capVideoSender(pc.addTrack(track, stream));
           }
         })
         .catch((err: unknown) => {

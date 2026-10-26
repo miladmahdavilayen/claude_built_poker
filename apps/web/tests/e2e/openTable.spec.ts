@@ -65,7 +65,7 @@ test('an open-invite table: one link for everyone — pick a seat, a waitlist wh
   await expect(stranger.getByText(/invalid or has already been used/)).toBeVisible();
 });
 
-test('the owner holds or right-clicks a seat for its menu — in full screen too — and removes a player from it', async ({ browser }) => {
+test('the owner double-taps a player’s seat (holds an empty one) or right-clicks for its menu — in full screen too — and removes a player from it', async ({ browser }) => {
   const owner = await (await browser.newContext()).newPage();
   await adminLogin(owner);
   const link = (await createTable(owner, { name: 'Menu Game', smallBlind: 1, bigBlind: 2, maxSeats: 3, isPrivate: false, openSeating: true }))!;
@@ -80,6 +80,15 @@ test('the owner holds or right-clicks a seat for its menu — in full screen too
   // Right-click: the occupied seat's options only.
   await seat.click({ button: 'right' });
   const menu = owner.getByRole('menu');
+  await expect(menu.getByRole('menuitem')).toHaveText(['Rebuy (add chips)', 'Remove player', 'Delete seat']);
+  await owner.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+
+  // A single tap on a player's seat does nothing; a double tap opens the same menu.
+  await seat.click();
+  await owner.waitForTimeout(500);
+  await expect(menu).toHaveCount(0);
+  await seat.dblclick();
   await expect(menu.getByRole('menuitem')).toHaveText(['Rebuy (add chips)', 'Remove player', 'Delete seat']);
   await owner.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);

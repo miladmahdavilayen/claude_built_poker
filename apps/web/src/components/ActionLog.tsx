@@ -1,11 +1,11 @@
 import type { ProjectedGameEvent, ProjectedSeat } from '@pokerclause/shared';
 import { useEffect, useRef } from 'react';
-import { describeEvent } from '../eventLog.js';
+import { describeEvents } from '../eventLog.js';
 
 export function ActionLog({ events, seats }: { events: readonly ProjectedGameEvent[]; seats: readonly ProjectedSeat[] }): React.JSX.Element {
   const endRef = useRef<HTMLDivElement>(null);
   const seatName = (seatId: number): string => seats.find((s) => s.seatId === seatId)?.displayName ?? `Seat ${String(seatId)}`;
-  const lines = events.map((e) => describeEvent(e, seatName)).filter((line): line is string => line !== null);
+  const lines = describeEvents(events, seatName);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });

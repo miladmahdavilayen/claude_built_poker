@@ -89,6 +89,9 @@ export function WinCelebration({
 
     const potAwarded = events.filter((e): e is Extract<ProjectedGameEvent, { type: 'pot-awarded' }> => e.type === 'pot-awarded');
     if (potAwarded.length === 0) return;
+    // A pot split between two or more players is announced by SplitPotAnnouncement
+    // instead (one banner per pot) — only the viewer's own "not this hand" stays.
+    const split = potAwarded.some((p) => p.winners.length > 1);
 
     // A hand with side pots can award several seats, and the same seat
     // can win more than one pot — combine into one total per seat so a
@@ -105,7 +108,8 @@ export function WinCelebration({
 
     let viewerWon = false;
     const others: OtherWinBadge[] = [];
-    for (const [seatId, amount] of totals) {
+    if (split) viewerWon = totals.has(viewerSeatId ?? -1);
+    for (const [seatId, amount] of split ? [] : totals) {
       if (seatId === viewerSeatId) {
         viewerWon = true;
         showViewerWin(amount, tiers.get(seatId) ?? 0);

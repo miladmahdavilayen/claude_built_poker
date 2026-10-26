@@ -4,6 +4,7 @@ import {
   AddBotSchema,
   AdminRebuySchema,
   AssignSeatSchema,
+  ChangeSeatSchema,
   ChatMessageSchema,
   JoinTableSchema,
   MAX_PRACTICE_BOTS,
@@ -937,6 +938,28 @@ export function attachSocketServer(
         io.to(spectatorRoom(table.tableId)).emit('state', { state: freshState, events: [] });
         callback?.();
       })();
+    });
+
+    // A seated player moving to an empty seat — anyone seated, the admin
+    // included; a taken seat is never anyone's to take (only the admin can
+    // empty it, by removing its player). See LiveTable.moveSeat for when it
+    // happens and what it costs.
+    socket.on('change-seat', (raw: unknown, callback?: (result: { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string }) => void): void => {
+      const table = currentTable();
+      const fail = (code: string, message: string): void => callback?.({ ok: false, code, message });
+      if (!table || !data.userId) return fail('NOT_SEATED', 'You are not seated at this table.');
+      const parsed = ChangeSeatSchema.safeParse(raw);
+      if (!parsed.success) return fail('INVALID_PAYLOAD', 'Malformed change-seat payload.');
+      const from = table.seatOfUser(data.userId);
+      if (from === null) return fail('NOT_SEATED', 'You are not seated at this table.');
+      if (parsed.data.quote) {
+        callback?.(table.quoteSeatMove(from, parsed.data.seatId));
+        return;
+      }
+      if (!actionLimiter.consume(socket.id)) return fail('RATE_LIMITED', 'Slow down.');
+      const result = table.moveSeat(from, parsed.data.seatId);
+      callback?.(result);
+      if (result.ok) broadcastTable(table);
     });
 
     socket.on('sit-out', () => {

@@ -681,6 +681,17 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect((await app.inject({ method: 'PATCH', url: '/admin/tables/nope/settings', headers, payload: { name: 'X' } })).statusCode).toBe(404);
     });
 
+    it('the house dealer is a table setting: the owner picks a character, it’s saved, and only a plain id is accepted', async () => {
+      const t = await registry.createTable('Dealer', { ...SETTINGS_FOR_LIST }, null, null);
+      const admin = await store.createAccount('dealer-owner@x.com', 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      const headers = auth(issueAccessToken({ ...admin, role: 'admin' }));
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${t.tableId}/settings`, headers, payload: { houseDealer: 'ava' } })).statusCode).toBe(200);
+      expect(t.settings.houseDealer).toBe('ava');
+      expect((await store.listTables()).find((r) => r.id === t.tableId)?.config).toMatchObject({ houseDealer: 'ava' });
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${t.tableId}/settings`, headers, payload: { houseDealer: '../x' } })).statusCode).toBe(400);
+    });
+
     it('an open-invite table’s starting chips can be changed from the lobby, but it can’t be made public', async () => {
       const open = await registry.createTable('Open', { ...SETTINGS_FOR_LIST, isPrivate: true, openSeating: true, openSeatStack: 500 }, null, 'opencode');
       const pub = await registry.createTable('Public', { ...SETTINGS_FOR_LIST }, null, null);

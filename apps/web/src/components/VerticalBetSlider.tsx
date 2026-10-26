@@ -70,6 +70,9 @@ export function VerticalBetSlider({
   value,
   onChange,
   formatValue,
+  onRelease,
+  submitLabel,
+  onSubmit,
 }: {
   min: number;
   max: number;
@@ -77,9 +80,20 @@ export function VerticalBetSlider({
   value: number;
   onChange: (value: number) => void;
   formatValue: (value: number) => string;
+  /** The finger (or mouse) let go after setting an amount. */
+  onRelease?: () => void;
+  /**
+   * When set, the $ handle is a button — "Raise $12" — and a tap on it
+   * (without dragging) sends the amount. Dragging it still adjusts.
+   */
+  submitLabel?: string | undefined;
+  onSubmit?: () => void;
 }): React.JSX.Element {
   const trackRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  // A press that began on the armed handle: a tap there sends, a drag adjusts.
+  const press = useRef<{ x: number; y: number; onThumb: boolean; moved: boolean } | null>(null);
 
   const fraction = valueToFraction(value, min, max);
   const layerCount = Math.max(1, Math.round(fraction * (MAX_LAYERS - 1)) + 1);
@@ -105,18 +119,35 @@ export function VerticalBetSlider({
     }
   };
 
+  const onThumb = (x: number, y: number): boolean => {
+    const r = thumbRef.current?.getBoundingClientRect();
+    return !!r && x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6;
+  };
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     e.currentTarget.setPointerCapture(e.pointerId);
     setDragging(true);
-    dragTo(e.clientY);
+    const armedThumb = !!submitLabel && onThumb(e.clientX, e.clientY);
+    press.current = { x: e.clientX, y: e.clientY, onThumb: armedThumb, moved: false };
+    // On the armed handle, wait to see whether it's a tap (send) or a drag (adjust).
+    if (!armedThumb) dragTo(e.clientY);
   };
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!dragging) return;
+    const p = press.current;
+    if (p && !p.moved) {
+      if (p.onThumb && Math.hypot(e.clientX - p.x, e.clientY - p.y) < 8) return;
+      p.moved = true;
+    }
     dragTo(e.clientY);
   };
   const endDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     setDragging(false);
+    const p = press.current;
+    press.current = null;
+    if (!p || e.type === 'pointercancel') return;
+    if (p.onThumb && !p.moved) onSubmit?.();
+    else onRelease?.();
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -139,6 +170,9 @@ export function VerticalBetSlider({
     } else if (e.key === 'End') {
       e.preventDefault();
       onChange(max);
+    } else if (e.key === 'Enter' && submitLabel) {
+      e.preventDefault();
+      onSubmit?.();
     }
   };
 
@@ -147,7 +181,7 @@ export function VerticalBetSlider({
   return (
     <div
       ref={trackRef}
-      className={`vbs-track${dragging ? ' vbs-track--dragging' : ''}`}
+      className={`vbs-track${dragging ? ' vbs-track--dragging' : ''}${submitLabel ? ' vbs-track--armed' : ''}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -160,6 +194,7 @@ export function VerticalBetSlider({
       aria-valuemax={max}
       aria-valuenow={value}
       aria-valuetext={formatValue(value)}
+      aria-description={submitLabel ? `Tap the handle (or press Enter) to ${submitLabel.toLowerCase()} ${formatValue(value)}` : undefined}
     >
       <div className="vbs-fill" style={{ height: `${pct}%` }}>
         {Array.from({ length: layerCount }, (_, i) => {
@@ -173,8 +208,15 @@ export function VerticalBetSlider({
           );
         })}
       </div>
-      <div className="vbs-thumb" style={{ bottom: `${pct}%` }} aria-hidden="true">
-        <span className="vbs-thumb-mark">$</span>
+      <div ref={thumbRef} className="vbs-thumb" data-testid="vbs-thumb" style={{ bottom: `${pct}%` }} aria-hidden="true">
+        {submitLabel ? (
+          <span className="vbs-thumb-submit">
+            <span className="vbs-thumb-verb">{submitLabel}</span>
+            <span className="vbs-thumb-amount">{formatValue(value)}</span>
+          </span>
+        ) : (
+          <span className="vbs-thumb-mark">$</span>
+        )}
       </div>
     </div>
   );

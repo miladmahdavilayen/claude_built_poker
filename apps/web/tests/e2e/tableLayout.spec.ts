@@ -25,7 +25,8 @@ async function fillTable(page: Page, name: string, seats: number): Promise<strin
   await takeSeat(page, 0, 100);
   for (let s = 1; s < seats; s++) {
     // Whichever persona the picker offers first — each one added drops down the list.
-    await page.locator(`[data-testid="seat-${String(s)}"]`).getByText('+ Add bot').click();
+    await page.locator(`[data-testid="seat-${String(s)}"]`).locator('.seat-empty-tap').click();
+    await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
     await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
     await expect(page.locator(`[data-testid="seat-${String(s)}"] .seat-tag-bot`)).toBeVisible();
   }

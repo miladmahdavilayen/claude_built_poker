@@ -15,6 +15,13 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${String(WEB_PORT)}`,
     trace: 'retain-on-failure',
+    // The suite plays on the classic 2D table: its layout and gameplay
+    // checks are about the DOM table. table3d.spec.ts and splitPot.spec.ts
+    // switch to 3D themselves (see src/table3d/quality.ts's view choice).
+    storageState: {
+      cookies: [],
+      origins: [{ origin: `http://localhost:${String(WEB_PORT)}`, localStorage: [{ name: 'pokerclause.tableView', value: '2d' }] }],
+    },
   },
   projects: [
     {
@@ -25,7 +32,8 @@ export default defineConfig({
         // works headlessly with no real hardware and no permission prompt —
         // this is what lets voice.spec.ts exercise the real WebRTC path.
         launchOptions: {
-          args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+          // Software WebGL for the 3D table's tests, on machines with no GPU.
+          args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--enable-unsafe-swiftshader'],
         },
         permissions: ['camera', 'microphone'],
       },

@@ -26,9 +26,16 @@ export function ActionBar({
   // Phones/iPhones only — desktop keeps the original horizontal inline
   // slider unchanged (see DECISIONS.md discussion of this component).
   const isCompact = useIsCompactScreen();
+  // Phones: the sizer stays folded away (the table stays in view) until Raise
+  // is pressed; once an amount is picked — a drag let go, a preset, a nudge —
+  // the slider's $ handle itself becomes the button that sends it.
+  const [sizing, setSizing] = useState(false);
+  const [armed, setArmed] = useState(false);
 
   useEffect(() => {
     setAmount(min);
+    setSizing(false);
+    setArmed(false);
   }, [legalActions.seatId, min, max]);
 
   const clampedMax = Math.max(max, min);
@@ -37,9 +44,13 @@ export function ActionBar({
   const nudge = Math.max(1, smallBlind);
   const clamp = (v: number): number => Math.min(Math.max(v, min), clampedMax);
   const commit = (type: 'bet' | 'raise'): void => onAction(type, clamp(amount));
-  const setHalfPot = (): void => setAmount(clamp(Math.round(potSize / 2)));
-  const setPot = (): void => setAmount(clamp(potSize));
-  const setAllIn = (): void => setAmount(clampedMax);
+  const pick = (v: number): void => {
+    setAmount(clamp(v));
+    setArmed(true);
+  };
+  const setHalfPot = (): void => pick(Math.round(potSize / 2));
+  const setPot = (): void => pick(potSize);
+  const setAllIn = (): void => pick(clampedMax);
 
   const foldButton = legalActions.canFold && (
     <button type="button" className="btn-fold" onClick={() => onAction('fold')}>
@@ -59,9 +70,7 @@ export function ActionBar({
 
   if (isCompact && showsAmount) {
     const confirmType = legalActions.canRaise ? 'raise' : 'bet';
-    const confirmLabel = legalActions.isAllInOnly
-      ? 'All-in'
-      : `${legalActions.canRaise ? 'Raise to' : 'Bet'} ${formatChips(clamp(amount))}`;
+    const verb = legalActions.canRaise ? 'Raise' : 'Bet';
 
     return (
       <div className="bet-overlay">
@@ -75,42 +84,71 @@ export function ActionBar({
           {checkButton}
           {callButton}
         </div>
-        <div className="bet-overlay-rail bet-overlay-rail--right">
-          <MoneyInput
-            className="bet-overlay-input"
-            minCents={min}
-            maxCents={clampedMax}
-            cents={amount}
-            onChange={(c) => setAmount(c === '' ? min : c)}
-          />
-          <div className="bet-overlay-presets">
-            <button type="button" onClick={setHalfPot}>
-              ½ pot
-            </button>
-            <button type="button" onClick={setPot}>
-              Pot
-            </button>
-            <button type="button" onClick={setAllIn}>
+        {legalActions.isAllInOnly ? (
+          // Nothing to size: all-in is the only raise.
+          <div className="bet-overlay-rail bet-overlay-rail--right">
+            <button type="button" className="btn-bet bet-overlay-confirm" onClick={() => commit(confirmType)}>
               All-in
             </button>
           </div>
-          {/* Small-blind precision ($1 on a $1/$2 table, $0.10 on a
-              $0.10/$0.20 one) regardless of the big blind — the slider's
-              own drag curve (see VerticalBetSlider) is what keeps that
-              comfortable to hit by hand, not a coarser step. */}
-          <VerticalBetSlider min={min} max={clampedMax} step={nudge} value={amount} onChange={setAmount} formatValue={formatChips} />
-          <div className="vbs-nudge">
-            <button type="button" aria-label={`Decrease amount by ${formatChips(nudge)}`} onClick={() => setAmount(clamp(amount - nudge))}>
-              −
-            </button>
-            <button type="button" aria-label={`Increase amount by ${formatChips(nudge)}`} onClick={() => setAmount(clamp(amount + nudge))}>
-              +
+        ) : !sizing ? (
+          <div className="bet-overlay-rail bet-overlay-rail--right">
+            <button type="button" className="btn-bet bet-overlay-open" onClick={() => setSizing(true)}>
+              {verb}
             </button>
           </div>
-          <button type="button" className="btn-bet bet-overlay-confirm" onClick={() => commit(confirmType)}>
-            {confirmLabel}
-          </button>
-        </div>
+        ) : (
+          <div className="bet-overlay-rail bet-overlay-rail--right bet-overlay-rail--sizing">
+            <button type="button" className="bet-overlay-close" aria-label={`Close the ${verb.toLowerCase()} slider`} onClick={() => setSizing(false)}>
+              ✕
+            </button>
+            <MoneyInput
+              className="bet-overlay-input"
+              minCents={min}
+              maxCents={clampedMax}
+              cents={amount}
+              onChange={(c) => {
+                setAmount(c === '' ? min : c);
+                setArmed(true);
+              }}
+            />
+            <div className="bet-overlay-presets">
+              <button type="button" onClick={setHalfPot}>
+                ½ pot
+              </button>
+              <button type="button" onClick={setPot}>
+                Pot
+              </button>
+              <button type="button" onClick={setAllIn}>
+                All-in
+              </button>
+            </div>
+            {/* Small-blind precision ($1 on a $1/$2 table, $0.10 on a
+                $0.10/$0.20 one) regardless of the big blind — the slider's
+                own drag curve (see VerticalBetSlider) is what keeps that
+                comfortable to hit by hand, not a coarser step. Let go of the
+                $ and it turns into the button: tap it to send that amount. */}
+            <VerticalBetSlider
+              min={min}
+              max={clampedMax}
+              step={nudge}
+              value={amount}
+              onChange={setAmount}
+              formatValue={formatChips}
+              onRelease={() => setArmed(true)}
+              submitLabel={armed ? verb : undefined}
+              onSubmit={() => commit(confirmType)}
+            />
+            <div className="vbs-nudge">
+              <button type="button" aria-label={`Decrease amount by ${formatChips(nudge)}`} onClick={() => pick(amount - nudge)}>
+                −
+              </button>
+              <button type="button" aria-label={`Increase amount by ${formatChips(nudge)}`} onClick={() => pick(amount + nudge)}>
+                +
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

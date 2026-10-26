@@ -12,7 +12,8 @@ test('a full hand plays correctly through every street with real raises/bets, an
   await adminLogin(page);
   await createTable(page, { name: 'All Streets Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 200);
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await page.getByLabel(/Buy-in/).fill('200');
   // "Maniac" never voluntarily folds — its own logic only reaches the
   // fold branch when neither check nor call is legal, which can't happen

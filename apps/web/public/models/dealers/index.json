@@ -1,0 +1,7 @@
+[
+  { "id": "the-boss", "name": "The Boss", "file": "the-boss.fbx" },
+  { "id": "claire", "name": "Claire", "file": "claire.fbx" },
+  { "id": "medea", "name": "Medea", "file": "medea.fbx" },
+  { "id": "ty", "name": "Ty", "file": "ty.fbx" },
+  { "id": "michelle", "name": "Michelle", "file": "michelle.fbx" }
+]

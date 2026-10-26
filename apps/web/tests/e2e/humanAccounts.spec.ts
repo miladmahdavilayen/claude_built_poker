@@ -24,7 +24,7 @@ test('a guest never sees "Create table" — only the admin can', async ({ page }
 test('the admin can create a table, sit themselves down, and add a bot, all self-serve', async ({ page }) => {
   await adminLogin(page);
   await createTable(page, { name: 'My Practice Table', smallBlind: 1, bigBlind: 2, maxSeats: 4, isPrivate: false });
-  await expect(page.locator('[data-testid="seat-0"]').getByText('Sit here')).toBeVisible();
+  await expect(page.locator('[data-testid="seat-0"] .seat-empty-tap')).toBeVisible();
 
   await takeSeat(page, 0, 100);
   await expect(page.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'active');

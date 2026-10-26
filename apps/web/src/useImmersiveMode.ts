@@ -35,7 +35,7 @@ interface FullscreenElement extends HTMLElement {
  * below — otherwise the CSS-hidden chrome could get stuck hidden with
  * no visible way back.
  */
-export function useImmersiveMode(): { active: boolean; toggle: () => void; nativeFullscreenSupported: boolean } {
+export function useImmersiveMode(): { active: boolean; toggle: () => void; nativeFullscreenSupported: boolean; iphoneInBrowser: boolean } {
   const [active, setActive] = useState(false);
 
   const nativeFullscreenSupported =
@@ -70,5 +70,14 @@ export function useImmersiveMode(): { active: boolean; toggle: () => void; nativ
     }
   }, [active]);
 
-  return { active, toggle, nativeFullscreenSupported };
+  // An iPhone in a Safari/Chrome tab: no Fullscreen API, and not already
+  // launched from the Home Screen — the one case worth a tip on how to get
+  // the whole screen (see Table.tsx).
+  const iphoneInBrowser =
+    typeof navigator !== 'undefined' &&
+    /iPhone|iPod/.test(navigator.userAgent) &&
+    !nativeFullscreenSupported &&
+    !(window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone);
+
+  return { active, toggle, nativeFullscreenSupported, iphoneInBrowser };
 }

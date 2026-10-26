@@ -128,7 +128,8 @@ test('a $0.10/$0.20 table with a $10 buy-in can be created and played from the l
 
   await takeSeat(page, 0, 10);
   await expect(page.locator('[data-testid="seat-0"] .seat-stack')).toHaveText('$10');
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await page.getByLabel(/Buy-in/).fill('12.50');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
   await expect(page.locator('[data-testid="seat-1"] .seat-stack')).toHaveText('$12.50');
@@ -154,7 +155,8 @@ test('the full-screen button pulses for attention until it has been used once', 
 
 test('a regular player has no table menu and no owner-only seat buttons', async ({ browser }) => {
   const { owner, alice } = await ownerAndAliceMidHand(browser, 'No Menu For Players');
-  await owner.locator('[data-testid="seat-2"]').getByText('+ Add bot').click();
+  await owner.locator('[data-testid="seat-2"]').locator('.seat-empty-tap').click();
+  await owner.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await owner.getByLabel(/Buy-in/).fill('100');
   await owner.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
   await expect(alice.locator('[data-testid="seat-2"] .seat-tag-pending')).toHaveText('next hand');

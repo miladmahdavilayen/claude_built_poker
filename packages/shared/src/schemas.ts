@@ -174,9 +174,29 @@ export const UpdateTableSettingsSchema = z
     disableChatInHand: z.boolean().optional(),
     /** Open-invite tables only: what a guest new to the table sits down with. */
     openSeatStack: z.number().int().positive().max(MAX_BALANCE_CENTS).optional(),
+    /** The 3D table's house dealer: a character id (apps/web/public/models/dealers), or '' for the built-in one. */
+    houseDealer: z
+      .string()
+      .max(40)
+      .regex(/^[a-z0-9-]*$/)
+      .optional(),
   })
   .strict();
 export type UpdateTableSettingsIntent = z.infer<typeof UpdateTableSettingsSchema>;
+
+/**
+ * A seated player moving to an empty seat at the same table (see
+ * LiveTable.moveSeat). With `quote`, nothing moves: the answer says what
+ * it would cost (a big blind, if the move skips one) and whether it
+ * happens now or after the hand in progress.
+ */
+export const ChangeSeatSchema = z
+  .object({
+    seatId: z.number().int().min(0).max(8),
+    quote: z.boolean().optional(),
+  })
+  .strict();
+export type ChangeSeatIntent = z.infer<typeof ChangeSeatSchema>;
 
 /** Owner-only: removes a seat's occupant (seat stays) or deletes the seat entirely — see LiveTable.removeSeatOccupant/deleteSeat. */
 export const SeatTargetSchema = z

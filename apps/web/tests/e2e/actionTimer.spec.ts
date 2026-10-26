@@ -15,7 +15,8 @@ test('the action timer never unmounts/remounts during a hand with a bot, even ac
   await adminLogin(page);
   await createTable(page, { name: 'Action Timer Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 200);
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await page.getByLabel(/Buy-in/).fill('200');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
   await startHand(page);

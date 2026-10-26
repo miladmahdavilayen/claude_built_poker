@@ -77,7 +77,11 @@ export interface TableSocketApi {
   deleteSeat: (seatId: number) => Promise<OwnerAck>;
   /** Owner-only — the private table's invite code, or null when it's public. */
   getInviteCode: () => Promise<string | null>;
+  /** Moves your own seat to an empty one — or, with `quote`, only says when and at what cost (see LiveTable.moveSeat). */
+  changeSeat: (seatId: number, quote?: boolean) => Promise<ChangeSeatAck>;
 }
+
+export type ChangeSeatAck = { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string };
 
 const NOT_CONNECTED: OwnerAck = { ok: false, code: 'NOT_CONNECTED', message: 'Not connected.' };
 
@@ -200,6 +204,10 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
         new Promise((resolve) => (socket ? socket.emit('remove-player', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
       deleteSeat: (seatId) =>
         new Promise((resolve) => (socket ? socket.emit('delete-seat', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      changeSeat: (seatId, quote) =>
+        new Promise((resolve) =>
+          socket ? socket.emit('change-seat', quote ? { seatId, quote: true } : { seatId }, (r: ChangeSeatAck) => resolve(r)) : resolve({ ok: false, code: 'NOT_CONNECTED', message: 'Not connected.' }),
+        ),
       getInviteCode: () =>
         new Promise((resolve) => (socket ? socket.emit('get-invite-code', (r: { inviteCode: string | null }) => resolve(r.inviteCode)) : resolve(null))),
     }),

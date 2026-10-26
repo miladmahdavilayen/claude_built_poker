@@ -18,7 +18,8 @@ test('position labels (UTG, HJ, CO, etc.) and the dealer button match seat count
   await takeSeat(page, 0, 150);
 
   for (let seatId = 1; seatId <= 5; seatId++) {
-    await page.locator(`[data-testid="seat-${seatId}"]`).getByText('+ Add bot').click();
+    await page.locator(`[data-testid="seat-${seatId}"]`).locator('.seat-empty-tap').click();
+    await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
     await page.getByLabel(/Buy-in/).fill('150');
     await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
     await page.waitForTimeout(150);
@@ -48,7 +49,8 @@ test('heads-up: the button seat is also effectively the small blind, and only BB
   await adminLogin(page);
   await createTable(page, { name: 'Heads-Up Labels Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 150);
-  await page.locator('[data-testid="seat-1"]').getByText('+ Add bot').click();
+  await page.locator('[data-testid="seat-1"]').locator('.seat-empty-tap').click();
+  await page.getByRole('menuitem', { name: 'Add a computer player' }).click();
   await page.getByLabel(/Buy-in/).fill('150');
   await page.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
 

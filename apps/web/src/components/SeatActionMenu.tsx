@@ -8,13 +8,28 @@ export interface SeatAction {
 }
 
 /**
- * The owner's per-seat menu: opened by holding a finger on a seat for a
- * second, or right-clicking it — works the same in full screen, where the
+ * The owner's per-seat menu: opened by double-tapping a player's seat
+ * (holding an empty one), or right-clicking — works the same in full screen, where the
  * table's other controls are hidden. Placed at the pointer, kept inside the
  * screen. A destructive item (remove, delete) needs a second tap to confirm.
  * Closes on a tap outside, Escape, or choosing something.
  */
-export function SeatActionMenu({ x, y, title, actions, onClose }: { x: number; y: number; title: string; actions: SeatAction[]; onClose: () => void }): React.JSX.Element {
+export function SeatActionMenu({
+  x,
+  y,
+  title,
+  actions,
+  onClose,
+  large = false,
+}: {
+  x: number;
+  y: number;
+  title: string;
+  actions: SeatAction[];
+  onClose: () => void;
+  /** Big, finger-sized options — what a tap on an empty seat opens. */
+  large?: boolean;
+}): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -48,7 +63,7 @@ export function SeatActionMenu({ x, y, title, actions, onClose }: { x: number; y
   }, [onClose]);
 
   return (
-    <div ref={ref} className="seat-action-menu" role="menu" aria-label={title} style={{ left: pos.left, top: pos.top }} onContextMenu={(e) => e.preventDefault()}>
+    <div ref={ref} className={`seat-action-menu${large ? ' seat-action-menu--large' : ''}`} role="menu" aria-label={title} style={{ left: pos.left, top: pos.top }} onContextMenu={(e) => e.preventDefault()}>
       <div className="seat-action-menu-title">{title}</div>
       {actions.map((a) => {
         const armed = confirming === a.label;
@@ -137,6 +152,59 @@ export function useSeatMenuGesture<K = number>(
       e.preventDefault();
       if (lastPointer.current === 'touch') return; // the hold timer opens it
       cancel();
+      onOpen(key, e.clientX, e.clientY);
+    },
+  });
+}
+
+const DOUBLE_TAP_MS = 450;
+const DOUBLE_TAP_PX = 40;
+
+/**
+ * Double-tap-to-open (finger or mouse) and right-click handlers — the
+ * owner's menu for a seat with a player in it. Two taps within a moment and
+ * close together count; a drag in between doesn't. The second tap's own
+ * click is swallowed, so it can't land on the menu that just opened under
+ * the finger.
+ */
+export function useSeatDoubleTap<K = number>(
+  onOpen: (key: K, x: number, y: number) => void,
+  enabled: boolean,
+): (key: K) => {
+  onPointerDown: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+} {
+  const down = useRef<{ x: number; y: number } | null>(null);
+  const last = useRef<{ key: K; x: number; y: number; at: number } | null>(null);
+  return (key) => ({
+    onPointerDown: (e) => {
+      down.current = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+    },
+    onPointerUp: (e) => {
+      const d = down.current;
+      down.current = null;
+      // A drag (looking around, scrolling) isn't a tap.
+      if (!enabled || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > MOVE_TOLERANCE_PX) return;
+      const now = performance.now();
+      const prev = last.current;
+      if (prev && prev.key === key && now - prev.at < DOUBLE_TAP_MS && Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < DOUBLE_TAP_PX) {
+        last.current = null;
+        const swallow = (ev: MouseEvent): void => {
+          ev.stopPropagation();
+          ev.preventDefault();
+        };
+        window.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 400);
+        if ('vibrate' in navigator) navigator.vibrate(20);
+        onOpen(key, e.clientX, e.clientY);
+        return;
+      }
+      last.current = { key, x: e.clientX, y: e.clientY, at: now };
+    },
+    onContextMenu: (e) => {
+      if (!enabled) return;
+      e.preventDefault();
       onOpen(key, e.clientX, e.clientY);
     },
   });

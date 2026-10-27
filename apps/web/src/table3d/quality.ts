@@ -10,6 +10,8 @@
 export type QualityTier = 'high' | 'medium' | 'low';
 export type TableViewChoice = '2d' | 'seated' | 'standing';
 export type View3dMode = 'seated' | 'standing';
+/** The table's look: the classic green-felt room, or the high-limit VIP room (a VIP house dealer's table). */
+export type TableTheme = 'classic' | 'vip';
 
 export interface TierSettings {
   /** Device-pixel-ratio cap. */

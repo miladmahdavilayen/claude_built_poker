@@ -198,6 +198,15 @@ export const ChangeSeatSchema = z
   .strict();
 export type ChangeSeatIntent = z.infer<typeof ChangeSeatSchema>;
 
+/** The table's owner moving a computer player to an empty seat (see LiveTable.moveBot) — the same rules as a player's own move. */
+export const MoveBotSchema = z
+  .object({
+    fromSeatId: z.number().int().min(0).max(8),
+    toSeatId: z.number().int().min(0).max(8),
+  })
+  .strict();
+export type MoveBotIntent = z.infer<typeof MoveBotSchema>;
+
 /** Owner-only: removes a seat's occupant (seat stays) or deletes the seat entirely — see LiveTable.removeSeatOccupant/deleteSeat. */
 export const SeatTargetSchema = z
   .object({

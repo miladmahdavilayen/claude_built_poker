@@ -73,8 +73,9 @@ export const SEAT_SPOTS = {
 export const HOUSE = {
   /** The house dealer's spot: centered on the near long edge, just outside the rail. */
   dealerZ: TABLE.halfDepth + 0.42,
-  trayWidth: 1.5,
-  trayDepth: 0.26,
+  /** The chip tray (a dealer's rack: seven felt-lined channels of chips on edge) — its outside. */
+  trayWidth: 1.16,
+  trayDepth: 0.3,
   /** The board's five cards, in the middle of the felt, in a row parallel to the house dealer's edge. */
   boardZ: -0.05,
   boardSpacing: 0.45,

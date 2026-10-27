@@ -6,7 +6,7 @@ import { blindTags } from '../positionLabels.js';
 import { ActionTicker, describeTableAction, type ActionKind } from '../components/ActionTicker.js';
 import { PlayingCard } from '../components/PlayingCard.js';
 import type { SeatPosition } from '../seatLayout.js';
-import type { QualityTier, View3dMode } from './quality.js';
+import type { QualityTier, TableTheme, View3dMode } from './quality.js';
 import { TableScene, type SceneSnapshot, type ScreenLayout } from './scene.js';
 
 /** What the split-pot announcement drives on the 3D table (see SplitPotAnnouncement.tsx). */
@@ -30,6 +30,8 @@ export interface TableScene3DProps {
   onPerf: (avgFrameMs: number) => void;
   /** The house dealer's character file (null: the built-in dealer). */
   dealerModel: string | null;
+  /** The table's look: a VIP dealer's table is the VIP room. */
+  theme: TableTheme;
   /** The owner double-tapped the house dealer — omitted for anyone who can't change her. */
   onDealerDoubleTap?: (() => void) | undefined;
   /** Whether your own cards are down in front of you (your action buttons wait for them). */
@@ -74,6 +76,7 @@ export default function TableScene3D({
   onRequestMode,
   onOwnCards,
   dealerModel,
+  theme,
   onDealerDoubleTap,
   onFail,
   onLayout,
@@ -144,7 +147,7 @@ export default function TableScene3D({
         onOwnCards: (landed) => cbRef.current.onOwnCards?.(landed),
         onDealerDoubleTap: () => cbRef.current.onDealerDoubleTap?.(),
         onRequestMode: (m) => cbRef.current.onRequestMode(m),
-      });
+      }, theme);
     } catch (err) {
       console.error('The 3D table could not start; showing the 2D table instead.', err);
       canvas.remove();
@@ -167,8 +170,8 @@ export default function TableScene3D({
       canvas.remove();
       setScene(null);
     };
-    // The tier is fixed for a scene's life — a new tier is a new scene.
-  }, [tier]);
+    // The tier and the room are fixed for a scene's life — a new tier, or a switch to or from a VIP dealer, is a new scene.
+  }, [tier, theme]);
 
   useEffect(() => {
     scene?.setReduceMotion(reduceMotion);

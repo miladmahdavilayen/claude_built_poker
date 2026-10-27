@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { slotScreensTexture } from './textures.js';
 
 // The poker room around our table: other tables under their own lamps,
 // with people sitting at them; a backlit bar with shelves of bottles, a
@@ -9,6 +10,11 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 // of lights, static parts merged into a handful of meshes, and the scene's
 // haze (fog) softening it into an out-of-focus background — the way a room
 // looks past the far players while you watch the cards.
+//
+// The VIP room (a VIP house dealer's table) is a high-limit casino floor
+// instead: the same tables and bar, plus banks of glowing slot machines,
+// marble columns with gold capitals, crystal chandeliers, a roulette wheel
+// and a velvet rope round our table.
 
 const FLOOR_Y = -1.56;
 
@@ -34,12 +40,12 @@ export class CasinoRoom {
   private readonly movers: Mover[] = [];
   private readonly disposables: { dispose: () => void }[] = [];
 
-  constructor(rich: boolean) {
+  constructor(rich: boolean, vip = false) {
     const track = <T extends { dispose: () => void }>(x: T): T => {
       this.disposables.push(x);
       return x;
     };
-    const felt = track(new THREE.MeshLambertMaterial({ color: '#0f5a36' }));
+    const felt = track(new THREE.MeshLambertMaterial({ color: vip ? '#5a0f1c' : '#0f5a36' }));
     const wood = track(new THREE.MeshLambertMaterial({ color: '#3a1f12' }));
     const darkWood = track(new THREE.MeshLambertMaterial({ color: '#1e110a' }));
     const glow = track(new THREE.MeshBasicMaterial({ color: '#ffd9a0' }));
@@ -79,8 +85,11 @@ export class CasinoRoom {
       add(felt, topGeo, T(x, 0, z, ry, 2.6, 1, 1.5));
       add(darkWood, railGeo, T(x, 0.06, z, ry, 2.6, 1, 1.5));
       add(wood, baseGeo, T(x, -0.8, z, ry));
-      add(darkWood, shadeGeo, T(x, 4.2, z, ry));
-      add(glow, bulbGeo, T(x, 3.96, z, ry));
+      // A lamp over each — on the VIP floor, a chandelier instead (see buildVip).
+      if (!vip) {
+        add(darkWood, shadeGeo, T(x, 4.2, z, ry));
+        add(glow, bulbGeo, T(x, 3.96, z, ry));
+      }
       // Players round it, some leaning in, gently moving.
       if (rich || i < 3) {
         const n = 4 + (i % 3);
@@ -107,6 +116,7 @@ export class CasinoRoom {
       add(wood, new THREE.CylinderGeometry(0.05, 0.05, 1.2, 6), T(-3.5 + k * 1.4, FLOOR_Y + 0.6, barZ - 3));
     }
     this.group.add(this.bottleShelf(barZ, track));
+    if (vip) this.buildVip(add, T, track);
 
     for (const [mat, list] of staticGeos) {
       const merged = mergeGeometries(list, false);
@@ -116,6 +126,7 @@ export class CasinoRoom {
       this.group.add(new THREE.Mesh(merged, mat));
     }
     for (const g of [topGeo, railGeo, baseGeo, shadeGeo, bulbGeo]) g.dispose();
+    for (const f of this.afterMerge) f();
 
     // The bartender, working along the bar.
     const bartender = person(people[2]!, false, 1);
@@ -154,6 +165,165 @@ export class CasinoRoom {
       }
     }
   }
+
+  /**
+   * The high-limit floor's extras. Static parts go into the merged meshes
+   * (`add`); the crystals are one instanced mesh; the slot screens' lights
+   * blink a little.
+   */
+  private buildVip(
+    add: (mat: THREE.Material, geo: THREE.BufferGeometry, m: THREE.Matrix4) => void,
+    T: (x: number, y: number, z: number, ry?: number, sx?: number, sy?: number, sz?: number) => THREE.Matrix4,
+    track: <T extends { dispose: () => void }>(x: T) => T,
+  ): void {
+    const gold = track(new THREE.MeshStandardMaterial({ color: '#c9973a', metalness: 0.85, roughness: 0.32, emissive: '#3a2406' }));
+    const marble = track(new THREE.MeshLambertMaterial({ color: '#d9d0c4' }));
+    const cabinet = track(new THREE.MeshLambertMaterial({ color: '#1a1016' }));
+    const velvet = track(new THREE.MeshLambertMaterial({ color: '#7a0f1e' }));
+    const screens = track(slotScreensTexture());
+    const screenMat = track(new THREE.MeshBasicMaterial({ map: screens }));
+    const topLight = track(new THREE.MeshBasicMaterial({ color: '#ffd98a' }));
+    const geos: THREE.BufferGeometry[] = [];
+    const g = <G extends THREE.BufferGeometry>(x: G): G => {
+      geos.push(x);
+      return x;
+    };
+
+    // Slot machine banks round the floor, each machine's screen one of four.
+    const quads = [0, 1, 2, 3].map((k) => {
+      const q = g(new THREE.PlaneGeometry(0.62, 0.62));
+      const uv = q.getAttribute('uv') as THREE.BufferAttribute;
+      const u0 = (k % 2) * 0.5;
+      const v0 = 0.5 - Math.floor(k / 2) * 0.5;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * 0.5, v0 + uv.getY(i) * 0.5);
+      return q;
+    });
+    const cab = g(new THREE.BoxGeometry(0.82, 2.3, 0.75));
+    const lamp = g(new THREE.CylinderGeometry(0.12, 0.12, 0.22, 10));
+    const stool = g(new THREE.CylinderGeometry(0.24, 0.24, 0.1, 12));
+    const stoolLeg = g(new THREE.CylinderGeometry(0.04, 0.04, 0.75, 6));
+    const banks: [number, number][] = [
+      [-6.5, -11],
+      [6.5, -11.5],
+      [-14.2, 0.5],
+      [14.2, 1.5],
+      [-7.5, 11.5],
+      [7.5, 11.5],
+    ];
+    let k = 0;
+    for (const [bx, bz] of banks) {
+      // Facing the middle of the room.
+      const face = Math.atan2(-bx, -bz);
+      const ax = Math.cos(face);
+      const az = -Math.sin(face);
+      for (let m = -2; m <= 2; m++) {
+        const x = bx + ax * m * 0.86;
+        const z = bz + az * m * 0.86;
+        const fx = Math.sin(face);
+        const fz = Math.cos(face);
+        add(cabinet, cab, T(x, FLOOR_Y + 1.15, z, face));
+        add(screenMat, quads[k++ % 4]!, T(x + fx * 0.38, FLOOR_Y + 1.55, z + fz * 0.38, face));
+        add(topLight, lamp, T(x, FLOOR_Y + 2.41, z, face));
+        add(cabinet, stool, T(x + fx * 0.9, FLOOR_Y + 0.8, z + fz * 0.9));
+        add(gold, stoolLeg, T(x + fx * 0.9, FLOOR_Y + 0.38, z + fz * 0.9));
+      }
+    }
+
+    // Marble columns with gold capitals and bases.
+    const shaft = g(new THREE.CylinderGeometry(0.42, 0.42, 7, 16));
+    const cap = g(new THREE.CylinderGeometry(0.62, 0.45, 0.4, 16));
+    const foot = g(new THREE.CylinderGeometry(0.55, 0.62, 0.35, 16));
+    for (const [x, z] of [
+      [-8.2, -7.8],
+      [8.2, -7.8],
+      [-9.4, 3.2],
+      [9.4, 3.2],
+      [-4.8, 9.6],
+      [4.8, 9.6],
+    ] as const) {
+      add(marble, shaft, T(x, FLOOR_Y + 3.5, z));
+      add(gold, cap, T(x, FLOOR_Y + 6.8, z));
+      add(gold, foot, T(x, FLOOR_Y + 0.18, z));
+    }
+
+    // The velvet rope round our table: gold posts, red rope sagging between them.
+    const post = g(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 8));
+    const knob = g(new THREE.SphereGeometry(0.09, 10, 8));
+    const postBase = g(new THREE.CylinderGeometry(0.2, 0.22, 0.05, 14));
+    const rx = 6.4;
+    const rz = 5.2;
+    const posts = 18;
+    for (let i = 0; i < posts; i++) {
+      const a = (i / posts) * Math.PI * 2;
+      const b = ((i + 1) / posts) * Math.PI * 2;
+      const [x0, z0] = [Math.cos(a) * rx, Math.sin(a) * rz];
+      const [x1, z1] = [Math.cos(b) * rx, Math.sin(b) * rz];
+      add(gold, post, T(x0, FLOOR_Y + 0.5, z0));
+      add(gold, knob, T(x0, FLOOR_Y + 1.03, z0));
+      add(gold, postBase, T(x0, FLOOR_Y + 0.03, z0));
+      // Leave the opening behind the house dealer, where the staff come and go.
+      if (i === Math.round(posts / 4)) continue;
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(x0, FLOOR_Y + 0.95, z0),
+        new THREE.Vector3((x0 + x1) / 2, FLOOR_Y + 0.62, (z0 + z1) / 2),
+        new THREE.Vector3(x1, FLOOR_Y + 0.95, z1),
+      );
+      add(velvet, g(new THREE.TubeGeometry(curve, 10, 0.035, 6, false)), new THREE.Matrix4());
+    }
+
+    // A roulette table in the far corner: wheel, felt, and a gold turret.
+    add(gold, g(new THREE.CylinderGeometry(0.75, 0.6, 0.25, 24)), T(-3.5, 0.1, -12.5));
+    add(cabinet, g(new THREE.CylinderGeometry(0.6, 0.6, 0.26, 24)), T(-3.5, 0.12, -12.5));
+    add(gold, g(new THREE.ConeGeometry(0.12, 0.35, 12)), T(-3.5, 0.4, -12.5));
+
+    // Crystal chandeliers: a gold ring with tiers of crystals hanging under it.
+    const spots: [number, number, number, number][] = [
+      // x, z, height, size
+      [-11, -6, 5.6, 0.8],
+      [11, -5, 5.6, 0.8],
+      [-12, 6, 5.6, 0.8],
+      [10.5, 7.5, 5.6, 0.8],
+      [0, -13, 5.8, 0.9],
+      [0, 0, 7.6, 1.1],
+    ];
+    const ring = g(new THREE.TorusGeometry(1, 0.05, 6, 32));
+    ring.rotateX(Math.PI / 2);
+    const crystal = track(new THREE.OctahedronGeometry(0.07, 0));
+    const tiers: [number, number, number][] = [
+      // radius, drop, count
+      [1, 0.25, 22],
+      [0.68, 0.55, 15],
+      [0.38, 0.85, 9],
+      [0, 1.15, 1],
+    ];
+    const per = tiers.reduce((n, t) => n + t[2], 0);
+    const crystals = new THREE.InstancedMesh(crystal, track(new THREE.MeshBasicMaterial({ color: '#fff3d8' })), per * spots.length);
+    const m4 = new THREE.Matrix4();
+    let ci = 0;
+    for (const [x, z, y, size] of spots) {
+      add(gold, ring, T(x, y, z, 0, size, size, size));
+      add(gold, ring, T(x, y - 0.5 * size, z, 0, size * 0.66, size, size * 0.66));
+      for (const [r, drop, count] of tiers) {
+        for (let j = 0; j < count; j++) {
+          const a = (j / count) * Math.PI * 2;
+          m4.compose(
+            new THREE.Vector3(x + Math.cos(a) * r * size, y - drop * size, z + Math.sin(a) * r * size),
+            new THREE.Quaternion(),
+            new THREE.Vector3(size, size * 1.6, size),
+          );
+          crystals.setMatrixAt(ci++, m4);
+        }
+      }
+    }
+    crystals.instanceMatrix.needsUpdate = true;
+    this.group.add(crystals);
+    // Each geometry was copied into the merged meshes: the originals can go.
+    this.afterMerge.push(() => {
+      for (const x of geos) x.dispose();
+    });
+  }
+
+  private readonly afterMerge: (() => void)[] = [];
 
   /** The back bar: rows of bottles glowing in their backlight, painted once on a canvas. */
   private bottleShelf(barZ: number, track: <T extends { dispose: () => void }>(x: T) => T): THREE.Mesh {

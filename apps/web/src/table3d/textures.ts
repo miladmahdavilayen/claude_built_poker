@@ -78,8 +78,19 @@ export interface FeltTextures {
   normalMap: THREE.CanvasTexture;
 }
 
-/** The felt: deep casino green with a woven grain, and a matching normal map so the light catches it. */
-export function feltTextures(size: number): FeltTextures {
+/** A felt's colour: its darkest weave (r, g, b) and how much lighter the raised threads go. */
+export interface FeltColor {
+  base: readonly [number, number, number];
+  lift: readonly [number, number, number];
+}
+
+/** Deep casino green. */
+export const CLASSIC_FELT: FeltColor = { base: [10, 92, 52], lift: [16, 34, 20] };
+/** The VIP table's: rich burgundy. */
+export const VIP_FELT: FeltColor = { base: [88, 12, 26], lift: [30, 10, 12] };
+
+/** The felt: a woven grain in its colour, and a matching normal map so the light catches it. */
+export function feltTextures(size: number, color: FeltColor = CLASSIC_FELT): FeltTextures {
   const rand = seeded(1337);
   const n = Math.min(512, size);
   const h = noiseField(n, rand);
@@ -87,9 +98,9 @@ export function feltTextures(size: number): FeltTextures {
   const img = ctx.createImageData(n, n);
   for (let i = 0; i < n * n; i++) {
     const v = h[i]!;
-    img.data[i * 4] = 10 + v * 16;
-    img.data[i * 4 + 1] = 92 + v * 34;
-    img.data[i * 4 + 2] = 52 + v * 20;
+    img.data[i * 4] = color.base[0] + v * color.lift[0];
+    img.data[i * 4 + 1] = color.base[1] + v * color.lift[1];
+    img.data[i * 4 + 2] = color.base[2] + v * color.lift[2];
     img.data[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
@@ -149,6 +160,153 @@ export function leatherTexture(size: number): THREE.CanvasTexture {
     ctx.fill();
   }
   return finish(c, true, 8);
+}
+
+/** The VIP rail's quilted leather: black, diamond-tufted, a button at every crossing. */
+export function quiltedLeatherTexture(size: number): THREE.CanvasTexture {
+  const rand = seeded(11);
+  const n = Math.min(256, size);
+  const [c, ctx] = canvas(n, n);
+  ctx.fillStyle = '#141011';
+  ctx.fillRect(0, 0, n, n);
+  // Each diamond's puffed middle catches the light; its seams sink into shadow.
+  const cell = n / 2;
+  for (let gy = -1; gy <= 2; gy++) {
+    for (let gx = -1; gx <= 2; gx++) {
+      const cx = gx * cell + (gy % 2 ? cell / 2 : 0);
+      const cy = gy * (cell / 2);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, cell * 0.55);
+      g.addColorStop(0, 'rgba(255,240,225,0.13)');
+      g.addColorStop(1, 'rgba(255,240,225,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - cell, cy - cell, cell * 2, cell * 2);
+    }
+  }
+  ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+  ctx.lineWidth = 2;
+  for (let k = -2; k <= 4; k++) {
+    ctx.beginPath();
+    ctx.moveTo(k * cell, 0);
+    ctx.lineTo(k * cell + n, n);
+    ctx.moveTo(k * cell + n, 0);
+    ctx.lineTo(k * cell, n);
+    ctx.stroke();
+  }
+  // Brass buttons where the seams cross.
+  for (let y = 0; y <= n; y += cell / 2) {
+    for (let x = (y / (cell / 2)) % 2 ? cell / 2 : 0; x <= n; x += cell) {
+      ctx.fillStyle = '#b08a3e';
+      ctx.beginPath();
+      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  for (let i = 0; i < 900; i++) {
+    ctx.fillStyle = `rgba(255,235,210,${String(rand() * 0.04)})`;
+    ctx.fillRect(rand() * n, rand() * n, 1, 1);
+  }
+  return finish(c, true, 3);
+}
+
+/** Dark ebony with a fine, glossy grain: the VIP table's racetrack and apron. */
+export function ebonyTexture(size: number): THREE.CanvasTexture {
+  const rand = seeded(99);
+  const n = Math.min(512, size);
+  const [c, ctx] = canvas(n, n);
+  ctx.fillStyle = '#1a0f0b';
+  ctx.fillRect(0, 0, n, n);
+  for (let i = 0; i < 220; i++) {
+    const y = rand() * n;
+    ctx.strokeStyle = `rgba(${rand() < 0.6 ? '0,0,0' : '120,70,40'},${String(0.1 + rand() * 0.2)})`;
+    ctx.lineWidth = 0.5 + rand() * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= n; x += n / 16) ctx.lineTo(x, y + Math.sin(x / (40 + rand() * 30) + i) * 2.5);
+    ctx.stroke();
+  }
+  return finish(c, true, 2);
+}
+
+/** Dark polished floorboards round the VIP room's rug: long planks, staggered joints, a fine grain. */
+export function planksTexture(size: number): THREE.CanvasTexture {
+  const rand = seeded(303);
+  const n = Math.min(512, size);
+  const [c, ctx] = canvas(n, n);
+  const rows = 8;
+  const ph = n / rows;
+  for (let r = 0; r < rows; r++) {
+    // Each row's planks, the joints staggered from the row before.
+    let x = -rand() * n * 0.5;
+    while (x < n) {
+      const len = n * (0.35 + rand() * 0.4);
+      const tone = 26 + rand() * 18;
+      ctx.fillStyle = `rgb(${String(tone + 14)},${String(tone * 0.62)},${String(tone * 0.42)})`;
+      ctx.fillRect(x, r * ph, len, ph);
+      for (let k = 0; k < 7; k++) {
+        const y = r * ph + rand() * ph;
+        ctx.strokeStyle = `rgba(0,0,0,${String(0.12 + rand() * 0.15)})`;
+        ctx.lineWidth = 0.6 + rand();
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.bezierCurveTo(x + len * 0.3, y + (rand() - 0.5) * 4, x + len * 0.6, y + (rand() - 0.5) * 4, x + len, y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(x, r * ph, 1.5, ph);
+      x += len;
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, r * ph, n, 1.5);
+  }
+  return finish(c, true, 7);
+}
+
+/**
+ * The VIP room's rug: a photograph of a real one — a 16th-century Persian
+ * carpet (red field, golden medallion, green border; public domain, see
+ * public/textures/CREDITS.md) — and its size in table units, long side
+ * along X: under the table, the house dealer and the velvet rope.
+ */
+export const RUG = { width: 15, depth: 10.31, image: '/textures/vip-rug.jpg', smallImage: '/textures/vip-rug-small.jpg' } as const;
+
+/** Slot machine screens, four to a texture (a 2×2 grid): reels of bright symbols under a glowing title bar. */
+export function slotScreensTexture(): THREE.CanvasTexture {
+  const n = 256;
+  const [c, ctx] = canvas(n, n);
+  const rand = seeded(777);
+  const themes = [
+    ['#2a0a4a', '#ff3ea5'],
+    ['#06284a', '#3ec8ff'],
+    ['#3a1a02', '#ffb52e'],
+    ['#0a3a1a', '#5cff8a'],
+  ] as const;
+  const symbols = ['7', '★', '♦', 'BAR', '♣', '$'];
+  themes.forEach(([bg, hi], k) => {
+    const x0 = (k % 2) * (n / 2);
+    const y0 = Math.floor(k / 2) * (n / 2);
+    const w = n / 2;
+    const g = ctx.createLinearGradient(0, y0, 0, y0 + w);
+    g.addColorStop(0, hi);
+    g.addColorStop(0.25, bg);
+    g.addColorStop(1, '#000');
+    ctx.fillStyle = g;
+    ctx.fillRect(x0, y0, w, w);
+    ctx.fillStyle = '#f4ecd8';
+    for (let r = 0; r < 3; r++) ctx.fillRect(x0 + 8 + r * 38, y0 + 46, 34, 64);
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let r = 0; r < 3; r++) {
+      const sym = symbols[Math.floor(rand() * symbols.length)]!;
+      ctx.fillStyle = sym === '7' || sym === '♦' ? '#d4142e' : '#16161c';
+      ctx.font = sym === 'BAR' ? 'bold 13px sans-serif' : 'bold 26px sans-serif';
+      ctx.fillText(sym, x0 + 25 + r * 38, y0 + 78);
+    }
+    ctx.fillStyle = hi;
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(['JACKPOT', 'MEGA WIN', 'GOLD 7s', 'LUCKY'][k]!, x0 + w / 2, y0 + 20);
+  });
+  return finish(c, true);
 }
 
 const RANK_LABEL: Record<string, string> = { T: '10' };
@@ -489,6 +647,94 @@ export function roomTexture(size: number): THREE.CanvasTexture {
   ctx.fillRect(0, horizon + h * 0.1, w, h);
   // Out of focus: down to a quarter and back up, smoothly.
   const [small, sctx] = canvas(Math.round(w / 4), Math.round(h / 4));
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(c, 0, 0, small.width, small.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(small, 0, 0, w, h);
+  return finish(c, true);
+}
+
+/**
+ * The VIP room's far walls, wrapped round the scene like roomTexture: dark
+ * panelling between gold pilasters, glowing banks of slot machines, neon
+ * signs over the floor and chandeliers overhead — softly out of focus.
+ */
+export function vipRoomTexture(size: number): THREE.CanvasTexture {
+  const w = Math.min(2048, size * 2);
+  const h = w / 2;
+  const [c, ctx] = canvas(w, h);
+  const rand = seeded(4242);
+  const wall = ctx.createLinearGradient(0, 0, 0, h);
+  wall.addColorStop(0, '#07040a');
+  wall.addColorStop(0.28, '#170c14');
+  wall.addColorStop(0.47, '#2e1820');
+  wall.addColorStop(0.62, '#1a0c10');
+  wall.addColorStop(1, '#060304');
+  ctx.fillStyle = wall;
+  ctx.fillRect(0, 0, w, h);
+  const horizon = h * 0.5;
+  const bays = 8;
+  const seg = w / bays;
+  const neon = ['#ff3ea5', '#3ec8ff', '#ffb52e', '#5cff8a', '#c77dff'];
+  const signs = ['HIGH LIMIT', 'POKER', 'SLOTS', 'VIP LOUNGE', 'BACCARAT', 'JACKPOT', 'ROULETTE', 'CASINO'];
+  for (let b = 0; b < bays; b++) {
+    const x0 = b * seg;
+    // A gold pilaster between bays.
+    const pil = ctx.createLinearGradient(x0, 0, x0 + seg * 0.05, 0);
+    pil.addColorStop(0, '#5a3c14');
+    pil.addColorStop(0.5, '#d8aa50');
+    pil.addColorStop(1, '#5a3c14');
+    ctx.fillStyle = pil;
+    ctx.fillRect(x0, h * 0.2, seg * 0.05, h * 0.42);
+    // A chandelier's glow up near the ceiling.
+    const cx = x0 + seg * 0.52;
+    const cy = h * 0.27;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, h * 0.09);
+    g.addColorStop(0, 'rgba(255,240,205,0.95)');
+    g.addColorStop(0.25, 'rgba(255,205,130,0.45)');
+    g.addColorStop(1, 'rgba(255,170,90,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - h * 0.09, cy - h * 0.09, h * 0.18, h * 0.18);
+    // A neon sign over the floor.
+    const col = neon[b % neon.length]!;
+    ctx.save();
+    ctx.font = `bold ${String(Math.round(h * 0.035))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = col;
+    ctx.shadowBlur = h * 0.02;
+    ctx.fillStyle = col;
+    ctx.fillText(signs[b]!, cx, horizon - h * 0.12);
+    ctx.restore();
+    // A bank of slot machines: cabinets with glowing screens and a light on top.
+    const machines = 6;
+    const mw = (seg * 0.86) / machines;
+    for (let m = 0; m < machines; m++) {
+      const mx = x0 + seg * 0.09 + m * mw;
+      const top = horizon - h * 0.05;
+      ctx.fillStyle = '#120a0e';
+      ctx.fillRect(mx, top, mw * 0.86, h * 0.13);
+      ctx.fillStyle = neon[Math.floor(rand() * neon.length)]!;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(mx + mw * 0.1, top + h * 0.015, mw * 0.66, h * 0.045);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffe6a8';
+      ctx.fillRect(mx + mw * 0.3, top - h * 0.012, mw * 0.26, h * 0.012);
+    }
+    // Players at the machines.
+    for (let k = 0; k < 3; k++) {
+      const px = x0 + seg * (0.2 + k * 0.3 + (rand() - 0.5) * 0.08);
+      silhouette(ctx, px, horizon + h * 0.12, h * 0.15, ['#120b0c', '#160f12', '#0f0a0b'][k]!, rand() < 0.4);
+    }
+  }
+  // The floor: the carpet's red, fading into the dark.
+  const floor = ctx.createLinearGradient(0, horizon + h * 0.08, 0, h);
+  floor.addColorStop(0, 'rgba(90,20,26,0.65)');
+  floor.addColorStop(1, 'rgba(6,3,4,1)');
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, horizon + h * 0.08, w, h);
+  const [small, sctx] = canvas(Math.round(w / 3), Math.round(h / 3));
   sctx.imageSmoothingQuality = 'high';
   sctx.drawImage(c, 0, 0, small.width, small.height);
   ctx.imageSmoothingQuality = 'high';

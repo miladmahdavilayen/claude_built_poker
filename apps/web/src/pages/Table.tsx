@@ -18,7 +18,7 @@ import { TableViewMenu } from '../components/TableViewMenu.js';
 import { DealerPicker } from '../components/DealerPicker.js';
 import { SeatMoveModal } from '../components/SeatMoveModal.js';
 import { FairnessCheck } from '../components/FairnessCheck.js';
-import { dealerModelUrl, useDealerCharacters } from '../table3d/dealers.js';
+import { dealerIsVip, dealerModelUrl, useDealerCharacters } from '../table3d/dealers.js';
 import type { PotAnimator } from '../table3d/TableScene3D.js';
 import { useTableView } from '../table3d/useTableView.js';
 import type { ChatMessageRecord } from '../types.js';
@@ -138,6 +138,9 @@ export function TablePage(): React.JSX.Element {
   const [seatModal, setSeatModal] = useState<number | null>(null);
   // Moving your own seat to an empty one (anyone seated): the seat it's to.
   const [moveTarget, setMoveTarget] = useState<number | null>(null);
+  /** The owner moving a computer player: its seat, while they pick an empty one — and what happened. */
+  const [movingBot, setMovingBot] = useState<number | null>(null);
+  const [moveBotNote, setMoveBotNote] = useState<string | null>(null);
   // The fairness check: the hand it's for, captured when opened (a new hand starting doesn't swap it).
   const [fairness, setFairness] = useState<{ handId: string | null; commitment: string | null; board: string[]; mine: string[]; players: number } | null>(null);
   // '' is a real intermediate state (the field cleared, not yet retyped) —
@@ -573,7 +576,16 @@ export function TablePage(): React.JSX.Element {
       if (!sock.isPractice) actions.push({ label: 'Invite a player to this seat', onSelect: () => openAssignModal(id) });
     } else {
       actions.push({ label: seat.isBot ? 'Add chips' : 'Rebuy (add chips)', onSelect: () => openRebuyModal(id, seat.stack, seat.pendingChips) });
-      if (seat.isBot) actions.push({ label: 'Remove computer player', danger: true, onSelect: () => sock.removeBot(id) });
+      if (seat.isBot) {
+        actions.push({
+          label: 'Move to another seat',
+          onSelect: () => {
+            setMoveBotNote(null);
+            setMovingBot(id);
+          },
+        });
+        actions.push({ label: 'Remove computer player', danger: true, onSelect: () => sock.removeBot(id) });
+      }
       else if (seat.seatId !== state.viewerSeatId) actions.push({ label: 'Remove player', danger: true, onSelect: () => void sock.removePlayer(id) });
     }
     if (state.seats.length - state.removedSeatIds.length > 2) actions.push({ label: 'Delete seat', danger: true, onSelect: () => void sock.deleteSeat(id) });
@@ -644,6 +656,8 @@ export function TablePage(): React.JSX.Element {
   /** An empty seat's options for this viewer: sitting down, a computer player, an invite — each only where it's allowed. */
   const emptySeatOptions = (seat: (typeof state.seats)[number]): SeatAction[] => {
     const id = seat.seatId;
+    // Moving a computer player: any empty seat is where it goes — one tap.
+    if (movingBot !== null && seat.status === 'empty') return [{ label: 'Move here', onSelect: () => moveBotTo(id) }];
     const out: SeatAction[] = [];
     // Seated already: move here (when, and any blind it costs, are shown first).
     if (mySeat && seat.status === 'empty') out.push({ label: 'Move to this seat', onSelect: () => setMoveTarget(id) });
@@ -651,6 +665,18 @@ export function TablePage(): React.JSX.Element {
     if (user.role === 'admin' || sock.canManageTable) out.push({ label: 'Add a computer player', onSelect: () => openAddBotModal(id) });
     if (user.role === 'admin' && !sock.isPractice) out.push({ label: 'Invite a player to this seat', onSelect: () => openAssignModal(id) });
     return out;
+  };
+
+  const moveBotTo = (toSeatId: number): void => {
+    const from = movingBot;
+    if (from === null) return;
+    const name = state.seats.find((s) => s.seatId === from)?.displayName ?? 'The computer player';
+    setMovingBot(null);
+    void sock.moveBot(from, toSeatId).then((r) => {
+      if (!r.ok) setMoveBotNote(r.message);
+      else if (r.when === 'after-hand') setMoveBotNote(`${name} moves to seat ${String(toSeatId + 1)} when this hand ends.`);
+      else setMoveBotNote(null);
+    });
   };
 
   /** A seat's box — placed by % on the 2D table, or anchored in 3D by the scene (`ref`). */
@@ -833,6 +859,7 @@ export function TablePage(): React.JSX.Element {
               onRequestMode={view.setChoice}
               onOwnCards={onOwnCards}
               dealerModel={dealerModelUrl(dealerCharacters, state.settings.houseDealer)}
+              theme={dealerIsVip(dealerCharacters, state.settings.houseDealer) ? 'vip' : 'classic'}
               onDealerDoubleTap={canManageLayout && !sock.isPractice ? () => setDealerPickerOpen(true) : undefined}
               onFail={view.reportFailure}
               onLayout={onLayout3d}
@@ -989,6 +1016,24 @@ export function TablePage(): React.JSX.Element {
         />
       )}
 
+      {(movingBot !== null || moveBotNote) && (
+        <div className="bot-move-bar" role="status">
+          <span>
+            {movingBot !== null
+              ? `Tap an empty seat for ${state.seats.find((s) => s.seatId === movingBot)?.displayName ?? 'the computer player'}`
+              : moveBotNote}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setMovingBot(null);
+              setMoveBotNote(null);
+            }}
+          >
+            {movingBot !== null ? 'Cancel' : 'OK'}
+          </button>
+        </div>
+      )}
       {moveTarget !== null && (
         <SeatMoveModal
           seatNumber={moveTarget + 1}

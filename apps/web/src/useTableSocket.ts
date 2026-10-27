@@ -53,6 +53,8 @@ export interface TableSocketApi {
   /** Owner-only (admin role) — self-serve add-bot no longer exists. */
   addBot: (seatId: number, persona: string, buyIn: number) => void;
   removeBot: (seatId: number) => void;
+  /** The owner moving a computer player to an empty seat (now, or after the hand it's in). */
+  moveBot: (fromSeatId: number, toSeatId: number) => Promise<ChangeSeatAck>;
   submitAction: (handId: string, actionSeq: number, type: 'fold' | 'check' | 'call' | 'bet' | 'raise', amountTo?: number) => void;
   /** Voluntary post-fold-win card reveal — see `ProjectedTableState.revealEligibleSeatId`. */
   revealHand: (handId: string) => void;
@@ -177,6 +179,12 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       leaveWaitlist: () => socket?.emit('leave-waitlist'),
       addBot: (seatId, persona, buyIn) => socket?.emit('add-bot', { seatId, persona, buyIn }),
       removeBot: (seatId) => socket?.emit('remove-bot', { seatId }),
+      moveBot: (fromSeatId, toSeatId) =>
+        new Promise((resolve) =>
+          socket
+            ? socket.emit('move-bot', { fromSeatId, toSeatId }, (r: ChangeSeatAck) => resolve(r))
+            : resolve({ ok: false, code: 'NOT_CONNECTED', message: 'Not connected.' }),
+        ),
       submitAction: (handId, actionSeq, type, amountTo) =>
         socket?.emit('action', amountTo === undefined ? { handId, actionSeq, type } : { handId, actionSeq, type, amountTo }),
       revealHand: (handId) => socket?.emit('reveal-hand', { handId }),

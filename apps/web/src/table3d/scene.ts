@@ -6,15 +6,15 @@ import { TIMINGS } from '../animationTimings.js';
 import { playCardFlickSound, playChipSound, playShuffleSound } from '../sound.js';
 import { CameraRig, orbitFov, orbitView, type CameraPose, type CameraView, type FitPoint } from './cameraRig.js';
 import { BOARD_SCALE, Cards3d, CARD_H, CARD_W, OWN_IN, type SeatCardSpot } from './cards3d.js';
-import { Chips3d } from './chips3d.js';
+import { CHIP_RADIUS, Chips3d, TRAY } from './chips3d.js';
 import { DealerButton3d } from './dealerButton.js';
 import { GhostDealer, type DealerLike } from './houseDealer.js';
 import { LookControls } from './lookControls.js';
 import { SeatedPlayers } from './players3d.js';
 import { CasinoRoom } from './room3d.js';
-import { TIERS, type QualityTier, type View3dMode } from './quality.js';
+import { TIERS, type QualityTier, type TableTheme, type View3dMode } from './quality.js';
 import { HOUSE, SEAT_SPOTS, TABLE, dealOrder, edgePoint, seatPlacements, type SeatPlacement3d } from './seatLayout3d.js';
-import { blobTexture, feltTextures, leatherTexture, roomTexture, woodTexture } from './textures.js';
+import { RUG, VIP_FELT, blobTexture, ebonyTexture, feltTextures, leatherTexture, planksTexture, quiltedLeatherTexture, roomTexture, vipRoomTexture, woodTexture } from './textures.js';
 
 // The 3D table — a presentation layer over the game state, nothing more.
 // It reads the same ProjectedTableState and event batches the 2D table
@@ -149,6 +149,7 @@ export class TableScene {
   private readonly scene = new THREE.Scene();
   private readonly rig = new CameraRig();
   private readonly tier: QualityTier;
+  private readonly theme: TableTheme;
   private readonly cb: SceneCallbacks;
   private readonly disposables: { dispose: () => void }[] = [];
   private readonly chips: Chips3d;
@@ -207,9 +208,10 @@ export class TableScene {
   private boardShownCount = -1;
   private ownLandedNow: boolean | null = null;
 
-  constructor(canvas: HTMLCanvasElement, tier: QualityTier, cb: SceneCallbacks) {
+  constructor(canvas: HTMLCanvasElement, tier: QualityTier, cb: SceneCallbacks, theme: TableTheme = 'classic') {
     this.canvas = canvas;
     this.tier = tier;
+    this.theme = theme;
     this.cb = cb;
     const t = TIERS[tier];
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: t.antialias, powerPreference: 'high-performance' });
@@ -226,7 +228,7 @@ export class TableScene {
     this.buildTable(t.textureSize, shadows);
     this.chips = new Chips3d(420, shadows);
     this.scene.add(this.chips.mesh);
-    this.chips.tray.position.set(0, 0.012, TABLE.halfDepth - TABLE.railWidth - HOUSE.trayDepth / 2 - 0.02);
+    this.chips.tray.position.set(0, 0, TABLE.halfDepth - TABLE.railWidth - HOUSE.trayDepth / 2 - 0.02);
     this.scene.add(this.chips.tray);
     this.cards = new Cards3d(shadows, this.renderer.capabilities.getMaxAnisotropy());
     this.scene.add(this.cards.group);
@@ -300,7 +302,13 @@ export class TableScene {
    * cards and chrome.
    */
   private buildRoom(tier: QualityTier): void {
-    const tex = this.track(roomTexture(tier === 'high' ? 1024 : 512));
+    const vip = this.theme === 'vip';
+    const tex = this.track((vip ? vipRoomTexture : roomTexture)(tier === 'high' ? 1024 : 512));
+    if (vip) {
+      // Seen from inside the sphere the picture is mirrored: flipped back, so the signs read the right way.
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.repeat.x = -1;
+    }
     // Close enough round the room that the bars read as a few metres away.
     const sphereGeo = this.track(new THREE.SphereGeometry(16, 48, 24));
     const room = new THREE.Mesh(sphereGeo, this.track(new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, depthWrite: false, fog: false })));
@@ -308,9 +316,10 @@ export class TableScene {
     this.scene.add(room);
     this.scene.background = new THREE.Color('#0d0806');
     // The room around: other tables, the bar, people — softened by a warm haze into a background.
-    this.room = new CasinoRoom(tier === 'high');
+    this.room = new CasinoRoom(tier === 'high', vip);
     this.scene.add(this.room.group);
-    this.scene.fog = new THREE.FogExp2('#1a0f0a', 0.042);
+    // The VIP floor is bigger and brighter: less haze, so its chandeliers and slot machines read.
+    this.scene.fog = vip ? new THREE.FogExp2('#160b10', 0.03) : new THREE.FogExp2('#1a0f0a', 0.042);
     if (tier !== 'low') {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       const env = new RoomEnvironment();
@@ -323,9 +332,12 @@ export class TableScene {
         if (m.isMesh) m.geometry.dispose();
       });
     }
+    // Over the VIP table hangs a chandelier (see room3d.ts) instead of a lamp.
+    if (vip) return;
     // The lamp over the table: a dark shade with its glowing underside.
+    // Unlit: the spotlight just inside it would otherwise blow it out to white.
     const shadeGeo = this.track(new THREE.CylinderGeometry(0.9, 2.4, 0.9, 40, 1, true));
-    const shade = new THREE.Mesh(shadeGeo, this.track(new THREE.MeshStandardMaterial({ color: '#1a120c', roughness: 0.55, metalness: 0.3, side: THREE.DoubleSide })));
+    const shade = new THREE.Mesh(shadeGeo, this.track(new THREE.MeshBasicMaterial({ color: '#1a120c', side: THREE.DoubleSide })));
     shade.position.set(0, 5.6, 0);
     const glowGeo = this.track(new THREE.CircleGeometry(2.3, 40));
     glowGeo.rotateX(Math.PI / 2);
@@ -343,7 +355,8 @@ export class TableScene {
   }
 
   private buildLights(shadowSize: number): void {
-    this.scene.add(new THREE.HemisphereLight('#ffe7c4', '#24160e', 0.85));
+    const vip = this.theme === 'vip';
+    this.scene.add(vip ? new THREE.HemisphereLight('#fff0d8', '#2a1218', 1.05) : new THREE.HemisphereLight('#ffe7c4', '#24160e', 0.85));
     // Warm overhead casino light, the one that casts shadows.
     const spot = new THREE.SpotLight('#ffd7a3', 62, 0, 1.0, 0.6, 2);
     spot.position.set(0, 5.1, 0.2);
@@ -362,10 +375,27 @@ export class TableScene {
     this.scene.add(fill);
   }
 
+  /** Polished gold for the VIP table's trim (without an environment to reflect, on Low, it glows a little instead). */
+  private gold(): THREE.MeshStandardMaterial {
+    this.goldMat ??= this.track(
+      new THREE.MeshStandardMaterial({ color: '#d2a344', metalness: this.tier === 'low' ? 0.35 : 0.9, roughness: 0.28, emissive: '#4a3008', emissiveIntensity: this.tier === 'low' ? 1 : 0.5 }),
+    );
+    return this.goldMat;
+  }
+
+  private goldMat: THREE.MeshStandardMaterial | null = null;
+
+  /**
+   * The table. Classic: green felt, a wooden racetrack, a dark leather rail.
+   * VIP: burgundy felt with a gold printed line, gold trim round the felt and
+   * under the apron, a glossy ebony racetrack and a quilted black leather rail,
+   * on a patterned casino carpet.
+   */
   private buildTable(texSize: number, shadows: boolean): void {
-    const felt = feltTextures(texSize);
-    const wood = woodTexture(texSize);
-    const leather = leatherTexture(texSize);
+    const vip = this.theme === 'vip';
+    const felt = feltTextures(texSize, vip ? VIP_FELT : undefined);
+    const wood = vip ? ebonyTexture(texSize) : woodTexture(texSize);
+    const leather = vip ? quiltedLeatherTexture(texSize) : leatherTexture(texSize);
     this.track(felt.map);
     this.track(felt.normalMap);
     this.track(wood);
@@ -402,20 +432,38 @@ export class TableScene {
     lineShape.holes.push(holePath(TABLE.railWidth + 0.645));
     const lineGeo = this.track(new THREE.ShapeGeometry(lineShape, 32));
     lineGeo.rotateX(-Math.PI / 2);
-    const lineMat = this.track(new THREE.MeshBasicMaterial({ color: '#e9cf8a', transparent: true, opacity: 0.28, depthWrite: false }));
+    const lineMat = this.track(new THREE.MeshBasicMaterial({ color: vip ? '#e2b65a' : '#e9cf8a', transparent: true, opacity: vip ? 0.62 : 0.28, depthWrite: false }));
     const line = new THREE.Mesh(lineGeo, lineMat);
     line.position.y = 0.002;
     this.scene.add(line);
+    if (vip) {
+      // A second, finer gold line just inside the first.
+      const inner = insetRect(TABLE.railWidth + 0.69);
+      inner.holes.push(holePath(TABLE.railWidth + 0.7));
+      const innerGeo = this.track(new THREE.ShapeGeometry(inner, 32));
+      innerGeo.rotateX(-Math.PI / 2);
+      const innerLine = new THREE.Mesh(innerGeo, lineMat);
+      innerLine.position.y = 0.002;
+      this.scene.add(innerLine);
+    }
 
     // The wooden racetrack between the felt and the rail.
     const trackShape = insetRect(TABLE.railWidth - 0.03);
     trackShape.holes.push(holePath(feltInset));
     const trackGeo = this.track(new THREE.ExtrudeGeometry(trackShape, { depth: 0.02, bevelEnabled: false, curveSegments: 32 }));
     trackGeo.rotateX(-Math.PI / 2);
-    const woodMat = this.track(new THREE.MeshStandardMaterial({ map: wood, roughness: 0.35, metalness: 0.05 }));
+    const woodMat = this.track(new THREE.MeshStandardMaterial({ map: wood, roughness: vip ? 0.16 : 0.35, metalness: vip ? 0.15 : 0.05 }));
     const trackMesh = new THREE.Mesh(trackGeo, woodMat);
     trackMesh.receiveShadow = shadows;
     this.scene.add(trackMesh);
+    if (vip) {
+      // Gold trim where the racetrack meets the felt.
+      const trim = insetRect(feltInset - 0.025);
+      trim.holes.push(holePath(feltInset));
+      const trimGeo = this.track(new THREE.ExtrudeGeometry(trim, { depth: 0.028, bevelEnabled: false, curveSegments: 32 }));
+      trimGeo.rotateX(-Math.PI / 2);
+      this.scene.add(new THREE.Mesh(trimGeo, this.gold()));
+    }
 
     // The padded leather rail: a bevelled extrusion reads as a stuffed cushion.
     const bevel = 0.07;
@@ -425,19 +473,15 @@ export class TableScene {
       new THREE.ExtrudeGeometry(railShape, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.07, bevelSize: bevel, bevelSegments: 6, curveSegments: 40 }),
     );
     railGeo.rotateX(-Math.PI / 2);
-    const leatherMat = this.track(new THREE.MeshStandardMaterial({ map: leather, roughness: 0.48, metalness: 0.02, color: '#ffffff' }));
+    const leatherMat = this.track(new THREE.MeshStandardMaterial({ map: leather, roughness: vip ? 0.4 : 0.48, metalness: 0.02, color: '#ffffff' }));
     const rail = new THREE.Mesh(railGeo, leatherMat);
     rail.position.y = 0.07;
     rail.castShadow = shadows;
     rail.receiveShadow = shadows;
     this.scene.add(rail);
 
-    // The house dealer's chip tray, set into the felt in front of them.
-    const trayGeo = this.track(new THREE.BoxGeometry(HOUSE.trayWidth, 0.03, HOUSE.trayDepth));
-    const tray = new THREE.Mesh(trayGeo, this.track(new THREE.MeshStandardMaterial({ color: '#2a160b', roughness: 0.5 })));
-    tray.position.set(0, 0.006, TABLE.halfDepth - TABLE.railWidth - HOUSE.trayDepth / 2 - 0.02);
-    tray.receiveShadow = shadows;
-    this.scene.add(tray);
+    // The house dealer's chip rack, on the felt in front of them (its chips: chips3d.ts's tray).
+    this.scene.add(this.buildRack(woodMat, shadows));
 
     // The apron under the rail, and the table's legs.
     const apronGeo = this.track(new THREE.ExtrudeGeometry(insetRect(0.04), { depth: 0.3, bevelEnabled: false, curveSegments: 32 }));
@@ -447,18 +491,64 @@ export class TableScene {
     apron.position.y = -0.015;
     apron.castShadow = shadows;
     this.scene.add(apron);
-    const legMat = this.track(new THREE.MeshStandardMaterial({ color: '#1b120c', roughness: 0.6 }));
+    if (vip) {
+      // A gold band along the apron's foot.
+      const band = insetRect(0.03);
+      band.holes.push(holePath(0.075));
+      const bandGeo = this.track(new THREE.ExtrudeGeometry(band, { depth: 0.045, bevelEnabled: false, curveSegments: 32 }));
+      bandGeo.rotateX(Math.PI / 2);
+      const b = new THREE.Mesh(bandGeo, this.gold());
+      b.position.y = -0.3;
+      this.scene.add(b);
+    }
+    const legMat = this.track(new THREE.MeshStandardMaterial({ color: vip ? '#0d0a0a' : '#1b120c', roughness: vip ? 0.2 : 0.6 }));
     const legGeo = this.track(new THREE.CylinderGeometry(0.28, 0.4, -FLOOR_Y - 0.3, 16));
+    const collarGeo = this.track(new THREE.CylinderGeometry(0.45, 0.47, 0.08, 20));
     for (const x of [-1.6, 1.6]) {
       const leg = new THREE.Mesh(legGeo, legMat);
       leg.position.set(x, (FLOOR_Y - 0.3) / 2, 0);
       this.scene.add(leg);
+      if (vip) {
+        // Gold collars at the top and foot of each pedestal.
+        for (const y of [-0.38, FLOOR_Y + 0.05]) {
+          const collar = new THREE.Mesh(collarGeo, this.gold());
+          collar.position.set(x, y, 0);
+          this.scene.add(collar);
+        }
+      }
     }
 
     // The floor: dark carpet, catching the table's shadow (or a soft blob of one on the Low tier).
     const floorGeo = this.track(new THREE.CircleGeometry(14, 48));
     floorGeo.rotateX(-Math.PI / 2);
-    const floor = new THREE.Mesh(floorGeo, this.track(new THREE.MeshStandardMaterial({ color: '#2a1517', roughness: 1 })));
+    // The VIP room's floor: dark polished planks, and the Persian rug laid under the table.
+    const floorMat = vip
+      ? this.track(new THREE.MeshStandardMaterial({ map: this.track(planksTexture(texSize)), roughness: 0.8, envMapIntensity: 0.25 }))
+      : this.track(new THREE.MeshStandardMaterial({ color: '#2a1517', roughness: 1 }));
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    if (vip) {
+      const rugGeo = this.track(new THREE.PlaneGeometry(RUG.width, RUG.depth));
+      rugGeo.rotateX(-Math.PI / 2);
+      // The rug's own red until its photograph arrives.
+      const rugMat = this.track(new THREE.MeshStandardMaterial({ color: '#6e1a1c', roughness: 1 }));
+      new THREE.TextureLoader().load(this.tier === 'high' ? RUG.image : RUG.smallImage, (tex) => {
+        if (this.disposed) {
+          tex.dispose();
+          return;
+        }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+        this.track(tex);
+        rugMat.map = tex;
+        rugMat.color.set('#ffffff');
+        rugMat.needsUpdate = true;
+      });
+      const rug = new THREE.Mesh(rugGeo, rugMat);
+      // Centered between the far seats and the house dealer, a hair above the floor.
+      rug.position.set(0, FLOOR_Y + 0.006, 0.6);
+      rug.receiveShadow = shadows;
+      this.scene.add(rug);
+    }
     floor.position.y = FLOOR_Y;
     floor.receiveShadow = shadows;
     this.scene.add(floor);
@@ -470,6 +560,56 @@ export class TableScene {
       b.position.y = FLOOR_Y + 0.01;
       this.scene.add(b);
     }
+  }
+
+  /**
+   * The dealer's chip rack: a wooden tray with felt-lined, rounded channels
+   * (one per denomination) between low ridges, a tall back wall on the
+   * dealer's side and a low front one so the players see the chips. On the
+   * VIP table, ebony with a gold rim.
+   */
+  private buildRack(wood: THREE.Material, shadows: boolean): THREE.Group {
+    const vip = this.theme === 'vip';
+    const g = new THREE.Group();
+    g.position.set(0, 0, TABLE.halfDepth - TABLE.railWidth - HOUSE.trayDepth / 2 - 0.02);
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh => {
+      const m = new THREE.Mesh(this.track(geo), mat);
+      m.position.set(x, y, z);
+      m.castShadow = shadows;
+      m.receiveShadow = shadows;
+      g.add(m);
+      return m;
+    };
+    const w = HOUSE.trayWidth;
+    const d = HOUSE.trayDepth;
+    const inner = TRAY.channels * TRAY.channelPitch;
+    const sideWall = (w - inner) / 2;
+    const endWall = (d - TRAY.innerDepth) / 2;
+    const front = TRAY.wallHeight * 0.55;
+    add(new RoundedBoxGeometry(w, 0.008, d, 2, 0.003), wood, 0, 0.004, 0);
+    // The walls: tall at the back (the dealer's side, +Z), low at the front, the ends between.
+    add(new RoundedBoxGeometry(w, TRAY.wallHeight, endWall, 2, 0.008), wood, 0, TRAY.wallHeight / 2, d / 2 - endWall / 2);
+    add(new RoundedBoxGeometry(w, front, endWall, 2, 0.008), wood, 0, front / 2, -d / 2 + endWall / 2);
+    for (const sx of [-1, 1]) add(new RoundedBoxGeometry(sideWall, TRAY.wallHeight, d, 2, 0.008), wood, sx * (w / 2 - sideWall / 2), TRAY.wallHeight / 2, 0);
+    // Felt-lined channels, each a half-pipe the chips lie in; ridges between them.
+    const liner = this.track(new THREE.MeshStandardMaterial({ color: vip ? '#2a0a10' : '#17171a', roughness: 1, side: THREE.DoubleSide }));
+    const radius = TRAY.channelPitch / 2;
+    const chipY = TRAY.floor + TRAY.chipScale * CHIP_RADIUS - TRAY.sink;
+    for (let c = 0; c < TRAY.channels; c++) {
+      const x = (c - (TRAY.channels - 1) / 2) * TRAY.channelPitch;
+      const pipe = new THREE.CylinderGeometry(radius, radius, TRAY.innerDepth, 20, 1, true, -Math.PI / 2, Math.PI);
+      pipe.rotateX(Math.PI / 2);
+      add(pipe, liner, x, chipY, 0).castShadow = false;
+      if (c > 0) add(new RoundedBoxGeometry(0.014, TRAY.ridgeHeight, TRAY.innerDepth, 2, 0.006), wood, x - TRAY.channelPitch / 2, TRAY.ridgeHeight / 2, 0);
+    }
+    if (vip) {
+      // A gold rim along the walls' tops.
+      const gold = this.gold();
+      add(new THREE.BoxGeometry(w, 0.008, endWall + 0.004), gold, 0, TRAY.wallHeight + 0.004, d / 2 - endWall / 2);
+      add(new THREE.BoxGeometry(w, 0.008, endWall + 0.004), gold, 0, front + 0.004, -d / 2 + endWall / 2);
+      for (const sx of [-1, 1]) add(new THREE.BoxGeometry(sideWall + 0.004, 0.008, d), gold, sx * (w / 2 - sideWall / 2), TRAY.wallHeight + 0.004, 0);
+    }
+    return g;
   }
 
   /** A soft darkening toward the rail — the felt's "baked" ambient light. */
@@ -490,7 +630,13 @@ export class TableScene {
     return new THREE.CanvasTexture(c);
   }
 
-  /** Low-poly padded casino chairs, one instance per seat for each part: cushion, back, column, base. */
+  /**
+   * Low-poly padded casino chairs, one instance per seat for each part.
+   * Classic: cushion, back, chrome column and base. VIP: a velvet armchair —
+   * cushion, tall back, two arms — with a gold cap, column and base. The
+   * upholstered parts come first: they're tinted (empty, taken, hovered) and
+   * tapped.
+   */
   private buildChairs(count: number): void {
     for (const m of this.chairParts) {
       this.scene.remove(m);
@@ -499,24 +645,7 @@ export class TableScene {
     this.chairParts.length = 0;
     if (count === 0) return;
     const shadows = TIERS[this.tier].shadowMapSize > 0;
-    const leather = this.chairLeather ?? this.track(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.42 }));
-    this.chairLeather = leather;
-    const chrome = this.chairChrome ?? this.track(new THREE.MeshStandardMaterial({ color: '#b9bcc2', roughness: 0.25, metalness: 0.9 }));
-    this.chairChrome = chrome;
-    const geos = this.chairGeos ?? {
-      cushion: this.track(new RoundedBoxGeometry(0.66, 0.16, 0.6, 3, 0.07)),
-      back: this.track(new RoundedBoxGeometry(0.66, 0.74, 0.13, 3, 0.06)),
-      column: this.track(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 10)),
-      base: this.track(new THREE.CylinderGeometry(0.3, 0.32, 0.04, 20)),
-    };
-    this.chairGeos = geos;
-    const parts: [THREE.BufferGeometry, THREE.Material, boolean][] = [
-      [geos.cushion, leather, true],
-      [geos.back, leather, true],
-      [geos.column, chrome, false],
-      [geos.base, chrome, false],
-    ];
-    for (const [geo, mat, tinted] of parts) {
+    for (const [geo, mat, tinted] of this.chairDesign().parts) {
       const m = new THREE.InstancedMesh(geo, mat, count);
       m.castShadow = shadows;
       m.receiveShadow = shadows;
@@ -526,44 +655,85 @@ export class TableScene {
     }
   }
 
-  private chairLeather: THREE.MeshStandardMaterial | null = null;
-  private chairChrome: THREE.MeshStandardMaterial | null = null;
-  private chairGeos: { cushion: THREE.BufferGeometry; back: THREE.BufferGeometry; column: THREE.BufferGeometry; base: THREE.BufferGeometry } | null = null;
+  /** The chair's parts (geometry, material, upholstered) and where each sits on a chair standing at the origin facing +Z — built once. */
+  private chairDesign(): { parts: [THREE.BufferGeometry, THREE.Material, boolean][]; local: THREE.Matrix4[]; upholstered: number } {
+    if (this.chairKit) return this.chairKit;
+    const seatY = FLOOR_Y + 0.95;
+    const at = (x: number, y: number, z: number, tilt = 0): THREE.Matrix4 => new THREE.Matrix4().makeRotationX(tilt).premultiply(new THREE.Matrix4().makeTranslation(x, y, z));
+    if (this.theme === 'vip') {
+      const velvet = this.track(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.72 }));
+      const arm = this.track(new RoundedBoxGeometry(0.12, 0.16, 0.6, 3, 0.05));
+      this.chairKit = {
+        parts: [
+          [this.track(new RoundedBoxGeometry(0.72, 0.2, 0.64, 3, 0.08)), velvet, true],
+          [this.track(new RoundedBoxGeometry(0.74, 0.95, 0.16, 3, 0.07)), velvet, true],
+          [arm, velvet, true],
+          [arm, velvet, true],
+          [this.track(new RoundedBoxGeometry(0.78, 0.05, 0.19, 2, 0.02)), this.gold(), false],
+          [this.track(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 12)), this.gold(), false],
+          [this.track(new THREE.CylinderGeometry(0.32, 0.34, 0.05, 24)), this.gold(), false],
+        ],
+        local: [
+          at(0, seatY, 0),
+          at(0, seatY + 0.52, -0.31, -0.1),
+          at(-0.41, seatY + 0.25, -0.02),
+          at(0.41, seatY + 0.25, -0.02),
+          at(0, seatY + 0.993, -0.357, -0.1),
+          at(0, seatY - 0.5, 0),
+          at(0, FLOOR_Y + 0.025, 0),
+        ],
+        upholstered: 4,
+      };
+      return this.chairKit;
+    }
+    const leather = this.track(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.42 }));
+    const chrome = this.track(new THREE.MeshStandardMaterial({ color: '#b9bcc2', roughness: 0.25, metalness: 0.9 }));
+    this.chairKit = {
+      parts: [
+        [this.track(new RoundedBoxGeometry(0.66, 0.16, 0.6, 3, 0.07)), leather, true],
+        [this.track(new RoundedBoxGeometry(0.66, 0.74, 0.13, 3, 0.06)), leather, true],
+        [this.track(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 10)), chrome, false],
+        [this.track(new THREE.CylinderGeometry(0.3, 0.32, 0.04, 20)), chrome, false],
+      ],
+      local: [at(0, seatY, 0), at(0, seatY + 0.42, -0.3, -0.12), at(0, seatY - 0.5, 0), at(0, FLOOR_Y + 0.02, 0)],
+      upholstered: 2,
+    };
+    return this.chairKit;
+  }
+
+  private chairKit: { parts: [THREE.BufferGeometry, THREE.Material, boolean][]; local: THREE.Matrix4[]; upholstered: number } | null = null;
+
+  /** The chairs' upholstered parts: tinted, and what a tap on a chair hits. */
+  private upholstery(): THREE.InstancedMesh[] {
+    return this.chairParts.slice(0, this.chairDesign().upholstered);
+  }
 
   private placeChairs(): void {
     if (this.chairParts.length === 0) return;
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const one = new THREE.Vector3(1, 1, 1);
-    const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
-    const seatY = FLOOR_Y + 0.95;
+    const { local } = this.chairDesign();
     this.placements.forEach((p, i) => {
-      const own = p.seatId === this.viewerSeatId;
       const base = new THREE.Matrix4().compose(new THREE.Vector3(p.chair.x, 0, p.chair.z), q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.facing), one);
-      const local = [
-        new THREE.Matrix4().makeTranslation(0, seatY, 0),
-        new THREE.Matrix4().makeRotationX(-0.12).premultiply(new THREE.Matrix4().makeTranslation(0, seatY + 0.42, -0.3)),
-        new THREE.Matrix4().makeTranslation(0, seatY - 0.5, 0),
-        new THREE.Matrix4().makeTranslation(0, FLOOR_Y + 0.02, 0),
-      ];
-      this.chairParts.forEach((part, k) => {
-        // The viewer's own chair is right under the camera — it would only get in the way.
-        part.setMatrixAt(i, own ? hidden : m.multiplyMatrices(base, local[k]!));
-      });
+      // Your own chair too: you're sitting in it.
+      this.chairParts.forEach((part, k) => part.setMatrixAt(i, m.multiplyMatrices(base, local[k]!)));
     });
     for (const part of this.chairParts) part.instanceMatrix.needsUpdate = true;
     this.tintChairs();
   }
 
   private tintChairs(): void {
-    const occupied = new THREE.Color('#4a1018');
-    const empty = new THREE.Color('#7a1c2c');
-    const hover = new THREE.Color('#c4485c');
+    const vip = this.theme === 'vip';
+    const occupied = new THREE.Color(vip ? '#2a1a1e' : '#4a1018');
+    const empty = new THREE.Color(vip ? '#3e2a30' : '#7a1c2c');
+    const hover = new THREE.Color(vip ? '#9a7434' : '#c4485c');
+    const parts = this.upholstery();
     this.placements.forEach((p, i) => {
       const c = p.seatId === this.hoverSeat && !this.occupied.has(p.seatId) ? hover : this.occupied.has(p.seatId) ? occupied : empty;
-      for (const part of this.chairParts.slice(0, 2)) part.setColorAt(i, c);
+      for (const part of parts) part.setColorAt(i, c);
     });
-    for (const part of this.chairParts.slice(0, 2)) if (part.instanceColor) part.instanceColor.needsUpdate = true;
+    for (const part of parts) if (part.instanceColor) part.instanceColor.needsUpdate = true;
   }
 
   // --- The camera. ---
@@ -805,6 +975,7 @@ export class TableScene {
   setMode(mode: View3dMode): void {
     if (mode === this.mode) return;
     this.mode = mode;
+    this.players.setOwnHeadless(mode === 'seated');
     this.look.recenter();
     this.look.snap();
     this.retarget(true);
@@ -1168,7 +1339,7 @@ export class TableScene {
     const r = this.canvas.getBoundingClientRect();
     this.pointer.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.rig.camera);
-    const hits = this.raycaster.intersectObjects(this.chairParts.slice(0, 2), false);
+    const hits = this.raycaster.intersectObjects(this.upholstery(), false);
     const id = hits[0]?.instanceId;
     if (id === undefined) return null;
     const seatId = this.chairSeatIds[id];

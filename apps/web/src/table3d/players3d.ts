@@ -38,6 +38,8 @@ interface Body {
   phase: number;
   key: string;
   face: FaceScreen | null;
+  /** The viewer's own body: in their own chair, under their eyes. */
+  own: boolean;
 }
 
 /** The screen's size, table units (about half a metre): a head and shoulders, 3:4 like the seat boxes' video. */
@@ -152,6 +154,63 @@ class FaceScreen {
   }
 }
 
+// --- Arms resting on the table. ---
+
+const UPPER_ARM = 0.58;
+const FORE_ARM = 0.52;
+const av2 = new THREE.Vector3();
+const aq = new THREE.Quaternion();
+const aq2 = new THREE.Quaternion();
+const DOWN = new THREE.Vector3(0, -1, 0);
+/** Where each hand rests, in the hips' own space: palm down on the thigh, halfway to the knee. */
+const LAP = { out: 0.16, up: 0.13, forward: 0.4 } as const;
+
+/** Turns a bone (which runs along its own -Y) to point along `dir` in the world, the shortest way. */
+function aim(bone: THREE.Bone, dir: THREE.Vector3): void {
+  const world = bone.getWorldQuaternion(aq);
+  const now = av2.copy(DOWN).applyQuaternion(world);
+  const target = aq2.setFromUnitVectors(now, dir).multiply(world);
+  const parent = bone.parent!.getWorldQuaternion(new THREE.Quaternion()).invert();
+  bone.quaternion.copy(parent.multiply(target));
+  bone.updateMatrixWorld(true);
+}
+
+/**
+ * A seated player's arms: hands resting palm down on their lap, under the
+ * table's edge — nothing of them ever crosses onto the table. A two-bone
+ * reach for each hand, the elbow bent back and a little out beside the body.
+ */
+function restArms(body: Body, place: SeatPlacement3d): void {
+  body.root.updateMatrixWorld(true);
+  const out = new THREE.Vector3(place.chair.nx, 0, place.chair.nz);
+  const hips = body.bones.get('hips')!;
+  const centre = hips.getWorldPosition(new THREE.Vector3());
+  for (const side of ['R', 'L'] as const) {
+    const sx = side === 'R' ? -1 : 1;
+    const upper = body.bones.get(`upperArm${side}`)!;
+    const fore = body.bones.get(`foreArm${side}`)!;
+    const hand = body.bones.get(`hand${side}`)!;
+    const shoulder = upper.getWorldPosition(new THREE.Vector3());
+    const target = hips.localToWorld(new THREE.Vector3(sx * LAP.out, LAP.up, LAP.forward));
+    const toHand = target.clone().sub(shoulder);
+    const reach = Math.min(toHand.length(), UPPER_ARM + FORE_ARM - 0.02);
+    const dir = toHand.normalize();
+    const along = (UPPER_ARM * UPPER_ARM - FORE_ARM * FORE_ARM + reach * reach) / (2 * reach);
+    const h = Math.sqrt(Math.max(0, UPPER_ARM * UPPER_ARM - along * along));
+    // The elbow: back toward the chair and out to the player's side.
+    const sideways = shoulder.clone().sub(centre).setY(0).normalize();
+    const pole = out.clone().add(sideways.multiplyScalar(0.6));
+    pole.addScaledVector(dir, -pole.dot(dir)).normalize();
+    const elbow = shoulder.clone().addScaledVector(dir, along).addScaledVector(pole, h);
+    const wrist = shoulder.clone().addScaledVector(dir, reach);
+    aim(upper, elbow.clone().sub(shoulder).normalize());
+    aim(fore, wrist.clone().sub(elbow).normalize());
+    // Palm down on the thigh: the hand carries on toward the knee, tipped down a little.
+    const forward = target.clone().sub(centre).setY(0).normalize();
+    aim(hand, forward.addScaledVector(DOWN, 0.35).normalize());
+  }
+}
+
 export interface SeatedPlayer {
   seatId: number;
   hue: number;
@@ -177,12 +236,16 @@ export class SeatedPlayers {
     this.castShadows = castShadows;
   }
 
-  /** One body per player at the table but the viewer. */
+  /**
+   * One body per player at the table — the viewer's own too, in their own
+   * chair: seated, the camera is its eyes, so it has no head (you look down
+   * at your own chest and arms); standing, you see yourself from behind it.
+   */
   sync(placements: ReadonlyMap<number, SeatPlacement3d>, players: readonly SeatedPlayer[], viewerSeatId: number | null): void {
     const wanted = new Set<number>();
     for (const p of players) {
       const place = placements.get(p.seatId);
-      if (!place || p.seatId === viewerSeatId) continue;
+      if (!place) continue;
       wanted.add(p.seatId);
       const key = `${String(p.hue)}|${String(p.seed)}`;
       let body = this.bodies.get(p.seatId);
@@ -193,10 +256,11 @@ export class SeatedPlayers {
       if (!body) {
         const root = new THREE.Group();
         const built = buildHumanBody(root, playerStyle(p.hue, p.seed), this.castShadows);
-        body = { root, bones: built.bones, disposables: built.disposables, phase: (p.seed % 628) / 100, key, face: null };
+        body = { root, bones: built.bones, disposables: built.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false };
         this.bodies.set(p.seatId, body);
         this.group.add(root);
       }
+      body.own = p.seatId === viewerSeatId;
       // In the chair, pulled up to the table, facing its middle.
       const inward = 0.12;
       body.root.position.set(place.chair.x - place.chair.nx * inward, FLOOR_Y + 1.0, place.chair.z - place.chair.nz * inward);
@@ -206,12 +270,20 @@ export class SeatedPlayers {
         const b = body.bones.get(name)!;
         b.rotation.set((e[0] + (name === 'spine' ? lean : 0)) * DEG, e[1] * DEG, e[2] * DEG);
       }
+      restArms(body, place);
     }
     for (const id of [...this.bodies.keys()]) if (!wanted.has(id)) this.remove(id);
     this.attachFaces();
   }
 
   /** The players on camera, by seat (the viewer's own is never here: they have no body). */
+  /** Seated, the viewer's own body has no head: the camera is where it would be. */
+  setOwnHeadless(on: boolean): void {
+    this.ownHeadless = on;
+  }
+
+  private ownHeadless = true;
+
   setVideos(videos: ReadonlyMap<number, MediaStream>): void {
     this.videos = new Map(videos);
     this.attachFaces();
@@ -247,6 +319,12 @@ export class SeatedPlayers {
       const chest = b.bones.get('chest')!;
       chest.rotation.x = (SEATED.chest![0] + Math.sin(t * 1.3 + b.phase) * 1.2) * DEG;
       const head = b.bones.get('head')!;
+      if (b.own) {
+        // Your own head turns where you drag, not on its own.
+        head.visible = !this.ownHeadless;
+        head.rotation.y = 0;
+        continue;
+      }
       head.rotation.y = Math.sin(t * 0.23 + b.phase * 3) * 14 * DEG * Math.max(0, Math.sin(t * 0.11 + b.phase));
       if (!b.face) continue;
       // Upright like a face, however far they lean in, and turned the way they sit. Not with the
@@ -280,7 +358,7 @@ export class SeatedPlayers {
   faces(eye: THREE.Vector3): { seatId: number; at: THREE.Vector3; edges: [THREE.Vector3, THREE.Vector3]; front: boolean; object: THREE.Object3D }[] {
     const out: { seatId: number; at: THREE.Vector3; edges: [THREE.Vector3, THREE.Vector3]; front: boolean; object: THREE.Object3D }[] = [];
     for (const [seatId, b] of this.bodies) {
-      if (!b.face) continue;
+      if (!b.face || b.own) continue;
       const front = this.faceFront(b, eye);
       const g = b.face.group;
       const half = FACE_SCREEN.width / 2;
@@ -292,7 +370,7 @@ export class SeatedPlayers {
   /** Where a player's head is (world), or null with nobody there. */
   headWorld(seatId: number, out: THREE.Vector3): THREE.Vector3 | null {
     const b = this.bodies.get(seatId);
-    if (!b) return null;
+    if (!b || b.own) return null;
     // The head bone sits at the base of the skull; its middle is a little above.
     return b.bones.get('head')!.localToWorld(out.set(0, 0.17, 0.02));
   }

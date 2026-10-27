@@ -115,3 +115,47 @@ describe('LiveTable: changing seats', () => {
     expect(table.state.seats.reduce((n, s) => n + s.stack, 0)).toBe(total);
   });
 });
+
+describe('LiveTable: the owner moving a computer player', () => {
+  let table: LiveTable;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    table = new LiveTable('table-2', 'Bots', SETTINGS, new MemoryStore(), {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => Date.now(),
+    });
+    table.takeSeat(0, 'a', meta('Alice'), 1000);
+    expect(table.addBot(3, 'calling-station', 1000)).toMatchObject({ ok: true });
+  });
+
+  afterEach(() => {
+    table.dispose();
+    vi.useRealTimers();
+  });
+
+  it('between hands it moves at once, stack and all; only a computer player, and only to an empty seat', () => {
+    expect(table.moveBot(3, 5)).toEqual({ ok: true, when: 'now', owes: 0 });
+    expect(table.seats[5]!.botPolicyName).toBeTruthy();
+    expect(table.state.seats[5]!.stack).toBe(1000);
+    expect(table.state.seats[3]!.status).toBe('empty');
+    expect(table.moveBot(5, 0)).toMatchObject({ ok: false, code: 'SEAT_TAKEN' });
+    expect(table.moveBot(0, 1)).toMatchObject({ ok: false, code: 'NOT_A_BOT' });
+    expect(table.moveBot(2, 1)).toMatchObject({ ok: false, code: 'NOT_A_BOT' });
+  });
+
+  it('mid-hand, it moves once the hand is over, and keeps playing from its new seat', async () => {
+    table.startNextHand();
+    expect(table.moveBot(3, 1)).toMatchObject({ ok: true, when: 'after-hand' });
+    expect(table.seats[3]!.botPolicyName).toBeTruthy();
+    await playOut(table);
+    await vi.runAllTimersAsync();
+    expect(table.seats[1]!.botPolicyName).toBeTruthy();
+    expect(table.state.seats[3]!.status).toBe('empty');
+    await vi.advanceTimersByTimeAsync(10_000);
+    table.startNextHand();
+    expect(table.state.phase).toBe('in-hand');
+    await playOut(table);
+  });
+});

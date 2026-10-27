@@ -2727,3 +2727,32 @@ videos would crowd the felt. On the 3D table this rule no longer applies.
 `scripts/liveTableSim.mjs` checks this under load. It runs nine players in
 iPhone-sized browsers, with every camera and mic on, against a live server.
 It records each screen and writes a report.
+
+## The VIP room, seated bodies, and the house dealer's stool
+
+- **VIP dealers bring the VIP room.** A ★ VIP character (`vip: true` in
+  `public/models/dealers/index.json`) turns the 3D table into a high-limit room:
+  burgundy felt with gold lines, a quilted leather rail, ebony and gold trim,
+  velvet armchairs, a chandelier, slot banks, columns, a velvet rope, and a real
+  16th-century Persian carpet under the table (a public-domain Met photograph —
+  `public/textures/CREDITS.md`). The theme is fixed for a scene's life, like the
+  quality tier: switching to or from a VIP dealer builds a new scene.
+- **Characters' files are cleaned on load.** Exported characters can carry the
+  lights and cameras of the scene they came from (Judy's had a 1000 cd light
+  that washed every table white); they're dropped. Mixamo's auto-rig names
+  embedded textures without an extension (`Image_0_001`), which FBXLoader
+  skips, so the copies in `public/models/dealers` have them renamed in place
+  (same length: `Image_0.png`).
+- **Everyone sits in a chair with a body — you too.** Seated, your own body has
+  no head (the camera is its eyes). Hands rest palms down on laps, so no arm
+  ever comes through the table.
+- **The house dealer perches on a tall bar stool**, thighs sloping under the
+  table's edge, feet on the footrest, and holds the deck the way dealers do:
+  palm up, fingers round it, its back tipped toward the players. A rig with
+  stub fingers (its hand skinned to the forearm) holds it from above instead.
+- **The dealer's chip rack** is a wooden tray of felt-lined channels with chips
+  on edge, each turned its own way, about 30% smaller than before.
+- **The owner moves computer players** (double-tap a bot → Move to another
+  seat → tap an empty seat): the same rules as a player moving themselves —
+  at once between hands, after the hand if the bot's in it, owing a big blind
+  if the move skips one (`LiveTable.moveBot`).

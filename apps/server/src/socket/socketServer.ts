@@ -5,6 +5,7 @@ import {
   AdminRebuySchema,
   AssignSeatSchema,
   ChangeSeatSchema,
+  MoveBotSchema,
   ChatMessageSchema,
   JoinTableSchema,
   MAX_PRACTICE_BOTS,
@@ -759,6 +760,19 @@ export function attachSocketServer(
       if (!result.ok) return emitError(result.code, result.message);
       broadcastTable(table);
       // No auto-deal here either — see 'start-hand' below.
+    });
+
+    socket.on('move-bot', (raw: unknown, callback?: (result: { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string }) => void): void => {
+      const table = currentTable();
+      const fail = (code: string, message: string): void => callback?.({ ok: false, code, message });
+      if (!table || !data.userId) return fail('AUTH_REQUIRED', 'You must be signed in to move a computer player.');
+      if (!canManageTable(table, data)) return fail('ADMIN_REQUIRED', 'Only the table owner can move a computer player.');
+      const parsed = MoveBotSchema.safeParse(raw);
+      if (!parsed.success) return fail('INVALID_PAYLOAD', 'Malformed move-bot payload.');
+      if (!actionLimiter.consume(socket.id)) return fail('RATE_LIMITED', 'Slow down.');
+      const result = table.moveBot(parsed.data.fromSeatId, parsed.data.toSeatId);
+      callback?.(result);
+      if (result.ok) broadcastTable(table);
     });
 
     socket.on('remove-bot', (raw: unknown): void => {

@@ -13,6 +13,25 @@ export const CHIP_RADIUS = 0.085;
 export const CHIP_HEIGHT = 0.026;
 const COLUMN_MAX = 10;
 
+/**
+ * The house dealer's rack, in its own space (its middle at the felt): a
+ * floor, seven channels of chips on edge (smaller than table chips' full
+ * size would need, the way a real rack holds them tight), walls and the
+ * ridges between channels. scene.ts builds the wood around these numbers.
+ */
+export const TRAY = {
+  chipScale: 0.86,
+  channels: 7,
+  channelPitch: 0.155,
+  /** The channels' length, inside the walls. */
+  innerDepth: 0.25,
+  /** The floor's top, and how far each chip sits down into its curved channel. */
+  floor: 0.022,
+  sink: 0.012,
+  wallHeight: 0.085,
+  ridgeHeight: 0.06,
+} as const;
+
 /** One move: to `to` over [start, start + dur] (performance.now() ms), lifted `arc` at the middle. */
 interface Leg {
   to: THREE.Vector3;
@@ -122,11 +141,11 @@ export class Chips3d {
 
   constructor(capacity: number, castShadows: boolean) {
     this.capacity = capacity;
-    const geo = new THREE.CylinderGeometry(CHIP_RADIUS, CHIP_RADIUS, CHIP_HEIGHT, 20, 1);
+    const geo = new THREE.CylinderGeometry(CHIP_RADIUS, CHIP_RADIUS, CHIP_HEIGHT, 32, 1);
     const edge = chipEdgeMask();
     const face = chipFaceMask();
-    const sideMat = new THREE.MeshStandardMaterial({ map: edge, roughness: 0.45, metalness: 0.05 });
-    const capMat = new THREE.MeshStandardMaterial({ map: face, roughness: 0.4, metalness: 0.05 });
+    const sideMat = new THREE.MeshStandardMaterial({ map: edge, roughness: 0.38, metalness: 0.04 });
+    const capMat = new THREE.MeshStandardMaterial({ map: face, roughness: 0.32, metalness: 0.04 });
     patchMask(sideMat);
     patchMask(capMat);
     this.disposables.push(geo, edge, face, sideMat, capMat);
@@ -150,25 +169,44 @@ export class Chips3d {
     return (s >>> 0) / 0xffffffff;
   }
 
-  /** The house dealer's chip tray: rows of chips standing on edge, every denomination. Static — set once. */
+  /**
+   * The chips in the house dealer's rack (see TRAY): one channel per
+   * denomination, chips lying on their edges in a row — each turned its own
+   * way so the edge spots never line up, packed a hair unevenly, channels
+   * not all equally full, and the last chip of each leaning back against the
+   * row. Static — set once.
+   */
   private buildTray(geo: THREE.CylinderGeometry, sideMat: THREE.Material, capMat: THREE.Material): THREE.InstancedMesh {
-    const rows = 7;
-    const perRow = 16;
-    const tray = new THREE.InstancedMesh(geo, [sideMat, capMat, capMat], rows * perRow);
     const colors = ['#18181b', '#15803d', '#2563eb', '#dc2626', '#f5f5f0', '#7e22ce', '#f59e0b'];
+    const counts = [9, 10, 8, 10, 9, 10, 8];
+    const total = counts.reduce((n, c) => n + c, 0);
+    const tray = new THREE.InstancedMesh(geo, [sideMat, capMat, capMat], total);
+    const r = CHIP_RADIUS * TRAY.chipScale;
+    const pitch = CHIP_HEIGHT * TRAY.chipScale * 1.04;
     const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+    const q = new THREE.Quaternion();
+    const spin = new THREE.Quaternion();
+    const lean = new THREE.Quaternion();
+    const onEdge = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+    const scale = new THREE.Vector3().setScalar(TRAY.chipScale);
     let i = 0;
-    for (let r = 0; r < rows; r++) {
-      for (let k = 0; k < perRow; k++) {
-        const x = (r - (rows - 1) / 2) * CHIP_RADIUS * 2.3;
-        const z = (k - (perRow - 1) / 2) * CHIP_HEIGHT * 1.02;
-        m.compose(new THREE.Vector3(x, CHIP_RADIUS * 0.55, z), q, new THREE.Vector3(1, 1, 1));
+    colors.forEach((color, c) => {
+      const x = (c - (colors.length - 1) / 2) * TRAY.channelPitch;
+      // Each row starts against the channel's back wall (the dealer's side).
+      const back = TRAY.innerDepth / 2 - pitch / 2;
+      for (let k = 0; k < counts[c]!; k++) {
+        const last = k === counts[c]! - 1;
+        const z = back - k * pitch - (last ? pitch * 0.6 : 0) + (this.rand() - 0.5) * 0.002;
+        // Turned about its own axis; the last one tipped back against the row.
+        spin.setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.rand() * Math.PI * 2);
+        lean.setFromAxisAngle(new THREE.Vector3(1, 0, 0), last ? 0.42 : (this.rand() - 0.5) * 0.05);
+        q.copy(lean).multiply(onEdge).multiply(spin);
+        m.compose(new THREE.Vector3(x + (this.rand() - 0.5) * 0.004, TRAY.floor + r - TRAY.sink - (last ? r * 0.06 : 0), z), q, scale);
         tray.setMatrixAt(i, m);
-        tray.setColorAt(i, new THREE.Color(colors[r]));
+        tray.setColorAt(i, new THREE.Color(color));
         i++;
       }
-    }
+    });
     tray.receiveShadow = true;
     return tray;
   }

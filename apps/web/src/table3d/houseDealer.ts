@@ -339,6 +339,19 @@ const DECK_TILT = new THREE.Euler(Math.PI / 2 - 0.3, 0, 0);
 /** A character palms it: a real deck's size (the model deck is drawn larger), its centre this far below her palm. */
 const DECK_HELD_SCALE = 0.62;
 const DECK_UNDER_PALM = 0.035;
+/** Half the held deck's thickness (the model deck's 0.06, at its held scale). */
+const DECK_HELD_HALF_THICKNESS = 0.03 * DECK_HELD_SCALE;
+
+/**
+ * How a character sits on the dealer's stool: how far her hips sit below
+ * standing, the slope of her thighs and shins (radians from straight down —
+ * thighs forward, shins back to the footrest), where the stool's seat is
+ * below her hip joints, and its footrest above the floor.
+ */
+const PERCH = { drop: 0.1, thigh: 0.55, shin: 0.95, seatBelowHips: 0.16, footrest: 0.62 } as const;
+
+/** How strongly a character's own texture glows as a fill light (see loadModel). */
+const DEALER_FILL = 0.3;
 
 /** Frees a loaded character's geometry, materials and textures. */
 function disposeTree(root: THREE.Object3D): void {
@@ -352,6 +365,157 @@ function disposeTree(root: THREE.Object3D): void {
       m.dispose();
     }
   });
+}
+
+/**
+ * A character's left hand, measured once in its bind pose (a T-pose, palms
+ * down): which way its fingers point and its palm faces in the hand bone's
+ * own space, and each finger's chain of bones with their resting turns.
+ */
+interface Grip {
+  hand: THREE.Bone;
+  /** Wrist to the middle knuckle, hand-local, and how long that is (world). */
+  along: THREE.Vector3;
+  palmLength: number;
+  /** Out of the palm, hand-local. */
+  palm: THREE.Vector3;
+  fingers: { bones: THREE.Bone[]; rest: THREE.Quaternion[]; bends: readonly number[]; thumb: boolean }[];
+  /**
+   * An auto-rig's reduced hand (stub fingers, its hand skinned to the
+   * forearm): turning the hand bone wouldn't move her hand, so she holds the
+   * deck from above, her palm over it, where her hand really is.
+   */
+  stub: boolean;
+}
+
+/** Each finger's bend at its three joints, degrees: curled round the deck's far edge; the thumb lies along its side. */
+const FINGER_BENDS: Record<string, readonly number[]> = {
+  index: [38, 48, 30],
+  middle: [46, 52, 32],
+  ring: [52, 54, 32],
+  pinky: [58, 56, 30],
+  thumb: [14, 18, 12],
+};
+
+/**
+ * Where her left hand holds the deck, in the dealer's own space (she faces
+ * +Z, her left is +X): in front of her, fingers pointing across her body
+ * and a little forward, palm up and tipped toward the table — so the deck's
+ * back faces the players, not the ceiling.
+ */
+const GRIP_ALONG = new THREE.Vector3(-0.72, 0.05, 0.69).normalize();
+const GRIP_PALM = new THREE.Vector3(-0.12, 0.8, 0.58);
+/** The deck turned on her palm (radians about the palm's normal): diagonal, the way it sits in a real grip. */
+const DECK_ON_PALM_TURN = -0.32;
+/** A palm's length, wrist to knuckles (world units — the dealer stands about 3.4 tall). */
+const MIN_PALM = 0.16;
+
+function gripFor(hand: THREE.Bone, root: THREE.Object3D): Grip | null {
+  root.updateMatrixWorld(true);
+  const kids = hand.children.filter((c): c is THREE.Bone => (c as THREE.Bone).isBone);
+  const middle = kids.find((b) => /middle/i.test(b.name)) ?? kids.find((b) => /index/i.test(b.name));
+  if (!middle) return null;
+  const handQ = hand.getWorldQuaternion(new THREE.Quaternion());
+  const inv = handQ.clone().invert();
+  const w = hand.getWorldPosition(new THREE.Vector3());
+  const m = middle.getWorldPosition(new THREE.Vector3());
+  const palmLength = m.distanceTo(w);
+  if (!(palmLength >= 0)) return null;
+  // Knuckles almost at the wrist (an auto-rig's stub fingers): the hand carries on along the forearm instead.
+  const forearm = hand.parent?.getWorldPosition(new THREE.Vector3());
+  const stub = m.distanceTo(w) < MIN_PALM * 0.4 && !!forearm;
+  const alongWorld = stub ? w.clone().sub(forearm).normalize() : m.sub(w).normalize();
+  const along = alongWorld.clone().applyQuaternion(inv);
+  // Out of the palm: for a left hand, fingers × the thumb's side (whatever pose the file was rigged in).
+  // Without a thumb, the bind pose's palms facing the floor.
+  const thumb = kids.find((b) => /thumb/i.test(b.name));
+  const palm = thumb
+    ? new THREE.Vector3().crossVectors(alongWorld, thumb.getWorldPosition(new THREE.Vector3()).sub(w)).applyQuaternion(inv)
+    : new THREE.Vector3(0, -1, 0).applyQuaternion(inv);
+  palm.sub(along.clone().multiplyScalar(palm.dot(along))).normalize();
+  const fingers: Grip['fingers'] = [];
+  for (const k of kids) {
+    const kind = Object.keys(FINGER_BENDS).find((f) => k.name.toLowerCase().includes(f));
+    if (!kind) continue;
+    const bones: THREE.Bone[] = [];
+    let b: THREE.Bone | undefined = k;
+    while (b && bones.length < 3) {
+      bones.push(b);
+      b = b.children.find((c): c is THREE.Bone => (c as THREE.Bone).isBone);
+    }
+    fingers.push({ bones, rest: bones.map((x) => x.quaternion.clone()), bends: FINGER_BENDS[kind]!, thumb: kind === 'thumb' });
+  }
+  // A rig with stub fingers (an auto-rig's reduced hand) has its knuckle bones almost at the wrist: a real palm's length instead.
+  return { hand, along, palmLength: Math.max(palmLength, MIN_PALM), palm, fingers, stub };
+}
+
+const gq = new THREE.Quaternion();
+const gq2 = new THREE.Quaternion();
+const gv = new THREE.Vector3();
+const gv2 = new THREE.Vector3();
+const gv3 = new THREE.Vector3();
+const gm = new THREE.Matrix4();
+const gm2 = new THREE.Matrix4();
+
+/** A rotation taking the basis (a, b, a×b) onto (c, d, c×d) — a and b, c and d each orthonormal. */
+function basisTurn(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, out: THREE.Quaternion): THREE.Quaternion {
+  gm.makeBasis(a, b, gv3.crossVectors(a, b));
+  gm2.makeBasis(c, d, new THREE.Vector3().crossVectors(c, d));
+  return out.setFromRotationMatrix(gm2.multiply(gm.transpose()));
+}
+
+/** Sets a bone's world rotation (its parent's world matrix up to date). */
+function setWorldQuaternion(b: THREE.Object3D, q: THREE.Quaternion): void {
+  const parent = b.parent ? b.parent.getWorldQuaternion(gq2).invert() : gq2.identity();
+  b.quaternion.copy(parent.multiply(q));
+  b.updateMatrixWorld(true);
+}
+
+/** Puts her hand and fingers in the grip; returns where the deck goes (world) and how it's turned. */
+function applyGrip(g: Grip, root: THREE.Object3D): { center: THREE.Vector3; rotation: THREE.Quaternion } {
+  const rootQ = root.getWorldQuaternion(new THREE.Quaternion());
+  if (g.stub) {
+    // Her hand carries on along her forearm; the deck lies under its palm, its back tipped toward the table.
+    const wrist = g.hand.getWorldPosition(new THREE.Vector3());
+    const along = gv.copy(g.along).applyQuaternion(g.hand.getWorldQuaternion(gq)).setY(0).normalize();
+    const up = new THREE.Vector3(0, 1, 0).addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(rootQ), 0.35).normalize();
+    const deckAlong = along.clone().addScaledVector(up, -along.dot(up)).normalize();
+    const center = wrist.addScaledVector(deckAlong, g.palmLength * 0.4).addScaledVector(up, -(DECK_HELD_HALF_THICKNESS + 0.035));
+    return { center, rotation: basisTurn(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), up, deckAlong, new THREE.Quaternion()) };
+  }
+  const along = GRIP_ALONG.clone().applyQuaternion(rootQ);
+  const palm = GRIP_PALM.clone().applyQuaternion(rootQ);
+  palm.sub(gv.copy(along).multiplyScalar(palm.dot(along))).normalize();
+  // The hand: its own fingers-and-palm axes onto the grip's.
+  setWorldQuaternion(g.hand, basisTurn(g.along, g.palm, along, palm, new THREE.Quaternion()));
+  // Each finger from its rest pose, bent joint by joint toward the palm.
+  for (const f of g.fingers) {
+    f.bones.forEach((b, i) => b.quaternion.copy(f.rest[i]!));
+    for (let i = 0; i < f.bones.length; i++) {
+      const b = f.bones[i]!;
+      b.updateMatrixWorld(true);
+      const wq = b.getWorldQuaternion(new THREE.Quaternion());
+      const dir = gv2.set(0, 1, 0).applyQuaternion(wq);
+      const axis = gv.crossVectors(dir, palm);
+      if (axis.lengthSq() < 1e-6) continue;
+      axis.normalize();
+      setWorldQuaternion(b, gq.setFromAxisAngle(axis, (f.bends[i] ?? 0) * DEG).multiply(wq));
+    }
+  }
+  // The deck on her palm: its middle a little past the palm's middle, resting on it.
+  const wrist = g.hand.getWorldPosition(new THREE.Vector3());
+  const center = wrist
+    .addScaledVector(along, g.palmLength * 0.62)
+    .addScaledVector(palm, DECK_HELD_HALF_THICKNESS + 0.012);
+  const deckAlong = along.clone().applyAxisAngle(palm, DECK_ON_PALM_TURN);
+  // The deck box: its thickness on local Y, its length on local Z.
+  const rotation = basisTurn(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), palm, deckAlong, new THREE.Quaternion());
+  return { center, rotation };
+}
+
+/** Back to her own resting fingers (the deck's been put down). */
+function releaseGrip(g: Grip): void {
+  for (const f of g.fingers) f.bones.forEach((b, i) => b.quaternion.copy(f.rest[i]!));
 }
 
 export class HouseDealer implements DealerLike {
@@ -396,6 +560,8 @@ export class HouseDealer implements DealerLike {
     /** Her wrists: the deck sits in her left hand, cards leave from her right. */
     handL: THREE.Bone | null;
     handR: THREE.Bone | null;
+    /** How her left hand holds the deck (null: a rig without finger bones — she palms it). */
+    grip: Grip | null;
   } | null = null;
 
   private readonly castShadows: boolean;
@@ -416,12 +582,86 @@ export class HouseDealer implements DealerLike {
   }
 
   private dropModel(): void {
+    if (this.stool) {
+      this.root.remove(this.stool);
+      disposeTree(this.stool);
+      this.stool = null;
+    }
     if (this.model) {
       this.root.remove(this.model.root);
       disposeTree(this.model.root);
       this.model = null;
     }
     this.showBuiltIn(true);
+  }
+
+  private stool: THREE.Group | null = null;
+
+  /**
+   * A character sits, perched on a tall bar stool the way a dealer does —
+   * high enough to see and reach the whole table: hips a little lower than
+   * standing, thighs sloping down so the knees tuck under the table's edge,
+   * shins back to the stool's footrest. Her own leg bones (the dealing moves
+   * only drive her spine and arms), set once; a rig without legs stands.
+   */
+  private perch(model: THREE.Object3D): void {
+    const find = (re: RegExp): THREE.Bone | null => {
+      let hit: THREE.Bone | null = null;
+      model.traverse((o) => {
+        if (!hit && (o as THREE.Bone).isBone && re.test(o.name)) hit = o as THREE.Bone;
+      });
+      return hit;
+    };
+    const hips = find(/hips$/i);
+    const legs = (['Left', 'Right'] as const).map((side) => ({
+      side,
+      up: find(new RegExp(`${side}UpLeg$`, 'i')),
+      knee: find(new RegExp(`${side}Leg$`, 'i')),
+      foot: find(new RegExp(`${side}Foot$`, 'i')),
+      toe: find(new RegExp(`${side}ToeBase$`, 'i')),
+    }));
+    if (!hips || legs.some((l) => !l.up || !l.knee || !l.foot)) return;
+    model.position.y -= PERCH.drop;
+    this.root.updateMatrixWorld(true);
+    const rootQ = this.root.getWorldQuaternion(new THREE.Quaternion());
+    const world = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, y, z).normalize().applyQuaternion(rootQ);
+    // Turns a bone so its child lies along `dir` (world).
+    const aimAt = (b: THREE.Bone, child: THREE.Bone, dir: THREE.Vector3): void => {
+      const from = child.getWorldPosition(new THREE.Vector3()).sub(b.getWorldPosition(new THREE.Vector3())).normalize();
+      const wq = new THREE.Quaternion().setFromUnitVectors(from, dir).multiply(b.getWorldQuaternion(new THREE.Quaternion()));
+      const parent = b.parent!.getWorldQuaternion(new THREE.Quaternion()).invert();
+      b.quaternion.copy(parent.multiply(wq));
+      b.updateMatrixWorld(true);
+    };
+    for (const { side, up, knee, foot, toe } of legs) {
+      // Her left is her own +X (she faces +Z).
+      const sx = side === 'Left' ? 1 : -1;
+      aimAt(up!, knee!, world(sx * 0.1, -Math.cos(PERCH.thigh), Math.sin(PERCH.thigh)));
+      aimAt(knee!, foot!, world(sx * 0.04, -Math.cos(PERCH.shin), -Math.sin(PERCH.shin)));
+      if (toe) aimAt(foot!, toe, world(0, -0.35, 1));
+    }
+    // The stool, under her: its seat just below her hips, set back a little.
+    const hip = this.root.worldToLocal(hips.getWorldPosition(new THREE.Vector3()));
+    const seatTop = hip.y - PERCH.seatBelowHips;
+    const floor = -1.56;
+    const g = new THREE.Group();
+    const chrome = new THREE.MeshStandardMaterial({ color: '#c3c6cc', roughness: 0.22, metalness: 0.95 });
+    const leather = new THREE.MeshStandardMaterial({ color: '#1c1416', roughness: 0.5 });
+    const part = (geo: THREE.BufferGeometry, mat: THREE.Material, y: number): void => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(0, y, hip.z - 0.12);
+      m.castShadow = this.castShadows;
+      g.add(m);
+    };
+    part(new THREE.CylinderGeometry(0.34, 0.31, 0.12, 28), leather, seatTop - 0.06);
+    part(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 28), chrome, seatTop - 0.135);
+    part(new THREE.CylinderGeometry(0.05, 0.05, seatTop - 0.15 - floor, 12), chrome, (seatTop - 0.15 + floor) / 2);
+    const ring = new THREE.TorusGeometry(0.3, 0.025, 8, 32);
+    ring.rotateX(Math.PI / 2);
+    part(ring, chrome, floor + PERCH.footrest);
+    part(new THREE.CylinderGeometry(0.36, 0.4, 0.05, 28), chrome, floor + 0.025);
+    this.stool = g;
+    this.root.add(g);
   }
 
   /** The built-in body's meshes (the deck in hand stays either way). */
@@ -442,6 +682,13 @@ export class HouseDealer implements DealerLike {
       disposeTree(model);
       return;
     }
+    // An exported file can carry the lights and cameras of the scene it came from (one at 1000 cd floods
+    // the whole table white): the room lights her, so they go.
+    const strays: THREE.Object3D[] = [];
+    model.traverse((o) => {
+      if ((o as THREE.Light).isLight || (o as THREE.Camera).isCamera) strays.push(o);
+    });
+    for (const o of strays) o.removeFromParent();
     // A real person's height in table units (about 1.7 m), feet on the floor.
     const box = new THREE.Box3().setFromObject(model);
     const height = box.max.y - box.min.y;
@@ -455,6 +702,17 @@ export class HouseDealer implements DealerLike {
       if (mesh.isMesh) {
         mesh.castShadow = this.castShadows;
         mesh.frustumCulled = false;
+        // She stands at the table's edge, outside the lamp's pool: her own colours, full strength, with a soft
+        // glow of them on top as a fill light — or a dark texture (an auto-rigged download) reads as a silhouette.
+        for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          const lit = m as THREE.MeshPhongMaterial;
+          if (!lit.map || !('emissive' in lit)) continue;
+          lit.color.set('#ffffff');
+          lit.emissive.set('#ffffff');
+          lit.emissiveMap = lit.map;
+          lit.emissiveIntensity = DEALER_FILL;
+          lit.needsUpdate = true;
+        }
       }
       if ((o as THREE.Bone).isBone) {
         const key = boneRole(o.name);
@@ -479,9 +737,11 @@ export class HouseDealer implements DealerLike {
       return;
     }
     this.root.add(model);
+    this.perch(model);
     // The built-in body steps aside (its skeleton keeps animating, invisibly, and drives hers).
     this.showBuiltIn(false);
-    this.model = { root: model, pairs, handL: named.get('LeftHand')?.[0] ?? null, handR: named.get('RightHand')?.[0] ?? null };
+    const handL = named.get('LeftHand')?.[0] ?? null;
+    this.model = { root: model, pairs, handL, handR: named.get('RightHand')?.[0] ?? null, grip: handL ? gripFor(handL, this.root) : null };
   }
 
   /**
@@ -574,19 +834,31 @@ export class HouseDealer implements DealerLike {
   /**
    * The deck in her left hand. It hangs off the built-in skeleton's hand,
    * but a character's own, differently built arm doesn't end where that one
-   * does — so with a character showing, it's held the way a dealer palms a
-   * deck: flat under her palm, the backs against it, long side along her
-   * hand, real deck size, so her hand covers it (halfway from her wrist to
-   * her knuckles — the hand bone's finger bones — just below them).
+   * does. With a character showing, she holds it the way a dealer does — the
+   * mechanic's grip: palm up in front of her, the deck lying on it at a
+   * slight angle, fingers curled round its far edge, thumb along its near
+   * side — its back tilted toward the table so every seat can see it in her
+   * hand. (A rig without finger bones palms it: flat under her hand.)
    */
   private holdDeck(): void {
     const wrist = this.model?.handL;
+    const ours = this.bones.get('handL')!;
     if (!wrist) {
       this.deck.position.copy(DECK_IN_HAND);
       this.deck.quaternion.setFromEuler(DECK_TILT);
       this.deck.scale.setScalar(1);
       return;
     }
+    const grip = this.model!.grip;
+    ours.updateMatrixWorld(true);
+    if (grip && this.deck.visible) {
+      const { center, rotation } = applyGrip(grip, this.root);
+      this.deck.position.copy(ours.worldToLocal(center));
+      this.deck.quaternion.copy(ours.getWorldQuaternion(this.tmpQ).invert().multiply(rotation));
+      this.deck.scale.setScalar(DECK_HELD_SCALE);
+      return;
+    }
+    if (grip) releaseGrip(grip);
     const knuckles = wrist.children.filter((c): c is THREE.Bone => (c as THREE.Bone).isBone);
     const palm = wrist.getWorldPosition(this.tmpV);
     const along = this.tmpV2.set(0, 0, 1);
@@ -600,8 +872,6 @@ export class HouseDealer implements DealerLike {
     }
     // Under the palm, touching it.
     palm.y -= DECK_UNDER_PALM;
-    const ours = this.bones.get('handL')!;
-    ours.updateMatrixWorld(true);
     this.deck.position.copy(ours.worldToLocal(palm));
     // Flat, its long side (local Z) along the hand.
     const yaw = Math.atan2(along.x, along.z);

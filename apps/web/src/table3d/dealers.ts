@@ -43,6 +43,11 @@ export function dealerModelUrl(chars: readonly DealerCharacter[], setting: strin
   return pick ? `/models/dealers/${pick.file}` : null;
 }
 
+/** Whether a table's dealer (its setting, as dealerModelUrl picks it) is a VIP character — whose table is the VIP room. */
+export function dealerIsVip(chars: readonly DealerCharacter[], setting: string | undefined): boolean {
+  return (chars.find((c) => c.id === setting) ?? orderedDealers(chars)[0])?.vip === true;
+}
+
 /** VIP characters first, then the rest, each in list order. */
 export function orderedDealers(chars: readonly DealerCharacter[]): DealerCharacter[] {
   return [...chars.filter((c) => c.vip), ...chars.filter((c) => !c.vip)];

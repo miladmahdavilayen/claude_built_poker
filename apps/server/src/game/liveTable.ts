@@ -978,6 +978,15 @@ export class LiveTable {
     const live = this.seats[fromSeatId];
     const engineSeat = this.state.seats[fromSeatId];
     if (!live?.userId || !engineSeat || engineSeat.status === 'empty') return { ok: false, code: 'NOT_SEATED', message: 'You are not seated at this table.' };
+    return this.relocate(live, fromSeatId, toSeatId);
+  }
+
+  /** A seat's occupant (a player, or a computer player) to an empty seat: now, or once the hand they're in is over. */
+  private relocate(
+    live: LiveSeat,
+    fromSeatId: number,
+    toSeatId: number,
+  ): { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string } {
     if (fromSeatId === toSeatId) return { ok: false, code: 'SAME_SEAT', message: 'You are already in that seat.' };
     if (live.pendingRemoval) return { ok: false, code: 'LEAVING', message: 'You are leaving this table after the hand.' };
     if (live.pendingMoveTo === toSeatId) return { ok: true, when: 'after-hand', owes: this.seatMoveCost(fromSeatId, toSeatId) };
@@ -990,6 +999,18 @@ export class LiveTable {
     }
     this.applySeatMove(fromSeatId, toSeatId);
     return { ok: true, when: 'now', owes };
+  }
+
+  /**
+   * The owner moving a computer player to an empty seat: just as a player
+   * moves themselves (see moveSeat) — at once between hands, after the hand
+   * if it's in it, and owing a big blind if the move skips one.
+   */
+  moveBot(fromSeatId: number, toSeatId: number): { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string } {
+    const live = this.seats[fromSeatId];
+    const engineSeat = this.state.seats[fromSeatId];
+    if (!live?.botPolicyName || !engineSeat || engineSeat.status === 'empty') return { ok: false, code: 'NOT_A_BOT', message: 'That seat is not a computer player.' };
+    return this.relocate(live, fromSeatId, toSeatId);
   }
 
   /** Quoting a move without making it — see ChangeSeatSchema. */
@@ -1592,7 +1613,7 @@ export class LiveTable {
       if (to === null) continue;
       liveSeat.pendingMoveTo = null;
       // Held for them since they asked — but a seat deleted meanwhile is gone.
-      if (liveSeat.userId && this.checkSeatUsable(to).ok) this.applySeatMove(liveSeat.seatId, to);
+      if ((liveSeat.userId || liveSeat.botPolicyName) && this.checkSeatUsable(to).ok) this.applySeatMove(liveSeat.seatId, to);
     }
     if (vacated.length > 0) this.callbacks.onSeatsVacated?.(this.tableId, vacated);
   }

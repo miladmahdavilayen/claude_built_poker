@@ -16,6 +16,12 @@ export type TableTheme = 'classic' | 'vip';
 export interface TierSettings {
   /** Device-pixel-ratio cap. */
   maxDpr: number;
+  /**
+   * The most pixels drawn per frame: a bigger table (a large window, now that
+   * the table always fills the screen) is drawn at a lower resolution and
+   * scaled up, so a slow device's frame time doesn't grow with its screen.
+   */
+  maxPixels: number;
   antialias: boolean;
   /** Shadow-map size; 0 turns shadow maps off (blob shadows instead). */
   shadowMapSize: number;
@@ -28,9 +34,9 @@ export interface TierSettings {
 }
 
 export const TIERS: Record<QualityTier, TierSettings> = {
-  high: { maxDpr: 3, antialias: true, shadowMapSize: 2048, textureSize: 1024, houseDealer: true, idleFps: 30 },
-  medium: { maxDpr: 2.5, antialias: true, shadowMapSize: 1024, textureSize: 512, houseDealer: true, idleFps: 24 },
-  low: { maxDpr: 1.25, antialias: false, shadowMapSize: 0, textureSize: 256, houseDealer: true, idleFps: 15 },
+  high: { maxDpr: 3, maxPixels: Infinity, antialias: true, shadowMapSize: 2048, textureSize: 1024, houseDealer: true, idleFps: 30 },
+  medium: { maxDpr: 2.5, maxPixels: Infinity, antialias: true, shadowMapSize: 1024, textureSize: 512, houseDealer: true, idleFps: 24 },
+  low: { maxDpr: 1.25, maxPixels: 520_000, antialias: false, shadowMapSize: 0, textureSize: 256, houseDealer: true, idleFps: 15 },
 };
 
 const VIEW_KEY = 'pokerclause.tableView';

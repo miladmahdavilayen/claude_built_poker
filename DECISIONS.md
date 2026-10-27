@@ -2779,6 +2779,10 @@ It records each screen and writes a report.
 - **On phones with more than 4 cameras in 2D**, the old two-person speaker
   strip is gone (it only ever showed outside full screen): every camera that
   fits stays on its seat, your own always.
+- **A full-screen table is a bigger 3D canvas**, so the Low quality tier (slow
+  devices; also what the browser tests pin, on CI's software renderer) draws at
+  most ~520k pixels per frame and scales up on a large window
+  (`TierSettings.maxPixels`): its frame time no longer grows with the screen.
 
 ## The house dealer's voice
 

@@ -1012,6 +1012,8 @@ export class TableScene {
     if (width < 2 || height < 2) return;
     this.width = width;
     this.height = height;
+    const t = TIERS[this.tier];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, t.maxDpr, Math.sqrt(t.maxPixels / (width * height))));
     this.renderer.setSize(width, height, false);
     this.retarget(false);
   }

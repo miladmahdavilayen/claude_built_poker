@@ -30,27 +30,102 @@ function newRandomFloat01(): () => number {
 }
 
 let ctx: AudioContext | null = null;
+const stateListeners = new Set<() => void>();
+
+/**
+ * The table's sound plays with the phone on silent too, like the call's
+ * voices (which are media, and always did). An iPhone puts a page's own
+ * sound in the "ambient" category, which the silent switch mutes. Newer
+ * Safari lets a page say its sound is "playback" instead (the Audio
+ * Session API), which the switch leaves alone — and covers the dealer's
+ * spoken voice too. Where that's missing (an older iPhone), the sound goes
+ * out through a hidden `<audio>` element instead of straight to the
+ * speaker: media, so heard just the same.
+ */
+let mediaOut: { node: MediaStreamAudioDestinationNode; el: HTMLAudioElement } | null = null;
+
+function isIOS(): boolean {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/** Where every sound goes: the speaker, or — an older iPhone — the media element that carries it past the silent switch. */
+function speaker(c: AudioContext): AudioNode {
+  return mediaOut?.node ?? c.destination;
+}
 
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   if (!ctx) {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return null;
+    const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+    if (session) session.type = 'playback';
     ctx = new Ctor();
+    if (!session && isIOS() && typeof ctx.createMediaStreamDestination === 'function') {
+      const el = document.createElement('audio');
+      el.setAttribute('playsinline', '');
+      const node = ctx.createMediaStreamDestination();
+      el.srcObject = node.stream;
+      mediaOut = { node, el };
+      for (const e of ['playing', 'pause'] as const)
+        el.addEventListener(e, () => {
+          for (const l of stateListeners) l();
+        });
+    }
+    ctx.addEventListener('statechange', () => {
+      for (const l of stateListeners) l();
+    });
   }
   return ctx;
 }
 
 /**
- * Browsers refuse to start audio until a real user gesture has happened on
- * the page. Call this from a page-wide, one-time pointerdown/keydown
- * listener (see App.tsx) so the context is already unlocked by the time a
- * hand-start/deal sound needs to play — which may be triggered by another
- * player's click, not this viewer's own.
+ * Game sound is on for everyone — but a browser won't play any until the
+ * page has had a real tap, click or key press, and a phone can pause it
+ * again later (a call coming in, the app sent to the background). So the
+ * table's sound is unlocked on the first such gesture and on every one
+ * after, for as long as it isn't running — never just once. On a phone the
+ * events that count are the end of a touch (touchend, click), not its
+ * start; and an iPhone also wants a sound actually started inside the
+ * gesture, so a silent one is. (The phone's own silent switch still
+ * silences it: that's the viewer's choice.)
  */
 export function unlockAudio(): void {
   const c = getCtx();
-  if (c && c.state === 'suspended') void c.resume();
+  // The media element carrying the sound (an older iPhone) is started by the same gesture, and again if it stopped.
+  if (mediaOut?.el.paused) void mediaOut.el.play().catch(() => undefined);
+  if (!c || c.state === 'running') return;
+  void c.resume().catch(() => undefined);
+  const src = c.createBufferSource();
+  src.buffer = c.createBuffer(1, 1, c.sampleRate);
+  src.connect(speaker(c));
+  src.start(0);
+}
+
+/** Starts the table's sound now if the browser allows it, and on every gesture until it's running. Returns the cleanup. */
+export function installAudioUnlock(): () => void {
+  // Created now (allowed without a gesture — it just starts out suspended), so whether it's locked is known at once.
+  getCtx();
+  const events = ['touchend', 'click', 'pointerup', 'keydown'] as const;
+  for (const e of events) window.addEventListener(e, unlockAudio, { capture: true, passive: true });
+  const onVisible = (): void => {
+    if (document.visibilityState === 'visible') unlockAudio();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    for (const e of events) window.removeEventListener(e, unlockAudio, { capture: true });
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
+/** True while the table's sound is waiting for a tap to start (or restart). */
+export function isAudioLocked(): boolean {
+  return !!ctx && (ctx.state !== 'running' || !!mediaOut?.el.paused);
+}
+
+export function onAudioStateChange(listener: () => void): () => void {
+  stateListeners.add(listener);
+  return () => stateListeners.delete(listener);
 }
 
 function noiseBuffer(c: AudioContext, durationSec: number): AudioBuffer {
@@ -73,7 +148,7 @@ function burst(c: AudioContext, startTime: number, durationSec: number, frequenc
   gain.gain.setValueAtTime(0.0001, startTime);
   gain.gain.exponentialRampToValueAtTime(peakGain, startTime + Math.min(0.01, durationSec / 4));
   gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSec);
-  src.connect(filter).connect(gain).connect(c.destination);
+  src.connect(filter).connect(gain).connect(speaker(c));
   src.start(startTime);
   src.stop(startTime + durationSec + 0.02);
 }
@@ -115,7 +190,7 @@ function playTone(startTime: number, durationSec: number, frequency: number, pea
   gain.gain.setValueAtTime(0.0001, startTime);
   gain.gain.exponentialRampToValueAtTime(peakGain, startTime + 0.02);
   gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSec);
-  osc.connect(gain).connect(c.destination);
+  osc.connect(gain).connect(speaker(c));
   osc.start(startTime);
   osc.stop(startTime + durationSec + 0.02);
 }
@@ -223,7 +298,7 @@ function trophyBus(c: AudioContext): GainNode {
   wet.gain.value = 0.3;
   input.connect(comp);
   input.connect(verb).connect(wet).connect(comp);
-  comp.connect(c.destination);
+  comp.connect(speaker(c));
   fanfareBus = { ctx: c, input };
   return input;
 }
@@ -415,7 +490,7 @@ export function playSplitPotSound(ways = 2): void {
   const now = c.currentTime;
   const out = c.createGain();
   out.gain.value = 0.9;
-  out.connect(c.destination);
+  out.connect(speaker(c));
   // The single note before it divides.
   bell(c, out, now, NOTE.E5, 0.09, 0.5);
   const voices = Math.min(4, Math.max(2, ways));

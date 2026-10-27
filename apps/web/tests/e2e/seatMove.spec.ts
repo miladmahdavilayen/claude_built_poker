@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addBot, adminLogin, chooseSeatOption, createTable, startHand, takeSeat } from './helpers.js';
+import { addBot, adminLogin, chooseSeatOption, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat } from './helpers.js';
 
 // Seat changes (LiveTable.moveSeat) and the SB/BB tags (positionLabels.ts's blindTags).
 
@@ -37,4 +37,39 @@ test('the blinds are tagged in front of their seats, and a seated player moves t
   await expect(page.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'empty');
   // A taken seat offers no move.
   await expect(page.locator('[data-testid="seat-1"] .seat-empty-tap')).toHaveCount(0);
+});
+
+// The reported bug: a player (not the owner, whose view is built
+// separately) who moved went on seeing their OLD seat's view — no cards,
+// not their own box — until they reloaded the page.
+test('a player who moves sees their new seat at once — and again after a move that waited for the hand — with no reload', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const owner = await (await browser.newContext()).newPage();
+  const guest = await (await browser.newContext()).newPage();
+  await adminLogin(owner);
+  await createTable(owner, { name: 'Guest Seat Move', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(owner, 0, 200);
+  await guestSignup(guest, 'Gus');
+  await inviteToSeat(owner, guest, 1, 200);
+  await expect(guest.locator('[data-testid="seat-1"] .seat')).toHaveClass(/seat-viewer/);
+
+  // Between hands: at once.
+  await chooseSeatOption(guest, 3, 'Move to this seat');
+  const dialog = guest.getByRole('dialog', { name: 'Move to seat 4' });
+  await dialog.getByRole('button', { name: /^Move/ }).click();
+  await expect(guest.locator('[data-testid="seat-3"] .seat')).toHaveClass(/seat-viewer/, { timeout: 10_000 });
+  await expect(guest.locator('[data-testid="seat-1"]')).toHaveAttribute('data-seat-status', 'empty');
+  // Their own controls are on their new box.
+  await expect(guest.locator('[data-testid="seat-3"] .seat-call')).toHaveCount(1);
+
+  // Mid-hand: when the hand ends — and the next hand deals them their cards in the new seat.
+  await startHand(owner);
+  await expect(guest.locator('[data-testid="seat-3"] .card:not(.card-back)')).toHaveCount(2, { timeout: 15_000 });
+  await chooseSeatOption(guest, 5, 'Move to this seat');
+  await guest.getByRole('dialog', { name: 'Move to seat 6' }).getByRole('button', { name: /^Move/ }).click();
+  await playHandToCompletion([owner, guest]);
+  await expect(guest.locator('[data-testid="seat-5"] .seat')).toHaveClass(/seat-viewer/, { timeout: 15_000 });
+  await expect.poll(() => owner.getByRole('button', { name: 'Play Hand' }).isEnabled(), { timeout: 15_000 }).toBe(true);
+  await startHand(owner);
+  await expect(guest.locator('[data-testid="seat-5"] .card:not(.card-back)')).toHaveCount(2, { timeout: 15_000 });
 });

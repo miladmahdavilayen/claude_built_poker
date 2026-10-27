@@ -142,6 +142,8 @@ test('several pots play one at a time, in order, never two banners at once', asy
 });
 
 test('on the 3D table too: the same banner, readable, over the scene', async ({ browser }) => {
+  // CI draws the 3D table in software, a full screen of it: room to spare.
+  test.setTimeout(120_000);
   const { owner, close } = await splitTable(browser, 'seated');
   const webgl = await owner.evaluate(() => !!document.createElement('canvas').getContext('webgl2'));
   test.skip(!webgl, 'No WebGL in this browser');

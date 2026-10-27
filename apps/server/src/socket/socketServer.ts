@@ -78,6 +78,31 @@ function evictSeatToSpectator(io: Server, tableId: string, seatId: number): void
   io.in(room).socketsLeave(room);
 }
 
+/**
+ * Puts every socket at a table into the room for the seat its user holds
+ * NOW — or the spectator room, holding none. A seat is joined by room at
+ * sit-down, but a seat can change under a connected player: they move to
+ * another one (at once, or when the hand they were in ends). Left in the
+ * old seat's room, they'd go on receiving that seat's view — someone else's
+ * chair, or an empty one — until they reloaded the page. Run before every
+ * broadcast, so a move is always seen with the update that makes it.
+ */
+function syncSeatRooms(io: Server, table: LiveTable): void {
+  const nsp = io.of('/');
+  const rooms = [spectatorRoom(table.tableId), ...table.seats.map((s) => seatRoom(table.tableId, s.seatId))];
+  const socketIds = new Set<string>();
+  for (const r of rooms) for (const id of nsp.adapter.rooms.get(r) ?? []) socketIds.add(id);
+  for (const id of socketIds) {
+    const socket = nsp.sockets.get(id);
+    if (!socket) continue;
+    const userId = (socket.data as SocketData).userId;
+    const seatId = userId ? table.seatOfUser(userId) : null;
+    const want = seatId === null ? spectatorRoom(table.tableId) : seatRoom(table.tableId, seatId);
+    for (const r of rooms) if (r !== want && socket.rooms.has(r)) void socket.leave(r);
+    if (!socket.rooms.has(want)) void socket.join(want);
+  }
+}
+
 const actionLimiter = new RateLimiter(10, 5); // 10 burst, 5/sec refill
 const chatLimiter = new RateLimiter(5, 1); // 5 burst, 1/sec refill
 
@@ -155,6 +180,9 @@ export function attachSocketServer(
   });
 
   const registry = new TableRegistry(deps.store, (tableId, perSeat, rawEvents) => {
+    // A hand ending can apply a seat move asked for during it.
+    const liveTable = registry.get(tableId);
+    if (liveTable) syncSeatRooms(io, liveTable);
     for (const [seatId, payload] of perSeat) {
       const room = seatId === null ? spectatorRoom(tableId) : seatRoom(tableId, seatId);
       // .except(adminRoom) — see broadcastAdminView's doc comment for why
@@ -360,6 +388,7 @@ export function attachSocketServer(
 
   function broadcastTable(table: LiveTable): void {
     syncSeatOffer(table);
+    syncSeatRooms(io, table);
     for (const viewer of [...table.seats.filter((s) => s.userId !== null).map((s) => s.seatId), null]) {
       const room = viewer === null ? spectatorRoom(table.tableId) : seatRoom(table.tableId, viewer);
       io.to(room).except(adminRoom(table.tableId)).emit('state', { state: table.projectionFor(viewer), events: [] });

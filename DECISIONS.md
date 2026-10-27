@@ -2796,3 +2796,36 @@ name — "Ann wins with a flush", "Ann and Cat split the pot", or, three or more
 ways, "The pot is split". Phones only let a page speak after a tap, so the
 first tap anywhere unlocks it; the batch of events already there on arrival is
 history and isn't read out.
+
+## Sound at the table: on for everyone, calls yours to mute
+
+- **Game sound is on by default, everywhere.** Browsers won't play a page's
+  sound before a real gesture, so the table's audio is unlocked on the first
+  tap, click or key press — and on every one after, for as long as it isn't
+  running (a phone pauses it for a call, or in the background). On a phone the
+  gesture that counts is the end of a touch, not its start; an iPhone also
+  wants a sound started inside it, so a silent one is. "Tap to hear the table"
+  shows while anything is waiting.
+- **The silent switch doesn't mute the table.** An iPhone files a page's own
+  sound as "ambient", which the switch silences. Newer Safari takes
+  `navigator.audioSession.type = 'playback'` (covering the dealer's voice
+  too); older iPhones get the sound routed through a hidden `<audio>` element
+  — media, like the call's voices — instead.
+- **The dealer is on whenever a table opens**, in the voice last picked; a mute
+  lasts only while you're there.
+- **Call voices are on by default and yours to mute**: the whole call (a button
+  in the corner, shown while someone's talking) or one player (the speaker on
+  their box). Only what you hear changes. Turning one player on while all are
+  muted means "just them". Kept for the tab (`callAudio.ts`).
+
+## A player who moves seats sees it at once
+
+Each socket joins the room of the seat it sits in, and a table's update goes to
+each seat's room with that seat's private view. A move changed the seat under a
+connected player but left the socket in the old room — they kept getting the
+old seat's view until a reload. `syncSeatRooms` puts every socket in the room
+of the seat its user holds now (or the spectators'), before every broadcast,
+including the one at a hand's end that applies a move asked for during it.
+
+`ADMIN_START_BALANCE` (dollars) starts a test server's owner with a set balance
+(local testing: $1,000,000). Never set in production.

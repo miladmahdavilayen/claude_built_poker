@@ -57,6 +57,8 @@ function useCountUp(value: number, active: boolean): number {
 export interface SeatVoiceStream {
   stream: MediaStream;
   isLocal: boolean;
+  /** Whose it is (their user id) — for the viewer's own mutes (see callAudio.ts). */
+  userId?: string | null;
 }
 
 export function Seat({
@@ -81,6 +83,7 @@ export function Seat({
   ownMark,
   emptyTap,
   callControls,
+  peerMute,
 }: {
   seat: ProjectedSeat;
   isButton: boolean;
@@ -128,6 +131,8 @@ export function Seat({
   emptyTap?: { label: string; onTap: (x: number, y: number) => void } | undefined;
   /** Your own box: the call's buttons (mic, camera, leave), on its top edge — see SeatCallControls.tsx. */
   callControls?: React.ReactNode;
+  /** Someone else's box, while you can hear them: the button muting them for you — see CallAudioButtons.tsx. */
+  peerMute?: React.ReactNode;
 }): React.JSX.Element {
   const shownStack = useCountUp(stackDisplay ?? seat.stack, stackDisplay !== undefined);
   // `status === 'empty'` is the authoritative "is this seat occupied?"
@@ -184,12 +189,13 @@ export function Seat({
         className={`seat seat--compact${isActing ? ' seat-acting' : ''}${seat.status === 'folded' ? ' seat-folded' : ''}${isViewer ? ' seat-viewer' : ''}${hasCam ? ' seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
       >
         {isViewer && callControls}
+        {!isViewer && peerMute && <div className="seat-peer-mute">{peerMute}</div>}
         {voice && hasCam && (
           <div className="seat-video">
-            <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
+            <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} />
           </div>
         )}
-        {voice && !hasCam && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
+        {voice && !hasCam && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} showVideo={false} />}
         {/* A hand shown down: the cards, big, over their head — what everyone at the table wants to see. */}
         {!isViewer && seat.holeCards.length > 0 && (
           <div className="seat-compact-cards" data-testid="showdown-cards">
@@ -279,12 +285,13 @@ export function Seat({
       className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
     >
       {isViewer && callControls}
+      {!isViewer && peerMute && <div className="seat-peer-mute">{peerMute}</div>}
       {isButton && <div className={`dealer-button${isViewer ? ' dealer-button--mine' : ''}`}>D</div>}
       {/* The button already gets the "D" disc — a "BTN" text badge on top of it too would be redundant clutter. */}
       {positionLabel && !isButton && <div className="position-label">{positionLabel}</div>}
       {voice && showSeatVideo && (
         <div className="seat-video">
-          <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
+          <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} />
           {/* The video now fills the ENTIRE seat card (not just a small box
               inset within it) — the same frame that was already drawn
               around the whole seat (the viewer's own green outline, or an
@@ -301,7 +308,7 @@ export function Seat({
       )}
       {/* The viewer's own cards sit just above their camera box rather than over it, so they can still see their own video. */}
       {showSeatVideo && showHoleCardsOnVideo && isViewer && <div className="seat-cards seat-cards-above-video">{holeCards}</div>}
-      {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} showVideo={false} />}
+      {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} showVideo={false} />}
       {!showSeatVideo && (
         <>
           {holeCards && <div className="seat-cards">{holeCards}</div>}

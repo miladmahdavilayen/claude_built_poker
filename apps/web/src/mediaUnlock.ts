@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { isAudioLocked, onAudioStateChange, unlockAudio } from './sound.js';
 
 /**
  * Browsers refuse to start unmuted playback until the page has had a user
@@ -36,8 +37,9 @@ export function forgetMedia(el: HTMLMediaElement): void {
   if (blocked.delete(el)) notify();
 }
 
-/** Must run inside a user gesture to help — retries everything the browser refused earlier. */
+/** Must run inside a user gesture to help — retries everything the browser refused earlier, the game's own sound included. */
 export function unlockMedia(): void {
+  unlockAudio();
   for (const el of [...blocked]) {
     if (!el.isConnected) {
       blocked.delete(el);
@@ -54,14 +56,18 @@ if (typeof document !== 'undefined') {
   }
 }
 
-/** True while some remote audio is waiting on a user gesture to start. */
+/** True while some remote audio — or the game's own sound (see sound.ts) — is waiting on a user gesture to start. */
 export function useMediaBlocked(): boolean {
   return useSyncExternalStore(
     (onChange) => {
       listeners.add(onChange);
-      return () => listeners.delete(onChange);
+      const off = onAudioStateChange(onChange);
+      return () => {
+        listeners.delete(onChange);
+        off();
+      };
     },
-    () => blockedSnapshot,
+    () => blockedSnapshot || isAudioLocked(),
     () => false,
   );
 }

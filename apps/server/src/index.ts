@@ -127,6 +127,12 @@ async function ensureAdminAccount(store: Store, log: FastifyBaseLogger): Promise
   // their own account chips first. See DECISIONS.md.
   const result = await register(store, email, password, 'Owner');
   await store.setUserRole(result.user.id, 'admin');
+  // A test server can start the owner with a set balance (ADMIN_START_BALANCE, in dollars) instead of the
+  // usual grant — local testing with $1,000,000 to seat themselves and fund invites. Never set in production.
+  const startDollars = Number(process.env.ADMIN_START_BALANCE);
+  if (Number.isFinite(startDollars) && startDollars > 0) {
+    await store.adjustUserChips(result.user.id, Math.round(startDollars * 100) - result.user.chips);
+  }
   log.info(`Created owner/admin account: ${email} / ${password} (set ADMIN_EMAIL/ADMIN_PASSWORD to override).`);
   return result.user.id;
 }

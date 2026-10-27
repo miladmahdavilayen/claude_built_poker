@@ -1,6 +1,7 @@
 import type { ProjectedGameEvent } from '@pokerclause/shared';
 import { expect, test } from '@playwright/test';
 import { dealerCalls, newHandTrack } from '../../src/dealerVoice.js';
+import { adminLogin, closeTableMenu, createTable, openTableMenu } from './helpers.js';
 
 // The house dealer's spoken calls (src/dealerVoice.ts): the action in a
 // word (never who did it, never a raise amount), all-ins, heads up, how
@@ -67,4 +68,26 @@ test('the result by name: the winner and their hand, a two-way chop by both name
   ).toEqual(['Dan wins with a royal flush']);
   // Won uncontested — everyone else folded: just who.
   expect(dealerCalls([{ type: 'pot-awarded', potIndex: 0, winners: [{ seatId: 4, amount: 3 }] }], newHandTrack(), nameOf)).toEqual(['Eve wins']);
+});
+
+test('the dealer is on whenever a table opens, in the voice picked last — a mute lasts only while you are there', async ({ page }) => {
+  // An old "off" from before is not carried into a new table.
+  await page.addInitScript(() => {
+    if (window.sessionStorage.getItem('seeded')) return;
+    window.sessionStorage.setItem('seeded', '1');
+    window.localStorage.setItem('pokerclause.dealerVoice', 'off');
+  });
+  await adminLogin(page);
+  await createTable(page, { name: 'Dealer Voice On', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await expect(page.getByRole('button', { name: 'Mute the dealer' })).toBeVisible();
+  const menu = await openTableMenu(page);
+  await expect(menu.getByRole('radiogroup', { name: 'Dealer voice' }).getByLabel('Female', { exact: true })).toBeChecked();
+  await menu.getByRole('radiogroup', { name: 'Dealer voice' }).getByLabel('Male', { exact: true }).check();
+  await closeTableMenu(page);
+  await page.getByRole('button', { name: 'Mute the dealer' }).click();
+  await expect(page.getByRole('button', { name: 'Unmute the dealer' })).toBeVisible();
+  // Back at the table later: on again, in the voice picked.
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Mute the dealer' })).toBeVisible();
+  await expect((await openTableMenu(page)).getByRole('radiogroup', { name: 'Dealer voice' }).getByLabel('Male', { exact: true })).toBeChecked();
 });

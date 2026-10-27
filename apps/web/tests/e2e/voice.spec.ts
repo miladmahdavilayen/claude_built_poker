@@ -156,3 +156,59 @@ test('a spectator (no seat) using voice chat appears in the small strip over the
   await ctxA.close();
   await ctxB.close();
 });
+
+// What you hear of the call is yours to choose: one player at a time (the
+// speaker on their box), or the whole call (the corner button, there only
+// while someone's talking). Only your own ears change — never what's sent.
+test('mute one player from their box, or the whole call from the corner — and back; turning one on while all are muted hears just them', async ({ browser }) => {
+  const ctxA = await browser.newContext();
+  const ctxB = await browser.newContext();
+  const ctxC = await browser.newContext();
+  const pageA = await ctxA.newPage();
+  const pageB = await ctxB.newPage();
+  const pageC = await ctxC.newPage();
+  await adminLogin(pageA);
+  await createTable(pageA, { name: 'E2E Call Mutes', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(pageA, 0, 100);
+  await guestSignup(pageB, 'Bea');
+  await inviteToSeat(pageA, pageB, 1, 100);
+  await guestSignup(pageC, 'Cal');
+  await inviteToSeat(pageA, pageC, 2, 100);
+
+  // No call yet: no mute buttons anywhere.
+  await expect(pageA.getByRole('button', { name: /all calls/ })).toHaveCount(0);
+  await expect(pageA.getByRole('button', { name: /^(Mute|Unmute) Bea$/ })).toHaveCount(0);
+
+  await joinCall(pageB, false);
+  await joinCall(pageC, false);
+  await tapToHearIfOffered(pageA);
+  const bea = '[data-testid="seat-1"] audio';
+  const cal = '[data-testid="seat-2"] audio';
+  await expect.poll(() => isPlayingRemoteAudio(pageA, bea), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => isPlayingRemoteAudio(pageA, cal), { timeout: 15_000 }).toBe(true);
+  const audioMuted = (sel: string): Promise<boolean> => pageA.locator(sel).first().evaluate((el) => (el as HTMLAudioElement).muted);
+
+  // One player: off, and back on.
+  await pageA.getByRole('button', { name: 'Mute Bea' }).click();
+  await expect.poll(() => audioMuted(bea)).toBe(true);
+  expect(await audioMuted(cal)).toBe(false);
+  await pageA.getByRole('button', { name: 'Unmute Bea' }).click();
+  await expect.poll(() => audioMuted(bea)).toBe(false);
+
+  // The whole call, from the corner.
+  await pageA.getByRole('button', { name: 'Mute all calls' }).click();
+  await expect.poll(() => audioMuted(bea)).toBe(true);
+  await expect.poll(() => audioMuted(cal)).toBe(true);
+  await expect(pageA.getByRole('button', { name: 'Unmute Bea' })).toBeVisible();
+  // Turning Cal back on while everyone's muted: just Cal.
+  await pageA.getByRole('button', { name: 'Unmute Cal' }).click();
+  await expect.poll(() => audioMuted(cal)).toBe(false);
+  expect(await audioMuted(bea)).toBe(true);
+  await expect(pageA.getByRole('button', { name: 'Mute all calls' })).toBeVisible();
+  // Only the muting viewer's ears changed: Bea still hears Cal.
+  await expect.poll(() => isPlayingRemoteAudio(pageB, cal), { timeout: 10_000 }).toBe(true);
+
+  await ctxA.close();
+  await ctxB.close();
+  await ctxC.close();
+});

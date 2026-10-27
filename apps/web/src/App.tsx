@@ -9,28 +9,17 @@ import { LoginPage } from './pages/Login.js';
 import { ProfilePage } from './pages/Profile.js';
 import { TablePage } from './pages/Table.js';
 import { WaiverPage } from './pages/Waiver.js';
-import { unlockAudio } from './sound.js';
+import { installAudioUnlock } from './sound.js';
 
 export function App(): React.JSX.Element {
   const { user, loading } = useAuth();
 
   // Browsers block audio until a real user gesture happens on the page —
-  // unlock it on the very first one, anywhere, so the shuffle/deal sound
-  // effects are ready by the time a hand actually starts (which may be
-  // triggered by another player's click, not this viewer's own).
-  useEffect(() => {
-    const onFirstInteraction = (): void => {
-      unlockAudio();
-      window.removeEventListener('pointerdown', onFirstInteraction);
-      window.removeEventListener('keydown', onFirstInteraction);
-    };
-    window.addEventListener('pointerdown', onFirstInteraction);
-    window.addEventListener('keydown', onFirstInteraction);
-    return () => {
-      window.removeEventListener('pointerdown', onFirstInteraction);
-      window.removeEventListener('keydown', onFirstInteraction);
-    };
-  }, []);
+  // unlock it on the first one, anywhere, and again whenever a phone has
+  // paused it, so the shuffle/deal sound effects are ready by the time a
+  // hand actually starts (which may be triggered by another player's
+  // click, not this viewer's own). See sound.ts's unlockAudio.
+  useEffect(installAudioUnlock, []);
 
   if (loading) return <div className="page-centered">Loading...</div>;
 

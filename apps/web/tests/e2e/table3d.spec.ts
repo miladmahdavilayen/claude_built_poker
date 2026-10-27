@@ -48,6 +48,8 @@ const LEAN_SETTLE_MS = 20_000;
 const debug = (page: Page): Promise<Debug | undefined> => page.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => Debug } }).__scene3d?.debugState());
 
 test('a hand on the standing 3D table: the camera goes to the seat taken, the seat boxes ride along, cards and button follow the game', async ({ page }) => {
+  // CI draws the 3D table in software, a full screen of it: room to spare.
+  test.setTimeout(120_000);
   await view3d(page, 'standing');
   // Counts the sounds the table makes (every chip, card and shuffle sound is a noise burst — see sound.ts).
   await page.addInitScript(() => {
@@ -125,7 +127,7 @@ test('the View menu has exactly three views — 2D, 3D seated, 3D standing — a
 
 test('seated: your own eyes at your seat — drag to look around, double-tap to look back, and lean in past the house dealer from seat 1', async ({ page }) => {
   // The lean checks alone can take a couple of minutes on CI's software renderer.
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   await view3d(page, 'seated');
   await adminLogin(page);
   const webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'));

@@ -18,17 +18,24 @@ export function UnseatedTile({
   isLocal,
   label,
   canSeeVideo,
+  peerId,
+  mute,
 }: {
   stream: MediaStream | null;
   isLocal: boolean;
   label: string;
   canSeeVideo: boolean;
+  /** Whose voice this is (their user id), for the viewer's own mutes. */
+  peerId?: string | undefined;
+  /** The button muting them for you (see CallAudioButtons.tsx). */
+  mute?: React.ReactNode;
 }): React.JSX.Element {
   const hasVideo = !!stream && stream.getVideoTracks().length > 0 && canSeeVideo;
   return (
     <div className="voice-tile">
       {!hasVideo && <div className="voice-tile-avatar">{label.slice(0, 1).toUpperCase()}</div>}
-      <StreamMedia stream={stream} isLocal={isLocal} showVideo={canSeeVideo} />
+      <StreamMedia stream={stream} isLocal={isLocal} showVideo={canSeeVideo} peerId={peerId} />
+      {mute && <div className="voice-tile-mute">{mute}</div>}
       <span className="voice-tile-label">{label}</span>
     </div>
   );

@@ -17,6 +17,7 @@ import { NO_SPLIT_EFFECTS, SplitPotAnnouncement, type SplitSeatEffects } from '.
 import { TableMenu, TableMenuSection } from '../components/TableMenu.js';
 import { TableViewOptions } from '../components/TableViewMenu.js';
 import { DealerVoiceIcon } from '../components/DealerVoiceIcon.js';
+import { MuteAllCallsButton, PeerMuteButton } from '../components/CallAudioButtons.js';
 import { SeatCallControls } from '../components/SeatCallControls.js';
 import { DealerPicker } from '../components/DealerPicker.js';
 import { SeatMoveModal } from '../components/SeatMoveModal.js';
@@ -27,7 +28,7 @@ import { useTableView } from '../table3d/useTableView.js';
 import type { ChatMessageRecord } from '../types.js';
 import { requestSeatAlerts, useSeatOfferAlert } from '../useSeatOfferAlert.js';
 import { RevealHandButton } from '../components/RevealHandButton.js';
-import { Seat } from '../components/Seat.js';
+import { Seat, type SeatVoiceStream } from '../components/Seat.js';
 import { UnseatedTile, VoicePanel } from '../components/VoicePanel.js';
 import { unlockMedia, useMediaBlocked } from '../mediaUnlock.js';
 import { speechSupported, unlockSpeechOnFirstTap, useDealerAnnouncements, useDealerVoiceChoice, type DealerVoiceChoice } from '../dealerVoice.js';
@@ -474,17 +475,22 @@ export function TablePage(): React.JSX.Element {
         .join(', ')
     : null;
 
-  const voiceStreamForSeat = (seat: (typeof state.seats)[number]): { stream: MediaStream; isLocal: boolean } | null => {
+  const voiceStreamForSeat = (seat: (typeof state.seats)[number]): SeatVoiceStream | null => {
     if (fakeCameras && seat.status !== 'empty') return { stream: fakeCameraStream(), isLocal: false };
     if (voice.inCall && seat.seatId === state.viewerSeatId && voice.localStream) {
       return { stream: voice.localStream, isLocal: true };
     }
     if (seat.playerId) {
       const peer = voice.peers.find((p) => p.userId === seat.playerId);
-      if (peer?.stream) return { stream: peer.stream, isLocal: false };
+      if (peer?.stream) return { stream: peer.stream, isLocal: false, userId: peer.userId };
     }
     return null;
   };
+  // Everyone in the call this viewer can hear (sending audio) — the mute buttons' "everyone".
+  const callUserIds = voice.peers.filter((p) => !!p.stream && p.stream.getAudioTracks().length > 0).map((p) => p.userId);
+  /** The button muting a player for this viewer — on their box while they're talking in the call. */
+  const peerMuteFor = (userId: string | null | undefined, name: string | null | undefined): React.ReactNode =>
+    userId && callUserIds.includes(userId) ? <PeerMuteButton userId={userId} name={name ?? 'player'} everyone={callUserIds} /> : undefined;
   // The other players' cameras, worn in the 3D scene (see players3d.ts's FaceScreen).
   const seatVideos3d = new Map(canSeeVideo ? humanCameraSeats.filter((s) => !s.isLocal && s.seatId !== state.viewerSeatId).map((s) => [s.seatId, s.stream] as const) : []);
   // Voice participants with no seat at this table (spectators using voice chat) —
@@ -604,6 +610,8 @@ export function TablePage(): React.JSX.Element {
             : undefined
       }
     >
+      {/* While anyone in the call is talking: everyone's voices off and on, for you. */}
+      {callUserIds.length > 0 && <MuteAllCallsButton />}
       {speechSupported() && (
         <button
           type="button"
@@ -697,6 +705,7 @@ export function TablePage(): React.JSX.Element {
           // On the 3D table the others' cameras are screens in the scene itself (seatVideos below); the box keeps only your own.
           showVideo={canSeeVideo && (is3d ? seatId === state.viewerSeatId : !hiddenCameraSeatIds.has(String(seatId)))}
           callControls={seatId === state.viewerSeatId && !sock.isPractice ? <SeatCallControls voice={voice} /> : undefined}
+          peerMute={seatId !== state.viewerSeatId ? peerMuteFor(seat.playerId, seat.displayName) : undefined}
           // Self-serve seating/bots are admin-only on any table, OR
           // open to a signed-in (non-guest) human on the ONE table
           // they created (sock.canManageTable — see
@@ -870,7 +879,15 @@ export function TablePage(): React.JSX.Element {
       {!sock.isPractice && unseatedVoicePeers.length > 0 && (
         <div className="voice-tiles table-unseated">
           {unseatedVoicePeers.map((p) => (
-            <UnseatedTile key={p.socketId} stream={p.stream} isLocal={false} label={p.displayName} canSeeVideo={canSeeVideo} />
+            <UnseatedTile
+              key={p.socketId}
+              stream={p.stream}
+              isLocal={false}
+              label={p.displayName}
+              canSeeVideo={canSeeVideo}
+              peerId={p.userId}
+              mute={peerMuteFor(p.userId, p.displayName)}
+            />
           ))}
         </div>
       )}

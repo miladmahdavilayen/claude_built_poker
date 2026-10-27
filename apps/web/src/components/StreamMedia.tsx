@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isPeerMuted, useCallAudio } from '../callAudio.js';
 import { forgetMedia, playOrQueue } from '../mediaUnlock.js';
 
 /**
@@ -12,6 +13,10 @@ import { forgetMedia, playOrQueue } from '../mediaUnlock.js';
  * instead of an unmuted `<video>` silently refusing to play at all. Local
  * media never gets an `<audio>` (you'd hear yourself).
  *
+ * `peerId` (the player's user id) is who this is, for the viewer's own
+ * mutes: their voice is silenced here if the viewer muted them, or the
+ * whole call (see callAudio.ts).
+ *
  * `showVideo` (default true) lets a caller suppress the video while the
  * audio keeps playing — used by the camera speaker-bar collapse, and for a
  * viewer who may hear the table but not see it (see Table.tsx's
@@ -21,11 +26,14 @@ export function StreamMedia({
   stream,
   isLocal,
   showVideo = true,
+  peerId,
 }: {
   stream: MediaStream | null;
   isLocal: boolean;
   showVideo?: boolean;
+  peerId?: string | null | undefined;
 }): React.JSX.Element | null {
+  const muted = isPeerMuted(peerId, useCallAudio());
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const hasVideo = !!stream && stream.getVideoTracks().length > 0;
@@ -47,6 +55,10 @@ export function StreamMedia({
     if (renderAudio) playOrQueue(el);
     return () => forgetMedia(el);
   }, [stream, renderAudio]);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.muted = muted;
+  }, [muted, renderAudio]);
 
   if (!stream) return null;
   return (

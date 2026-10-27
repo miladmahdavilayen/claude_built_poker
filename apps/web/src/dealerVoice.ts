@@ -23,55 +23,40 @@ export type DealerVoiceChoice = 'off' | 'female' | 'male';
 
 const KEY = 'pokerclause.dealerVoice';
 
-export function loadDealerVoice(): DealerVoiceChoice {
+/** The voice this viewer picked (female, unless they chose male) — remembered per browser. */
+export function loadDealerVoice(): 'female' | 'male' {
   try {
-    const v = window.localStorage.getItem(KEY);
-    if (v === 'off' || v === 'female' || v === 'male') return v;
-  } catch {
-    // Storage blocked — the default stands.
-  }
-  return 'female';
-}
-
-function saveDealerVoice(v: DealerVoiceChoice): void {
-  try {
-    window.localStorage.setItem(KEY, v);
-  } catch {
-    // Storage blocked — it just won't be remembered.
-  }
-}
-
-/** The voice last chosen (for unmuting back to it). */
-function lastVoice(): 'female' | 'male' {
-  try {
-    return window.localStorage.getItem(`${KEY}.last`) === 'male' ? 'male' : 'female';
+    return window.localStorage.getItem(KEY) === 'male' ? 'male' : 'female';
   } catch {
     return 'female';
   }
 }
 
 /**
- * The viewer's choice, remembered per browser — and the quick mute: off,
- * then back to whichever voice they had.
+ * The dealer's voice at a table: always on when the table opens — in the
+ * voice the viewer picked last time — and muted only for as long as they
+ * keep it so (the corner button, or Off in the menu) while they're there.
  */
 export function useDealerVoiceChoice(): { choice: DealerVoiceChoice; choose: (v: DealerVoiceChoice) => void; toggleMute: () => void } {
-  const [choice, setChoice] = useState<DealerVoiceChoice>(loadDealerVoice);
+  const [voice, setVoice] = useState<'female' | 'male'>(loadDealerVoice);
+  const [muted, setMuted] = useState(false);
   const choose = (v: DealerVoiceChoice): void => {
-    saveDealerVoice(v);
-    setChoice(v);
     if (v === 'off') {
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      setMuted(true);
+      if (speechSupported()) window.speechSynthesis.cancel();
       return;
     }
+    setVoice(v);
+    setMuted(false);
     try {
-      window.localStorage.setItem(`${KEY}.last`, v);
+      window.localStorage.setItem(KEY, v);
     } catch {
-      // Storage blocked — unmuting falls back to the female voice.
+      // Storage blocked — it just won't be remembered.
     }
-    // A choice made by a tap: say something, so they hear it — and so a phone lets the voice speak from now on.
+    // A choice made by a tap: say something, so they hear it.
     speak('Good luck, everyone.', v, true);
   };
-  return { choice, choose, toggleMute: () => choose(choice === 'off' ? lastVoice() : 'off') };
+  return { choice: muted ? 'off' : voice, choose, toggleMute: () => choose(muted ? voice : 'off') };
 }
 
 export const speechSupported = (): boolean => typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
@@ -260,16 +245,21 @@ export function useDealerAnnouncements(events: readonly ProjectedGameEvent[], ch
 
 /**
  * Phones only let a page speak once the viewer has touched it: the first
- * tap anywhere says nothing (an empty line), which is enough to unlock the
- * voice for the rest of the visit.
+ * real tap (the end of a touch, a click — a phone doesn't count the start
+ * of one) or key press says nothing (an empty line), which is enough to
+ * unlock the voice for the rest of the visit. Returns the cleanup.
  */
-export function unlockSpeechOnFirstTap(): void {
-  if (!speechSupported()) return;
+export function unlockSpeechOnFirstTap(): () => void {
+  if (!speechSupported()) return () => undefined;
+  const events = ['touchend', 'click', 'keydown'] as const;
   const unlock = (): void => {
-    window.removeEventListener('pointerdown', unlock, true);
+    for (const e of events) window.removeEventListener(e, unlock, true);
     const u = new SpeechSynthesisUtterance(' ');
     u.volume = 0;
     window.speechSynthesis.speak(u);
   };
-  window.addEventListener('pointerdown', unlock, true);
+  for (const e of events) window.addEventListener(e, unlock, true);
+  return () => {
+    for (const e of events) window.removeEventListener(e, unlock, true);
+  };
 }

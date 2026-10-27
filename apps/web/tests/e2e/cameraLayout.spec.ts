@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat, joinCall } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat, joinCall, openTableMenu, closeTableMenu } from './helpers.js';
 
 function rectsOverlap(
   a: { x: number; y: number; width: number; height: number },
@@ -112,23 +112,26 @@ const faces = (page: Page): Promise<Face[]> =>
 // chair — square-on across the table, never from behind or side-on, and not
 // through the house dealer. So nothing collapses there, on a phone too.
 test('on the 3D table, each camera is a screen on its player’s head, seen as it would be from your seat — seat 9 is hidden from seat 1', async ({ browser }) => {
-  // Four video links coming up after the owner's reload can take a while on a busy CI runner.
+  // Four video links coming up can take a while on a busy CI runner.
   test.setTimeout(180_000);
   // Seat 1 (the owner), seat 2 beside them at the end, seats 5 and 7 across, seat 9 the other side of the house dealer.
   const { pages, contexts } = await seatHumans(browser, ['Olga', 'Pete', 'Quinn', 'Rosa'], PHONE_VIEWPORT, 9, [1, 4, 6, 8]);
   const [owner] = pages as [Page, Page, Page, Page, Page];
-  // Seated on the 2D table (every empty seat is in reach there), then the owner switches to the 3D one.
-  // Only the owner: CI draws 3D in software, and five 3D tables at once would step themselves down to 2D.
-  await owner.evaluate(() => {
-    localStorage.setItem('pokerclause.tableView', 'seated');
-    localStorage.setItem('pokerclause.tableQuality', 'low');
-  });
+  // Everyone joins the call on the 2D table, and every camera reaches the owner there first — on a busy CI
+  // runner, five video links come up far more surely while no one is drawing 3D in software. Then the
+  // owner (only the owner: five 3D tables at once would step themselves down to 2D) switches to 3D from
+  // the menu, no reload, the call carrying on.
+  await owner.evaluate(() => localStorage.setItem('pokerclause.tableQuality', 'low'));
   await owner.reload();
-  await expect(owner.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
-
+  // Back at their seat (its call buttons on their box) before joining the call.
+  await expect(owner.locator('.seat-call')).toBeVisible({ timeout: 20_000 });
   for (const page of pages) {
     await joinCall(page, true);
   }
+  for (const seatId of [1, 4, 6, 8]) await expect(owner.locator(`[data-testid="seat-${String(seatId)}"] .seat-video video`)).toHaveCount(1, { timeout: 60_000 });
+  await (await openTableMenu(owner)).getByLabel(/3D — Seated/).check();
+  await closeTableMenu(owner);
+  await expect(owner.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
 
   // Everyone else's camera is a screen in the scene; their seat boxes are just name and stack.
   await expect.poll(async () => (await faces(owner)).map((f) => f.seatId).sort(), { timeout: 90_000 }).toEqual([1, 4, 6, 8]);

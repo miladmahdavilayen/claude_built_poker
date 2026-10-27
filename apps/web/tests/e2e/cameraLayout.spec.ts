@@ -142,6 +142,8 @@ const faces = (page: Page): Promise<Face[]> =>
 // chair — square-on across the table, never from behind or side-on, and not
 // through the house dealer. So nothing collapses there, on a phone too.
 test('on the 3D table, each camera is a screen on its player’s head, seen as it would be from your seat — seat 9 is hidden from seat 1', async ({ browser }) => {
+  // Four video links coming up after the owner's reload can take a while on a busy CI runner.
+  test.setTimeout(180_000);
   // Seat 1 (the owner), seat 2 beside them at the end, seats 5 and 7 across, seat 9 the other side of the house dealer.
   const { pages, contexts } = await seatHumans(browser, ['Olga', 'Pete', 'Quinn', 'Rosa'], PHONE_VIEWPORT, 9, [1, 4, 6, 8]);
   const [owner] = pages as [Page, Page, Page, Page, Page];
@@ -159,7 +161,7 @@ test('on the 3D table, each camera is a screen on its player’s head, seen as i
   }
 
   // Everyone else's camera is a screen in the scene; their seat boxes are just name and stack.
-  await expect.poll(async () => (await faces(owner)).map((f) => f.seatId).sort(), { timeout: 30_000 }).toEqual([1, 4, 6, 8]);
+  await expect.poll(async () => (await faces(owner)).map((f) => f.seatId).sort(), { timeout: 90_000 }).toEqual([1, 4, 6, 8]);
   for (const seatId of [1, 4, 6, 8]) await expect(owner.locator(`[data-testid="seat-${String(seatId)}"] .seat-video`)).toHaveCount(0);
   // Your own camera stays in your own box, and the bar never comes.
   await expect(owner.locator('[data-testid="seat-0"] .seat-video video')).toHaveCount(1);

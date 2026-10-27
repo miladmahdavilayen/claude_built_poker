@@ -4,6 +4,7 @@ import type { WaiverDevice } from '../api.js';
 import { useAuth } from '../AuthContext.js';
 import { AnimatedBackground } from '../components/AnimatedBackground.js';
 import { SignaturePad, type SignaturePadHandle } from '../components/SignaturePad.js';
+import { ErrorBanner } from '../components/ErrorBanner.js';
 
 /** What the browser can tell about this device — kept on the signed copy, labelled as reported by the browser. */
 function deviceInfo(): WaiverDevice {
@@ -85,7 +86,7 @@ export function WaiverPage(): React.JSX.Element {
             />
           </label>
           <SignaturePad ref={pad} label="Your signature" onChange={setSigned} />
-          {error && <div className="error-banner">{error}</div>}
+          {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
           <button type="submit" className="btn-primary" disabled={!initialsOk || !signed || busy}>
             {busy ? 'Saving your signed copy…' : 'I agree and sign'}
           </button>

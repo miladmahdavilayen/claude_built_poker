@@ -5,6 +5,7 @@ import * as api from '../api.js';
 import { isKnownMember, useAuth } from '../AuthContext.js';
 import { AnimatedBackground } from '../components/AnimatedBackground.js';
 import { GoogleSignInButton, useGoogleSignInAvailable } from '../components/GoogleSignInButton.js';
+import { ErrorBanner } from '../components/ErrorBanner.js';
 
 // An owner-generated seat invite (`/table/:id?assign=:token`) sends an
 // unauthenticated visitor here via RedirectToLogin in App.tsx, which stashes
@@ -191,7 +192,7 @@ export function LoginPage(): React.JSX.Element {
                 </label>
               </>
             )}
-            {error && <div className="error-banner">{error}</div>}
+            {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
             <button type="submit" disabled={busy || (mode !== 'admin-login' && !agreedToTerms)}>
               {mode === 'admin-login' ? 'Log in' : 'Play now'}
             </button>
@@ -260,7 +261,7 @@ export function LoginPage(): React.JSX.Element {
                 Continue to sign up
               </button>
             </form>
-            {error && <div className="error-banner">{error}</div>}
+            {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
             <button type="button" className="landing-link" onClick={() => goTo('google-signin')}>
               Already have an account? Sign in
             </button>
@@ -284,7 +285,7 @@ export function LoginPage(): React.JSX.Element {
                 onSignIn={(devEmail, name) => void run(() => loginWithDevGoogle(devEmail, name, step === 'google-signup' ? signupKey : undefined))}
               />
             )}
-            {error && <div className="error-banner">{error}</div>}
+            {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
             <button type="button" className="landing-link" onClick={() => goTo('choose')}>
               {step === 'google-signup' ? '← Back' : 'New here, or invited to a table?'}
             </button>

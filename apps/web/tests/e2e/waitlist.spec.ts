@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, takeSeat, tableMenuAction, openTableMenu } from './helpers.js';
 
 test('a player not seated can join and leave the waitlist, and everyone sees the queue', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -18,14 +18,15 @@ test('a player not seated can join and leave the waitlist, and everyone sees the
   await guestSignup(pageB, 'Heidi');
   await pageB.goto(tableUrl);
 
-  await expect(pageB.getByRole('button', { name: 'Join waitlist' })).toBeVisible();
-  await pageB.getByRole('button', { name: 'Join waitlist' }).click();
+  // The waitlist is in the table menu.
+  await expect((await openTableMenu(pageB)).getByRole('button', { name: 'Join waitlist' })).toBeVisible();
+  await tableMenuAction(pageB, 'Join waitlist');
   await expect(pageB.getByRole('button', { name: 'Leave waitlist (#1)' })).toBeVisible();
 
   // The queue itself is visible to everyone at the table, including the seated player.
-  await expect(pageA.getByText('Heidi')).toBeVisible();
+  await expect((await openTableMenu(pageA)).getByText('Heidi')).toBeVisible();
 
-  await pageB.getByRole('button', { name: 'Leave waitlist (#1)' }).click();
+  await tableMenuAction(pageB, 'Leave waitlist (#1)');
   await expect(pageB.getByRole('button', { name: 'Join waitlist' })).toBeVisible();
   await expect(pageA.getByText('Heidi')).not.toBeVisible();
 

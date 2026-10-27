@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { downloadGameReport } from '../api.js';
+import { ErrorBanner } from './ErrorBanner.js';
 
 /**
  * "Download YAML" / "Download PDF" for one game's books — see
@@ -30,7 +31,8 @@ export function ReportDownloads({ path, accessToken, testIdPrefix }: { path: str
           {busy === 'yaml' ? 'Preparing…' : 'Download YAML'}
         </button>
       </div>
-      {message && <div className={message.ok ? 'owner-menu-ok report-downloads-message' : 'error-banner'}>{message.text}</div>}
+      {message &&
+        (message.ok ? <div className="owner-menu-ok report-downloads-message">{message.text}</div> : <ErrorBanner message={message.text} onClose={() => setMessage(null)} />)}
     </div>
   );
 }

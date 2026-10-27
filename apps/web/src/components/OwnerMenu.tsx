@@ -5,6 +5,7 @@ import type { TableSocketApi } from '../useTableSocket.js';
 import { MoneyInput } from './MoneyInput.js';
 import { ReportDownloads } from './ReportDownloads.js';
 import { diffSettings, formFromSettings, TableSettingsFields, type SettingsForm } from './TableSettingsForm.js';
+import { ErrorBanner } from './ErrorBanner.js';
 
 /** The form starts from where the table is heading — settings in force, overlaid with anything queued for the next hand. */
 function formFromState(state: ProjectedTableState): SettingsForm {
@@ -175,7 +176,8 @@ export function OwnerMenu({
             }
           />
           {inHand && <p className="owner-menu-note">Blinds, ante and straddle switch over when this hand ends. Everything else applies right away.</p>}
-          {saveMessage && <div className={saveMessage.ok ? 'owner-menu-ok' : 'error-banner'}>{saveMessage.text}</div>}
+          {saveMessage &&
+            (saveMessage.ok ? <div className="owner-menu-ok">{saveMessage.text}</div> : <ErrorBanner message={saveMessage.text} onClose={() => setSaveMessage(null)} />)}
           <div className="owner-menu-actions">
             <button
               type="button"
@@ -210,7 +212,7 @@ export function OwnerMenu({
               + Add seat
             </button>
           </div>
-          {seatMessage && <div className="error-banner">{seatMessage}</div>}
+          {seatMessage && <ErrorBanner message={seatMessage} onClose={() => setSeatMessage(null)} />}
           {isAdmin && sock.lastError && <div className="owner-menu-last-error">Last error: {sock.lastError.message}</div>}
           <ul className="owner-menu-seats">
             {visibleSeats.map((seat) => {

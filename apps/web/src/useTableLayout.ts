@@ -46,8 +46,8 @@ export interface TableLayout {
    */
   minFeltHeight: number | null;
   /**
-   * Set only when no arrangement keeps the seats off the "Full screen"
-   * button in its corner (a full table on a small phone): where it goes
+   * Set only when no arrangement keeps the seats off the chat button in
+   * its corner (a full table on a small phone): where it goes
    * instead, in px from the felt's top-left — the clear spot nearest its
    * corner.
    */
@@ -89,7 +89,7 @@ interface Problem {
   seats: Extent[];
   board: { w: number; h: number };
   bet: { w: number; h: number };
-  /** Fixed controls on the felt (the full-screen toggle) that no seat may cover — relative to the felt's center. */
+  /** Fixed controls on the felt (the chat button) that no seat may cover — relative to the felt's center. */
   obstacles: Box[];
 }
 
@@ -267,7 +267,7 @@ function sameLayout(a: TableLayout, b: TableLayout): boolean {
 export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatIds: readonly number[]): TableLayout | null {
   const [layout, setLayout] = useState<TableLayout | null>(null);
   const lastKey = useRef('');
-  // The full-screen button's own corner, remembered while it's moved away
+  // The chat button's own corner, remembered while it's moved away
   // (see toggleSpot) so the layout keeps solving against its real home.
   const toggleHome = useRef<Box | null>(null);
   useLayoutEffect(() => {
@@ -297,7 +297,7 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
     const cx = feltRect.left + rail + felt.clientWidth / 2;
     const cy = feltRect.top + (parseFloat(getComputedStyle(felt).borderTopWidth) || 0) + felt.clientHeight / 2;
     // offset*, not getBoundingClientRect: its attention bounce scales it, and that mustn't move the seats.
-    const toggleEl = felt.querySelector<HTMLElement>('.immersive-toggle');
+    const toggleEl = felt.querySelector<HTMLElement>('.table-corner');
     if (toggleEl && toggleEl.offsetWidth > 0 && !toggleEl.dataset.moved) {
       const l = toggleEl.offsetLeft - felt.clientWidth / 2;
       const t = toggleEl.offsetTop - felt.clientHeight / 2;
@@ -320,14 +320,12 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
     // A felt we stretched earlier keeps that height until the window itself changes.
     const viewport = `${String(window.innerWidth)}x${String(window.innerHeight)}`;
     const stretched = layout && layout.viewport === viewport ? layout.minFeltHeight : null;
-    // Seats keep clear of the full-screen button when that costs them
-    // little; on a cramped table they'd rather sit a little under the small
-    // "exit" corner icon than all shrink, or push the felt past the screen.
-    // "Full screen" itself (the button new players must find) is never
-    // covered while any clear arrangement exists.
+    // Seats keep clear of the chat button whenever any arrangement does;
+    // when none can (a full table on a small phone), the button moves to the
+    // clear spot nearest its corner instead (toggleSpot).
     const clear = pr.obstacles.length > 0 ? solve(pr) : null;
     const free = solve({ ...pr, obstacles: [] });
-    const enterShown = !!felt.querySelector('.immersive-toggle--enter');
+    const enterShown = !!toggleEl;
     let best = clear && (!free || enterShown || clear.scale >= free.scale * 0.75) ? clear : free;
     let minFeltHeight = stretched;
     if (!best) {
@@ -370,7 +368,7 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
 }
 
 /**
- * The clear spot nearest the full-screen button's corner, for when the
+ * The clear spot nearest the chat button's corner, for when the
  * seats can't keep off it there: clear of every seat, bet, the board and
  * the felt's other corner widgets. In px from the felt's top-left; null if
  * there's nowhere (it then stays put).

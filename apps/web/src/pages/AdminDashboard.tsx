@@ -19,6 +19,7 @@ import { MAX_BALANCE_CENTS } from '@pokerclause/shared/money';
 import { formatChips } from '../chips.js';
 import { ReportDownloads } from '../components/ReportDownloads.js';
 import { MoneyInput } from '../components/MoneyInput.js';
+import { ErrorBanner } from '../components/ErrorBanner.js';
 
 const REASON_LABEL: Record<LedgerEntryDto['reason'], string> = {
   buy_in: 'Bought in',
@@ -133,7 +134,7 @@ export function AdminDashboardPage(): React.JSX.Element {
         </Link>
       </header>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
       <MyBalanceCard balance={users?.find((u) => u.id === me?.id)?.chips ?? null} onChanged={loadPlayers} />
 
@@ -270,7 +271,7 @@ function MyBalanceCard({ balance, onChanged }: { balance: number | null; onChang
       </div>
       <p className="profile-hint">Up to {formatChips(MAX_BALANCE_CENTS)}. Every change is recorded in your activity.</p>
       {notice && <p className="admin-my-balance-notice">{notice}</p>}
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
     </section>
   );
 }
@@ -432,7 +433,7 @@ function PlayersPanel({
           )}
         </div>
       )}
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
       <div className="admin-layout">
         <div className="admin-user-list">
@@ -692,7 +693,7 @@ function SignedWaivers({ waivers, accessToken }: { waivers: SignedWaiverDto[]; a
 
   return (
     <>
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
       <ul className="admin-key-list admin-record-list">
         {waivers.map((w) => (
           <li key={w.id} className="admin-key-row admin-waiver-row" data-testid={`signed-waiver-${w.id}`}>
@@ -873,7 +874,7 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
           Close
         </button>
       </div>
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
       <div className="profile-summary">
         <div className="profile-stat-card">
@@ -1128,7 +1129,7 @@ It works once and expires ${new Date(fresh.expiresAt).toLocaleDateString()}.`
           {busy ? 'Generating…' : 'Generate key'}
         </button>
       </form>
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
       {fresh && (
         <div className="admin-key-fresh" data-testid="fresh-access-key">

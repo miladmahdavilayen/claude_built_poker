@@ -2756,3 +2756,39 @@ It records each screen and writes a report.
   seat → tap an empty seat): the same rules as a player moving themselves —
   at once between hands, after the hand if the bot's in it, owing a big blind
   if the move skips one (`LiveTable.moveBot`).
+
+## The table is always full screen; everything else is one tap away
+
+- **No full-screen toggle any more.** The table page is always what full
+  screen used to be: the felt fills the screen. The ☰ button (top-right) opens
+  the table menu — your seat (sit out / in, leave), the waitlist, the call for
+  anyone not seated, the view, the dealer's voice, the hand log, the owner's
+  table controls, hiding the browser's bars where a phone allows it, and the
+  way back to the lobby. A gold dot on it means a seat is open for you.
+- **Chat lives bottom-left** (💬, with an unread count), in a sheet with the
+  hand log beside it; the dealer's mute sits right above it. Both keep clear of
+  the betting controls the way the full-screen button did (the 2D layout's
+  `toggleSpot`, the 3D scene's obstacles).
+- **The call is on your own seat box**: small round buttons on its top edge
+  (join with mic or camera; then mute, camera, leave), each with a 44px tap
+  area. Over plain http (a LAN test server) a tap explains that calls need
+  https.
+- **Notices float over the table** (tap to hear, next-hand settings, seat
+  offers, errors). Every error that doesn't block the page has a ✕
+  (`ErrorBanner`); over the table they also go by themselves after 8 seconds.
+- **On phones with more than 4 cameras in 2D**, the old two-person speaker
+  strip is gone (it only ever showed outside full screen): every camera that
+  fits stays on its seat, your own always.
+
+## The house dealer's voice
+
+The browser's own speech engine (free, offline, on every phone), female or male
+or off — chosen in the menu, muted with the button above the chat. The calls
+follow cardroom practice: the action in a word, never who did it and never a
+raise amount (in no-limit a dealer doesn't state amounts unless asked); "All
+in"; "Heads up" when a fold leaves two; "Option" to an unraised big blind;
+how many see the flop; "Flop", "Turn", "River"; "Showdown"; then the result by
+name — "Ann wins with a flush", "Ann and Cat split the pot", or, three or more
+ways, "The pot is split". Phones only let a page speak after a tap, so the
+first tap anywhere unlocks it; the batch of events already there on arrival is
+history and isn't read out.

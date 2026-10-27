@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, startHand, takeSeat } from './helpers.js';
+import { adminLogin, closeTableMenu, createTable, openTableMenu, startHand, takeSeat } from './helpers.js';
 
-// Regression test: toggling full-screen/immersive mode used to replay the
+// Regression test: toggling full-screen mode (now: opening and closing the
+// table menu — any re-render does it) used to replay the
 // shuffle/deal animation and sound out of nowhere, well after a hand had
 // already been dealt. Root cause was in Table.tsx, not the toggle itself
 // — `positions` (an array DealAnimation.tsx's effect depends on) was
@@ -11,7 +12,7 @@ import { adminLogin, createTable, startHand, takeSeat } from './helpers.js';
 // retriggered that effect with the stale-but-still-truthy last batch. See
 // DECISIONS.md. Asserts zero new `.shuffle-deck`/`.flying-card` elements
 // appear while toggling, well after the real deal has already finished.
-test('toggling full screen after a hand has already been dealt does not replay the shuffle/deal animation', async ({ page }) => {
+test('opening and closing the table menu after a hand has already been dealt does not replay the shuffle/deal animation', async ({ page }) => {
   await adminLogin(page);
   await createTable(page, { name: 'Immersive Mode Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await takeSeat(page, 0, 200);
@@ -47,11 +48,12 @@ test('toggling full screen after a hand has already been dealt does not replay t
     return sawShuffleOrDeal;
   });
 
-  // Exit and re-enter full screen a few times during the watch window —
-  // exactly the reported repro (toggle after a hand's already dealt).
+  // Open and close the menu a few times during the watch window — the
+  // reported repro (re-rendering after a hand's already dealt).
   for (let i = 0; i < 3; i++) {
-    await page.locator('.immersive-toggle').click();
-    await page.waitForTimeout(300);
+    await openTableMenu(page);
+    await closeTableMenu(page);
+    await page.waitForTimeout(200);
   }
 
   const sawShuffleOrDeal = await watchDone;

@@ -13,7 +13,7 @@ import { StreamMedia } from './StreamMedia.js';
  * not this viewer is in the call. Video is shown only when `canSeeVideo`
  * (see Table.tsx) — audio plays either way.
  */
-function UnseatedTile({
+export function UnseatedTile({
   stream,
   isLocal,
   label,
@@ -91,7 +91,6 @@ export function VoicePanel({
           ))}
         </div>
       )}
-      {voice.error && <div className="error-banner">{voice.error}</div>}
     </div>
   );
 }

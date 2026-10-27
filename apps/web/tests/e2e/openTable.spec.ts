@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { adminLogin, createTable } from './helpers.js';
+import { adminLogin, createTable, tableMenuAction, closeTableMenu } from './helpers.js';
 
 /** Opens the shared link as a brand-new visitor: the guest form, a name, and in. */
 async function arriveByLink(browser: Browser, link: string, name: string): Promise<Page> {
@@ -38,20 +38,21 @@ test('an open-invite table: one link for everyone — pick a seat, a waitlist wh
   // Full: the next two join the waitlist instead.
   const cat = await arriveByLink(browser, link, 'Cat');
   await expect(cat.locator('[data-testid="seat-0"]').getByText('Sit here')).toHaveCount(0);
-  await cat.getByRole('button', { name: 'Join waitlist' }).click();
+  await tableMenuAction(cat, 'Join waitlist');
   await expect(cat.getByRole('button', { name: 'Leave waitlist (#1)' })).toBeVisible();
   const dan = await arriveByLink(browser, link, 'Dan');
-  await dan.getByRole('button', { name: 'Join waitlist' }).click();
+  await tableMenuAction(dan, 'Join waitlist');
   await expect(dan.getByRole('button', { name: 'Leave waitlist (#2)' })).toBeVisible();
 
   // Ann leaves: the seat is held for Cat, who's alerted; Dan can see why he can't take it.
-  await ann.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(ann, 'Leave table');
   await ann.getByRole('button', { name: 'Yes, leave' }).click();
   await expect(cat.getByText('A seat is open for you!')).toBeVisible();
   await expect.poll(() => cat.title()).toContain('Your seat is open');
   await expect(dan.getByText('A seat is being held for')).toContainText('Cat');
   await expect(dan.locator('[data-testid="seat-0"]').getByText('Sit here')).toHaveCount(0);
 
+  await closeTableMenu(cat);
   await sitAt(cat, 0);
   await expect(cat.getByText('A seat is open for you!')).toHaveCount(0);
   await expect(dan.getByRole('button', { name: 'Leave waitlist (#1)' })).toBeVisible();
@@ -93,8 +94,7 @@ test('the owner double-taps a player’s seat (holds an empty one) or right-clic
   await owner.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
 
-  // Full screen, holding for a second on an empty seat: its own options.
-  await owner.getByRole('button', { name: /Full screen/ }).click();
+  // Holding for a second on an empty seat: its own options.
   const empty = owner.locator('[data-testid="seat-2"]');
   const box = (await empty.boundingBox())!;
   await owner.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -114,7 +114,7 @@ test('the owner double-taps a player’s seat (holds an empty one) or right-clic
   await expect(seat).toHaveAttribute('data-seat-status', 'empty');
 });
 
-test('chat and the hand log start folded into a slim bar; new chat shows a badge; a tab opens and closes them', async ({ browser }) => {
+test('chat and the hand log are behind the chat button: new chat shows a badge on it; the sheet has both, and closes', async ({ browser }) => {
   const owner = await (await browser.newContext()).newPage();
   await adminLogin(owner);
   const link = (await createTable(owner, { name: 'Dock Game', smallBlind: 1, bigBlind: 2, maxSeats: 3, isPrivate: false, openSeating: true }))!;
@@ -127,14 +127,18 @@ test('chat and the hand log start folded into a slim bar; new chat shows a badge
   await ann.getByPlaceholder('Say something...').fill('gl everyone');
   await ann.keyboard.press('Enter');
 
-  await expect(owner.locator('.bottom-tab-badge')).toHaveText('1');
-  await owner.getByRole('button', { name: /^Chat/ }).click();
-  await expect(owner.getByText('gl everyone')).toBeVisible();
-  await expect(owner.locator('.bottom-tab-badge')).toHaveCount(0);
-  await owner.getByRole('button', { name: 'Hand log', exact: true }).click();
+  await expect(owner.locator('.table-chat-badge')).toHaveText('1');
+  await owner.getByRole('button', { name: 'Chat, 1 new' }).click();
+  const sheet = owner.getByRole('dialog', { name: 'Chat and hand log' });
+  await expect(sheet.getByText('gl everyone')).toBeVisible();
+  await expect(owner.locator('.table-chat-badge')).toHaveCount(0);
+  await sheet.getByRole('button', { name: 'Hand log', exact: true }).click();
   await expect(owner.getByPlaceholder('Say something...')).toHaveCount(0);
-  await owner.getByRole('button', { name: 'Hide chat and hand log' }).click();
-  await expect(owner.locator('.bottom-dock-open')).toHaveCount(0);
+  await sheet.getByRole('button', { name: 'Close chat' }).click();
+  await expect(sheet).toHaveCount(0);
+  // The hand log is in the table menu too.
+  await tableMenuAction(owner, 'Hand log');
+  await expect(sheet.getByRole('button', { name: 'Hand log', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('an open-invite table’s starting chips: everyone who joins by the link sits with them — and a guest who leaves comes back with what they had', async ({ browser }) => {
@@ -158,7 +162,7 @@ test('an open-invite table’s starting chips: everyone who joins by the link si
   await expect(gil.locator('[data-testid="seat-3"] .seat-stack')).toHaveText('$550', { timeout: 10_000 });
 
   // Gil leaves — the table stays — and comes back with his $550, not a fresh $500.
-  await gil.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(gil, 'Leave table');
   await gil.getByRole('button', { name: 'Yes, leave' }).click();
   await expect(gil).toHaveURL(/\/left/);
   await gil.getByRole('button', { name: 'Rejoin table' }).click();

@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, tableIdFromUrl, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, tableIdFromUrl, takeSeat, openTableMenu } from './helpers.js';
 
 // The owner changes a table's settings from the lobby by holding its card
 // (or right-clicking it) — public or private — and everyone at the table
@@ -48,7 +48,7 @@ test('the owner holds a lobby table to edit its settings, and the table follows'
   // The lobby card and the table itself both show it.
   await expect(card(owner, id)).toContainText('Lobby Edited');
   await expect(card(owner, id)).toContainText('$5/$10');
-  await expect(bob.locator('.table-header, header').first()).toContainText('Lobby Edited', { timeout: 10_000 });
+  await expect((await openTableMenu(bob)).locator('.table-menu-title')).toContainText('Lobby Edited', { timeout: 10_000 });
 
   // Rules still apply: the small blind can't exceed the big blind.
   await hold(owner, card(owner, id));

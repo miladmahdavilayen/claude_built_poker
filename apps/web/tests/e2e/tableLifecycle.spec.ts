@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, takeSeat, tableMenuAction, openTableMenu, closeTableMenu } from './helpers.js';
 
 test('leaving a table navigates back to the lobby and genuinely frees the seat for someone else', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -21,7 +21,7 @@ test('leaving a table navigates back to the lobby and genuinely frees the seat f
   await guestSignup(pageCarol, 'Carol');
   await inviteToSeat(pageA, pageCarol, 1, 100);
 
-  await pageA.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(pageA, 'Leave table');
   await expect(pageA).toHaveURL(/\/lobby/);
 
   // The seat is genuinely free now — Alice (still the owner, just no
@@ -55,7 +55,7 @@ test('a table stays in the lobby when the last human leaves — a watching spect
   // fires before a socket joins its room is simply never delivered to it.
   await expect(pageSpec.locator('[data-testid="seat-0"]')).toBeVisible();
 
-  await pageA.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(pageA, 'Leave table');
   await expect(pageA).toHaveURL(/\/lobby/);
   // Still listed, and the seat is free again.
   await expect(pageA.locator('.table-card', { hasText: 'Auto Terminate Table' })).toBeVisible();
@@ -79,8 +79,9 @@ test('the owner can terminate a table with confirmation, closing it for a seated
   await guestSignup(pageAlice, 'Alice');
   await inviteToSeat(pageOwner, pageAlice, 0, 100);
 
-  // A non-owner never even sees the control — nor the owner menu it lives in.
-  await expect(pageAlice.getByRole('button', { name: 'Table menu' })).toHaveCount(0);
+  // A non-owner never even sees the control — nor the table controls it lives in.
+  await expect((await openTableMenu(pageAlice)).getByRole('button', { name: 'Table controls' })).toHaveCount(0);
+  await closeTableMenu(pageAlice);
   await expect(pageAlice.getByRole('button', { name: 'Terminate table' })).toHaveCount(0);
 
   await openOwnerMenu(pageOwner);
@@ -116,18 +117,18 @@ test('an invited guest can leave (after a confirm) without closing the table —
 
   // No lobby link at all for an invited guest — self-serve seating
   // doesn't exist, so there's genuinely nowhere for them to go back to.
-  await expect(pageAlice.getByRole('link', { name: /Lobby/ })).toHaveCount(0);
+  await expect((await openTableMenu(pageAlice)).getByRole('link', { name: /lobby/ })).toHaveCount(0);
   // The owner still has theirs, unaffected by any of this.
-  await expect(pageOwner.getByRole('link', { name: /Lobby/ })).toBeVisible();
+  await expect((await openTableMenu(pageOwner)).getByRole('link', { name: /lobby/ })).toBeVisible();
 
-  await pageAlice.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(pageAlice, 'Leave table');
   await expect(pageAlice.getByText('Leave this table?')).toBeVisible();
 
   // Backing out leaves the guest exactly where they were — still seated.
   await pageAlice.getByRole('button', { name: 'No, stay' }).click();
   await expect(pageAlice.locator('[data-testid="seat-0"]')).toHaveAttribute('data-seat-status', 'active');
 
-  await pageAlice.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(pageAlice, 'Leave table');
   await pageAlice.getByRole('button', { name: 'Yes, leave' }).click();
 
   // Never the lobby — a page with just the way back in.
@@ -153,7 +154,7 @@ test('an invited guest can leave (after a confirm) without closing the table —
     return '';
   });
   expect(link).toMatch(/\?assign=/);
-  await pageAlice.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(pageAlice, 'Leave table');
   await pageAlice.getByRole('button', { name: 'Yes, leave' }).click();
   await expect(pageAlice).toHaveURL(/\/left/, { timeout: 10_000 });
   const phone = await (await browser.newContext()).newPage();
@@ -284,7 +285,7 @@ test('a private table the owner leaves stays in their lobby, under Private table
   await adminLogin(owner);
   await createTable(owner, { name: 'Homegame Private', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: true });
   await takeSeat(owner, 0, 100);
-  await owner.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(owner, 'Leave table');
   await expect(owner).toHaveURL(/\/lobby/);
 
   const privateSection = owner.getByTestId('lobby-private-tables');

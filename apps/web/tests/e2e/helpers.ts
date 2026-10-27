@@ -1,4 +1,4 @@
-import { expect, request, type Page } from '@playwright/test';
+import { expect, request, type Locator, type Page } from '@playwright/test';
 
 /**
  * Starts a guest session through the test-only route (testSeed.ts): the
@@ -231,9 +231,46 @@ export async function playHandToCompletion(pages: Page[], maxRounds = 300): Prom
   throw new Error('Hand did not reach completion within the round budget.');
 }
 
-/** Opens the owner's table-controls drawer (the header's ☰ Menu button) — reset/terminate, settings, seats and chips all live there. */
+/** Opens the table's ☰ menu (top-right) if it isn't already, and returns it — your seat, the waitlist, the view, the call for anyone not seated. */
+export async function openTableMenu(page: Page): Promise<Locator> {
+  const menu = page.getByRole('dialog', { name: 'Table menu' });
+  if (!(await menu.isVisible())) await page.getByRole('button', { name: 'Menu', exact: true }).click();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/** Closes the table's ☰ menu if it's open. */
+export async function closeTableMenu(page: Page): Promise<void> {
+  const menu = page.getByRole('dialog', { name: 'Table menu' });
+  if (await menu.isVisible()) await page.getByRole('button', { name: 'Close menu' }).click();
+  await expect(menu).toHaveCount(0);
+}
+
+/** One of the table menu's items: "Leave table", "Sit out next hand", "Hand log", "Join waitlist"... */
+export async function tableMenuAction(page: Page, name: string | RegExp): Promise<void> {
+  const menu = await openTableMenu(page);
+  await menu.getByRole('button', { name, exact: typeof name === 'string' }).click();
+}
+
+/**
+ * Joins the call: from your own seat box's buttons when seated, from the
+ * table menu's Call section when not.
+ */
+export async function joinCall(page: Page, withVideo: boolean): Promise<void> {
+  const name = withVideo ? 'Join with video' : 'Join voice';
+  const onSeat = page.locator('.seat-call').getByRole('button', { name, exact: true });
+  if ((await onSeat.count()) > 0) {
+    await onSeat.click();
+    return;
+  }
+  const menu = await openTableMenu(page);
+  await menu.getByRole('button', { name: new RegExp(name) }).click();
+  await closeTableMenu(page);
+}
+
+/** Opens the owner's table controls (☰ → Table controls) — reset/terminate, settings, seats and chips all live there. */
 export async function openOwnerMenu(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Table menu' }).click();
+  await tableMenuAction(page, 'Table controls');
   await expect(page.getByRole('dialog', { name: 'Table controls' })).toBeVisible();
 }
 

@@ -51,17 +51,17 @@ function overlaps(page: Page): Promise<string[]> {
       .filter((s): s is { id: string; b: B } => !!s.b);
     const board = box([felt.querySelector('.board-area')]);
     const cards = box([...felt.querySelectorAll('.board-cards .card')]);
-    const toggle = box([felt.querySelector('.immersive-toggle')]);
+    const toggle = box([felt.querySelector('.table-corner')]);
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.scrollHeight;
     const found: string[] = [];
     seats.forEach((s, i) => {
       for (const o of seats.slice(i + 1)) if (hit(s.b, o.b)) found.push(`${s.id} overlaps ${o.id}`);
       if (board && hit(s.b, board)) found.push(`${s.id} overlaps the board`);
-      if (toggle && hit(s.b, toggle)) found.push(`${s.id} is covered by the full-screen button`);
+      if (toggle && hit(s.b, toggle)) found.push(`${s.id} is covered by the chat button`);
       if (s.b.l < -1 || s.b.t < -1 || s.b.r > vw + 1 || s.b.b > vh + 1) found.push(`${s.id} is off screen`);
     });
-    for (const sel of ['.bet-chips-slot', '.fairness-commitment', '.action-timer:not(.action-timer-hidden)', '.immersive-toggle']) {
+    for (const sel of ['.bet-chips-slot', '.fairness-commitment', '.action-timer:not(.action-timer-hidden)', '.table-corner']) {
       for (const el of felt.querySelectorAll(sel)) {
         const b = box([el, ...el.querySelectorAll('*')]);
         if (b && cards && hit(b, cards)) found.push(`${sel} covers the community cards`);

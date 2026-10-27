@@ -49,9 +49,8 @@ test('a raise-capable turn on a phone-width viewport shows left/right bet-overla
   const raiseFirst = (await pageA.locator('.btn-bet').isVisible().catch(() => false)) ? pageA : pageB;
   const callSecond = raiseFirst === pageA ? pageB : pageA;
 
-  // Full-screen/immersive mode is what actually triggered the top-corner
-  // collision (see the comment above) — reproduce that exact condition.
-  await raiseFirst.locator('.immersive-toggle').click();
+  // The table is always full screen — the condition that triggered the
+  // top-corner collision (see the comment above).
 
   // The compact overlay replaced the old inline bar entirely — not just
   // added alongside it.

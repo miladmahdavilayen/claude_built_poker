@@ -80,6 +80,7 @@ export function Seat({
   compact = false,
   ownMark,
   emptyTap,
+  callControls,
 }: {
   seat: ProjectedSeat;
   isButton: boolean;
@@ -125,6 +126,8 @@ export function Seat({
    * `label` is what the seat says ("Sit here", or "Tap to fill").
    */
   emptyTap?: { label: string; onTap: (x: number, y: number) => void } | undefined;
+  /** Your own box: the call's buttons (mic, camera, leave), on its top edge — see SeatCallControls.tsx. */
+  callControls?: React.ReactNode;
 }): React.JSX.Element {
   const shownStack = useCountUp(stackDisplay ?? seat.stack, stackDisplay !== undefined);
   // `status === 'empty'` is the authoritative "is this seat occupied?"
@@ -180,6 +183,7 @@ export function Seat({
       <div
         className={`seat seat--compact${isActing ? ' seat-acting' : ''}${seat.status === 'folded' ? ' seat-folded' : ''}${isViewer ? ' seat-viewer' : ''}${hasCam ? ' seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
       >
+        {isViewer && callControls}
         {voice && hasCam && (
           <div className="seat-video">
             <StreamMedia stream={voice.stream} isLocal={voice.isLocal} />
@@ -274,6 +278,7 @@ export function Seat({
     <div
       className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
     >
+      {isViewer && callControls}
       {isButton && <div className={`dealer-button${isViewer ? ' dealer-button--mine' : ''}`}>D</div>}
       {/* The button already gets the "D" disc — a "BTN" text badge on top of it too would be redundant clutter. */}
       {positionLabel && !isButton && <div className="position-label">{positionLabel}</div>}

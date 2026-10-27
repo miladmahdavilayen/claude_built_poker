@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, joinCall } from './helpers.js';
 
 // Real browsers hold back UNMUTED playback until the page has had a user
 // gesture — the reason a viewer who never clicked "Join voice" used to see
@@ -29,7 +29,7 @@ test('under strict autoplay rules, an owner who has not clicked anything still s
   const tableUrl = pageSetup.url();
   await guestSignup(pageGuest, 'Gina');
   await inviteToSeat(pageSetup, pageGuest, 1, 100);
-  await pageGuest.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(pageGuest, true);
 
   // The owner opens the table cold: a new window, signed in, never clicked.
   // (Only the login session carries over from the setup window.)

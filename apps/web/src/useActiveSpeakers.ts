@@ -42,8 +42,8 @@ interface AnalysisNode {
 
 /**
  * Lightweight active-speaker detection over a set of live MediaStreams —
- * used to pick who appears in the collapsed camera speaker bar (see
- * SpeakerBar.tsx and Table.tsx) once there are more than 4 human cameras
+ * used to pick whose camera tiles stay when they can't all fit (see
+ * useCameraFit.ts and Table.tsx) once there are more than 4 human cameras
  * on and the viewer's screen is phone-sized. Returns ids currently
  * considered "speaking," most-recently-active first.
  *

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, playHandToCompletion, startHand, takeSeat } from './helpers.js';
+import { adminLogin, closeTableMenu, createTable, guestSignup, inviteToSeat, openOwnerMenu, openTableMenu, playHandToCompletion, startHand, takeSeat } from './helpers.js';
 
 // The owner's table-controls drawer (OwnerMenu.tsx): every change works
 // mid-hand. Whatever can't safely change under a hand in progress waits
@@ -139,22 +139,30 @@ test('a $0.10/$0.20 table with a $10 buy-in can be created and played from the l
   await expect.poll(() => betAmounts(page), { timeout: 10_000 }).toEqual(['$0.10', '$0.20']);
 });
 
-test('the full-screen button pulses for attention until it has been used once', async ({ page }) => {
+test('the table always fills the screen: one menu button top-right, the chat bottom-left with the dealer’s mute above it, nothing else around the felt', async ({ page }) => {
   await adminLogin(page);
-  await createTable(page, { name: 'Full Screen Hint', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
-  const toggle = page.locator('.immersive-toggle');
-  await expect(toggle).toHaveClass(/immersive-toggle--attention/);
-
-  await toggle.click();
-  await expect(toggle).not.toHaveClass(/immersive-toggle--attention/);
-  await toggle.click(); // back out of full screen
-  await expect(toggle).not.toHaveClass(/immersive-toggle--attention/);
-
-  await page.reload();
-  await expect(page.locator('.immersive-toggle')).not.toHaveClass(/immersive-toggle--attention/);
+  await createTable(page, { name: 'Full Screen Always', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await expect(page.locator('.table-page')).toHaveClass(/immersive/);
+  await expect(page.getByRole('button', { name: /Full screen/ })).toHaveCount(0);
+  const felt = (await page.locator('.felt').boundingBox())!;
+  const view = page.viewportSize()!;
+  // The felt takes the page: no header above it, no panels below.
+  expect(felt.y).toBeLessThan(20);
+  expect(felt.y + felt.height).toBeGreaterThan(view.height - 20);
+  const menuBtn = (await page.getByRole('button', { name: 'Menu', exact: true }).boundingBox())!;
+  expect(menuBtn.x + menuBtn.width).toBeGreaterThan(view.width - 30);
+  expect(menuBtn.y).toBeLessThan(30);
+  expect(menuBtn.width).toBeGreaterThanOrEqual(40);
+  const chat = (await page.getByRole('button', { name: 'Chat', exact: true }).boundingBox())!;
+  expect(chat.x).toBeLessThan(felt.x + 40);
+  expect(chat.y + chat.height).toBeGreaterThan(felt.y + felt.height - 40);
+  // The dealer's mute sits right above the chat.
+  const mute = (await page.getByRole('button', { name: /the dealer$/ }).boundingBox())!;
+  expect(mute.y + mute.height).toBeLessThanOrEqual(chat.y);
+  expect(chat.y - (mute.y + mute.height)).toBeLessThan(16);
 });
 
-test('a regular player has no table menu and no owner-only seat buttons', async ({ browser }) => {
+test('a regular player has no table controls and no owner-only seat buttons', async ({ browser }) => {
   const { owner, alice } = await ownerAndAliceMidHand(browser, 'No Menu For Players');
   await owner.locator('[data-testid="seat-2"]').locator('.seat-empty-tap').click();
   await owner.getByRole('menuitem', { name: 'Add a computer player' }).click();
@@ -162,8 +170,11 @@ test('a regular player has no table menu and no owner-only seat buttons', async 
   await owner.locator('.modal').getByRole('button', { name: 'Add bot' }).click();
   await expect(alice.locator('[data-testid="seat-2"] .seat-tag-pending')).toHaveText('next hand');
 
-  await expect(owner.getByRole('button', { name: 'Table menu' })).toBeVisible();
+  // Everyone has the table menu; only the owner's has their table controls.
+  await expect((await openTableMenu(owner)).getByRole('button', { name: 'Table controls' })).toBeVisible();
+  await closeTableMenu(owner);
   await expect(owner.locator('[data-testid="seat-2"]').getByRole('button', { name: 'Remove' })).toBeVisible();
-  await expect(alice.getByRole('button', { name: 'Table menu' })).toHaveCount(0);
+  await expect((await openTableMenu(alice)).getByRole('button', { name: 'Table controls' })).toHaveCount(0);
+  await closeTableMenu(alice);
   await expect(alice.locator('[data-testid="seat-2"]').getByRole('button', { name: 'Remove' })).toHaveCount(0);
 });

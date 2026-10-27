@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addBot, adminLogin, createAccessKey, createTable, drawSignature, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat, openAdminSection } from './helpers.js';
+import { addBot, adminLogin, createAccessKey, createTable, drawSignature, googlePlayerLogin, guestSignup, seedRealAccount, takeSeat, openAdminSection, tableMenuAction, openTableMenu } from './helpers.js';
 
 // This sandbox has no real Google Cloud OAuth Client ID to drive an actual
 // "sign in with Google" click-through with (see googleSignIn.spec.ts's own
@@ -94,14 +94,17 @@ test('a Google player: $1,000 welcome bonus, a bots-only table of the size they 
   await expect(page.locator('[data-testid^="seat-"]')).toHaveCount(5);
   await expect(page.locator('[data-testid="seat-0"]')).toContainText('Polly');
   await expect(page.getByText('🤖 bot')).toHaveCount(4);
-  await expect(page.locator('.seat-tag', { hasText: 'practice' })).toBeVisible();
-  // Bots only: no table menu, no invite/sit buttons, no waitlist, no voice.
-  await expect(page.locator('.owner-menu-toggle')).toHaveCount(0);
+  // Bots only: no invite/sit buttons, no voice on the seat box…
   await expect(page.getByText('+ Assign human')).toHaveCount(0);
   await expect(page.getByText('Sit here')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Join voice/ })).toHaveCount(0);
+  // …and in the menu: marked practice, no table controls, no waitlist, no call.
+  const menu = await openTableMenu(page);
+  await expect(menu.locator('.seat-tag', { hasText: 'practice' })).toBeVisible();
+  await expect(menu.getByRole('button', { name: 'Table controls' })).toHaveCount(0);
+  await expect(menu.getByRole('button', { name: /Join waitlist|Join voice/ })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Leave table' }).click();
+  await tableMenuAction(page, 'Leave table');
   await expect(page).toHaveURL(/\/lobby/);
   await expect(page.getByTestId('lobby-balance')).toHaveText('$1,000');
   // The table is gone for good.

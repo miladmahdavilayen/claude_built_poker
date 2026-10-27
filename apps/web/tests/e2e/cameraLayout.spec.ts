@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat, joinCall } from './helpers.js';
 
 function rectsOverlap(
   a: { x: number; y: number; width: number; height: number },
@@ -58,7 +58,7 @@ test('exactly 4 human cameras on a phone screen still show individual per-seat v
   const [owner] = pages as [Page, Page, Page, Page];
 
   for (const page of pages) {
-    await page.getByRole('button', { name: '🎥 Join with video' }).click();
+    await joinCall(page, true);
   }
 
   for (let seatId = 0; seatId <= 3; seatId++) {
@@ -69,64 +69,34 @@ test('exactly 4 human cameras on a phone screen still show individual per-seat v
   await closeAll(contexts);
 });
 
-test('more than 4 human cameras on a phone screen collapse to a 2-tile speaker bar showing only who is actually speaking', async ({ browser }) => {
+test('more than 4 human cameras on a phone screen: every camera that fits stays on its seat, yours always — no speaker strip', async ({ browser }) => {
   const { pages, contexts } = await seatHumans(browser, ['Gina', 'Hank', 'Iris', 'Jack'], PHONE_VIEWPORT);
   const [owner, gina, hank, iris, jack] = pages as [Page, Page, Page, Page, Page];
 
-  // Owner, Gina, and Hank join but immediately mute — Chromium's fake
-  // audio device (see playwright.config.ts) only emits its tone while a
-  // track stays enabled, so muting is a real (not simulated) way to make
-  // them silent.
+  // Owner, Gina, and Hank join but mute (their seat box's mic button).
   for (const page of [owner, gina, hank]) {
-    await page.getByRole('button', { name: '🎥 Join with video' }).click();
-    await page.getByRole('button', { name: '🎤 Mute' }).click();
+    await joinCall(page, true);
+    await page.locator('.seat-call').getByRole('button', { name: 'Mute', exact: true }).click();
   }
-  // Iris joins and stays unmuted, and her connection to the owner is
-  // confirmed fully negotiated (video — and thus the same stream's audio
-  // track — actually flowing) BEFORE the 5th camera (Jack) pushes the
-  // table into collapsed mode. Only 4 cameras are on at this point, so
-  // collapse hasn't triggered yet and her seat's own .seat-video is still
-  // visible to check directly — this is what a slow CI runner's full
-  // 5-way WebRTC mesh needs the most headroom for, and checking it here
-  // (before collapse hides all seat video) is more direct than just
-  // giving the post-collapse accuracy check itself a longer timeout.
-  await iris.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(iris, true);
   await expect(owner.locator('[data-testid="seat-3"] .seat-video video')).toBeVisible({ timeout: 20_000 });
-  // Jack joins last, unmuted — the 5th camera, pushing past the >4
-  // threshold on this phone-sized viewport.
-  await jack.getByRole('button', { name: '🎥 Join with video' }).click();
+  // Jack joins last — the 5th camera, past the >4 threshold on this phone-sized viewport.
+  await joinCall(jack, true);
+  // Jack's camera reaching the owner is what pushes it past 4.
+  await expect.poll(() => owner.evaluate(() => document.querySelectorAll('[data-testid^="seat-"] video').length), { timeout: 20_000 }).toBeGreaterThanOrEqual(4);
 
-  // Every seat's own video is suppressed table-wide now...
-  await expect(owner.locator('.seat-video')).toHaveCount(0, { timeout: 20_000 });
-  // ...replaced by a 2-tile bar, showing exactly 2 people regardless of who —
-  // this part is fully environment-agnostic (pure DOM/count, no audio
-  // analysis involved) and must always hold.
-  await expect(owner.locator('.speaker-bar-tile')).toHaveCount(2, { timeout: 20_000 });
-
-  // The bar should show specifically the 2 still-unmuted (actually
-  // speaking) players, not just any 2 — proving the selection is
-  // accuracy-correct, not just count-correct. This part DOES depend on
-  // Web Audio's AnalyserNode actually reading a non-zero signal from
-  // Chromium's fake mic, which real local runs do reliably — but has
-  // twice now come back empty specifically in this project's CI runner
-  // (a headless Linux container, quite possibly without a real/virtual
-  // audio backend for Chromium's synthetic device to feed), landing on
-  // the ascending-seat-id backfill both times regardless of who was
-  // muted. Since that would make EVERY possible identity assertion here
-  // fail identically on that runner no matter how it's phrased, this is
-  // reported rather than asserted, so a real accuracy regression is
-  // still visible in the test output without making deploys depend on a
-  // CI container capability this feature doesn't actually need to work
-  // (see getSharedAudioContext's own doc comment for the one genuine
-  // product-code fix this diagnosis did produce).
-  try {
-    await expect(async () => {
-      const labels = (await owner.locator('.speaker-bar-label').allTextContents()).sort();
-      expect(labels).toEqual(['Iris', 'Jack']);
-    }).toPass({ timeout: 20_000 });
-  } catch {
-    const labels = (await owner.locator('.speaker-bar-label').allTextContents()).sort();
-    console.warn(`speaker-bar accuracy check did not converge (got ${JSON.stringify(labels)}, expected ["Iris","Jack"]) — see this test's own comment.`);
+  // No strip: the cameras stay on the seats. Your own is always among them…
+  await expect(owner.locator('.speaker-bar')).toHaveCount(0);
+  await expect(owner.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 20_000 });
+  // …and whichever are shown never overlap each other.
+  const tiles = await owner.locator('.seat-video').evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom })));
+  expect(tiles.length).toBeGreaterThanOrEqual(1);
+  for (let i = 0; i < tiles.length; i++) {
+    for (let j = i + 1; j < tiles.length; j++) {
+      const a = tiles[i]!;
+      const b = tiles[j]!;
+      expect(a.l < b.r - 1 && a.r > b.l + 1 && a.t < b.b - 1 && a.b > b.t + 1).toBe(false);
+    }
   }
 
   await closeAll(contexts);
@@ -136,7 +106,7 @@ type Face = { seatId: number; front: boolean; blocked: boolean; inView: boolean;
 const faces = (page: Page): Promise<Face[]> =>
   page.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => { faces: Face[] } } }).__scene3d?.debugState().faces ?? []);
 
-// The speaker bar is the 2D table's answer to a crowded felt. On the 3D
+// Fitting the camera tiles is the 2D table's answer to a crowded felt. On the 3D
 // table each player wears their camera as a screen on their head, in the
 // scene itself (players3d.ts's FaceScreen): seen as it would be from your
 // chair — square-on across the table, never from behind or side-on, and not
@@ -157,7 +127,7 @@ test('on the 3D table, each camera is a screen on its player’s head, seen as i
   await expect(owner.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
 
   for (const page of pages) {
-    await page.getByRole('button', { name: '🎥 Join with video' }).click();
+    await joinCall(page, true);
   }
 
   // Everyone else's camera is a screen in the scene; their seat boxes are just name and stack.
@@ -187,7 +157,7 @@ test('the same 5-camera scenario never collapses on a laptop-sized screen', asyn
   const [owner] = pages as [Page, Page, Page, Page, Page];
 
   for (const page of pages) {
-    await page.getByRole('button', { name: '🎥 Join with video' }).click();
+    await joinCall(page, true);
   }
 
   for (let seatId = 0; seatId <= 4; seatId++) {
@@ -224,7 +194,7 @@ test('4 human cameras during an active hand on a phone screen never overlap the 
   const [owner] = pages as [Page, Page, Page, Page];
 
   for (const page of pages) {
-    await page.getByRole('button', { name: '🎥 Join with video' }).click();
+    await joinCall(page, true);
   }
   for (let seatId = 0; seatId <= 3; seatId++) {
     await expect(owner.locator(`[data-testid="seat-${String(seatId)}"] .seat-video video`)).toBeVisible({ timeout: 20_000 });

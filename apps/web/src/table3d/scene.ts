@@ -111,7 +111,7 @@ function smooth(t: number): number {
 
 const FLOOR_Y = -1.56;
 /** The page's controls on the felt that seat boxes keep clear of (see Table.tsx). */
-const OBSTACLES = '.start-hand-panel > *, .immersive-toggle, .fairness-commitment, .board-hud, .action-ticker';
+const OBSTACLES = '.start-hand-panel > *, .table-corner, .fairness-commitment, .fairness-link, .board-hud, .action-ticker';
 
 function roundedRect(hw: number, hd: number, r: number): THREE.Shape {
   const s = new THREE.Shape();

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, playHandToCompletion, startHand, takeSeat, joinCall } from './helpers.js';
 
 // Regression test for the video-fills-the-whole-seat merge: a seat with its
 // camera on shows video as the full seat background, with its name (top)
@@ -22,7 +22,7 @@ test('a seat with video on overlays its name/cards/stack on the full-size video;
   await inviteToSeat(pageOwner, pageGuest, 1, 100);
 
   // Only the owner (seat 0) turns their camera on — seat 1 stays without video.
-  await pageOwner.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(pageOwner, true);
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 15_000 });
 
   await startHand(pageOwner);
@@ -73,8 +73,8 @@ test("an opponent's video shows no card-back placeholders during the hand, only 
   await inviteToSeat(pageOwner, pageGuest, 1, 100);
 
   // Both turn their camera on this time.
-  await pageOwner.getByRole('button', { name: '🎥 Join with video' }).click();
-  await pageGuest.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(pageOwner, true);
+  await joinCall(pageGuest, true);
   await expect(pageOwner.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 15_000 });
   await expect(pageOwner.locator('[data-testid="seat-1"] .seat-video video')).toBeVisible({ timeout: 15_000 });
 

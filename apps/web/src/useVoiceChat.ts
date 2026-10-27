@@ -308,7 +308,9 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
   const joinCall = useCallback(
     (withVideo: boolean): void => {
       if (!supported) {
-        setError('Your browser does not support voice/video calling.');
+        // Browsers only allow the camera and mic on a secure (https) page — a plain-http address (a LAN
+        // test server) can't call, however capable the browser.
+        setError(window.isSecureContext ? 'Your browser does not support voice/video calling.' : 'Calls need a secure (https) connection — this address isn’t one.');
         return;
       }
       setError(null);

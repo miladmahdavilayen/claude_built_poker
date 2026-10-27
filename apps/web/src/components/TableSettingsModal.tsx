@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { adminGetTableSettings, adminUpdateTableSettings } from '../api.js';
 import { diffSettings, formFromSettings, TableSettingsFields, type SettingsForm } from './TableSettingsForm.js';
+import { ErrorBanner } from './ErrorBanner.js';
 
 /**
  * The owner's settings editor for a table, opened from the lobby by holding
@@ -105,7 +106,7 @@ export function TableSettingsModal({
         )}
         {inHand && <p className="owner-menu-note">A hand is in progress: blinds, ante and straddle switch over when it ends. Everything else applies right away.</p>}
         {form ? <TableSettingsFields form={form} set={set} /> : !message && <p className="muted">Loading…</p>}
-        {message && <div className={message.ok ? 'owner-menu-ok' : 'error-banner'}>{message.text}</div>}
+        {message && (message.ok ? <div className="owner-menu-ok">{message.text}</div> : <ErrorBanner message={message.text} onClose={() => setMessage(null)} />)}
         <div className="modal-actions">
           <button type="button" onClick={onClose} disabled={busy}>
             Close

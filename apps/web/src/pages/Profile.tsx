@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import * as api from '../api.js';
 import type { MyProfileDto } from '../api.js';
 import { useAuth } from '../AuthContext.js';
+import { ErrorBanner } from '../components/ErrorBanner.js';
 
 const SIGN_IN_METHOD_LABEL: Record<MyProfileDto['signInMethod'], string> = {
   google: 'Google',
@@ -63,7 +64,7 @@ export function ProfilePage(): React.JSX.Element {
         </Link>
       </header>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
       {profile && (
         <section className="profile-card">
@@ -103,7 +104,7 @@ export function ProfilePage(): React.JSX.Element {
               This cannot be undone, and you&rsquo;ll be signed out immediately. If you sign up again with the same Google account (you&rsquo;ll need a new
               access key), you&rsquo;ll start with the balance you have now.
             </p>
-            {deleteError && <div className="error-banner">{deleteError}</div>}
+            {deleteError && <ErrorBanner message={deleteError} onClose={() => setDeleteError(null)} />}
             <label>
               Type &ldquo;{confirmationPhrase}&rdquo; to confirm
               <input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} disabled={deleting} />

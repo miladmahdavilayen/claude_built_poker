@@ -112,6 +112,7 @@ test('a split pot at the table: banner, each winner glowing with their +$X, the 
   // In the chat, in plain words, for everyone.
   await owner.getByRole('button', { name: 'Chat', exact: true }).click();
   await expect(owner.locator('.chat-message--dealer')).toContainText('split the pot, $5 each');
+  await owner.getByRole('button', { name: 'Close chat' }).click();
 
   // Tapping the banner skips straight to the end: nothing left behind.
   await owner.getByTestId('split-pot-banner').click();

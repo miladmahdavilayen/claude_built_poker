@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, takeSeat } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, takeSeat, joinCall, openTableMenu, closeTableMenu } from './helpers.js';
 
 test('two seated players joining voice+video see each other\'s video rendered on their seats', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -16,8 +16,8 @@ test('two seated players joining voice+video see each other\'s video rendered on
   await takeSeat(pageA, 0, 100);
   await inviteToSeat(pageA, pageB, 1, 100);
 
-  await pageA.getByRole('button', { name: '🎥 Join with video' }).click();
-  await pageB.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(pageA, true);
+  await joinCall(pageB, true);
 
   // Each seat gets its OWN video element rendered directly on it — the
   // player's own seat (their local, muted preview) and the other seated
@@ -76,7 +76,7 @@ test("a seated player who never joins the call still hears another player, but s
   await inviteToSeat(pageA, pageB, 1, 100);
 
   // Only A ever touches voice controls — B never clicks anything voice-related.
-  await pageA.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(pageA, true);
 
   // B hears A, with zero action on B's part...
   await expect(pageB.locator('[data-testid="seat-0"] audio')).toHaveCount(1, { timeout: 15_000 });
@@ -87,7 +87,7 @@ test("a seated player who never joins the call still hears another player, but s
   await expect(pageB.locator('video')).toHaveCount(0);
 
   // Joining the call (B's own choice) brings A's video in.
-  await pageB.getByRole('button', { name: '🎤 Join voice' }).click();
+  await joinCall(pageB, false);
   await expect(pageB.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 15_000 });
 
   // A stops sending — B's copy of A's media goes away again.
@@ -111,10 +111,11 @@ test('the owner, without joining the call or taking a seat, sees and hears an in
   await guestSignup(pageGuest, 'Grace');
   await inviteToSeat(pageOwner, pageGuest, 2, 100);
 
-  await pageGuest.getByRole('button', { name: '🎥 Join with video' }).click();
+  await joinCall(pageGuest, true);
 
-  // The owner never clicked a voice button and has no seat.
-  await expect(pageOwner.getByRole('button', { name: '🎥 Join with video' })).toBeVisible();
+  // The owner never clicked a voice button and has no seat (their call buttons are in the table menu).
+  await expect((await openTableMenu(pageOwner)).getByRole('button', { name: '🎥 Join with video' })).toBeVisible();
+  await closeTableMenu(pageOwner);
   await expect(pageOwner.locator('[data-testid="seat-2"] .seat-video video')).toBeVisible({ timeout: 15_000 });
   await expect
     .poll(() => pageOwner.locator('[data-testid="seat-2"] .seat-video video').evaluate((v) => (v as HTMLVideoElement).videoWidth > 0), { timeout: 10_000 })
@@ -126,7 +127,7 @@ test('the owner, without joining the call or taking a seat, sees and hears an in
   await ctxGuest.close();
 });
 
-test('a spectator (no seat) using voice chat appears in the compact voice strip instead', async ({ browser }) => {
+test('a spectator (no seat) using voice chat appears in the small strip over the table instead, and sees themselves in the menu', async ({ browser }) => {
   const ctxA = await browser.newContext();
   const ctxB = await browser.newContext();
   const pageA = await ctxA.newPage();
@@ -141,11 +142,16 @@ test('a spectator (no seat) using voice chat appears in the compact voice strip 
   await pageB.goto(tableUrl);
   // Neither player takes a seat — both are spectators.
 
-  await pageA.getByRole('button', { name: '🎤 Join voice' }).click();
-  await pageB.getByRole('button', { name: '🎤 Join voice' }).click();
+  await joinCall(pageA, false);
+  await joinCall(pageB, false);
 
-  await expect(pageA.locator('.voice-tile')).toHaveCount(2, { timeout: 15_000 });
-  await expect(pageB.locator('.voice-tile')).toHaveCount(2, { timeout: 15_000 });
+  // Each sees the other in the strip over the table…
+  await expect(pageA.locator('.table-unseated .voice-tile')).toHaveCount(1, { timeout: 15_000 });
+  await expect(pageB.locator('.table-unseated .voice-tile')).toHaveCount(1, { timeout: 15_000 });
+  // …and themselves in the menu's Call section, with their own controls.
+  const menu = await openTableMenu(pageA);
+  await expect(menu.locator('.voice-tile')).toHaveCount(1);
+  await expect(menu.getByRole('button', { name: 'Leave call' })).toBeVisible();
 
   await ctxA.close();
   await ctxB.close();

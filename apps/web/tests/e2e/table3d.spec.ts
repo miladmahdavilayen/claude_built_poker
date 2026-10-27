@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { dealOrder, edgePoint, seatPlacements } from '../../src/table3d/seatLayout3d.js';
-import { addBot, adminLogin, createTable, playHandToCompletion, startHand, takeSeat } from './helpers.js';
+import { addBot, adminLogin, createTable, playHandToCompletion, startHand, takeSeat, openTableMenu } from './helpers.js';
 
 // The 3D table (src/table3d/). The suite runs on the 2D table by default
 // (playwright.config.ts); these tests switch to 3D themselves.
@@ -105,8 +105,9 @@ test('the View menu has exactly three views — 2D, 3D seated, 3D standing — a
   await adminLogin(page);
   await createTable(page, { name: 'View Switch', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
   await expect(page.getByTestId('table-3d')).toHaveCount(0);
-  await page.getByRole('button', { name: /View/ }).click();
-  await expect(page.getByRole('radio')).toHaveCount(3);
+  // The view is in the table menu.
+  await openTableMenu(page);
+  await expect(page.getByRole('radiogroup', { name: 'View' }).getByRole('radio')).toHaveCount(3);
   await page.getByLabel(/3D — Standing/).check();
   const webgl = await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'));
   test.skip(!webgl, 'No WebGL in this browser');
@@ -116,7 +117,7 @@ test('the View menu has exactly three views — 2D, 3D seated, 3D standing — a
   // A reload loads the 3D table (and its dealer character) afresh: the same allowance as the first load.
   await page.reload();
   await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'seated', { timeout: 20_000 });
-  await page.getByRole('button', { name: /View/ }).click();
+  await openTableMenu(page);
   await page.getByLabel(/Classic 2D/).check();
   await expect(page.getByTestId('table-3d')).toHaveCount(0);
   await expect(page.locator('.board-area').first()).toBeVisible();

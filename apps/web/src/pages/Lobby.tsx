@@ -9,6 +9,7 @@ import { MoneyInput } from '../components/MoneyInput.js';
 import { useSeatMenuGesture } from '../components/SeatActionMenu.js';
 import { SwipeToDelete } from '../components/SwipeToDelete.js';
 import { TableSettingsModal } from '../components/TableSettingsModal.js';
+import { ErrorBanner } from '../components/ErrorBanner.js';
 
 export function LobbyPage(): React.JSX.Element {
   const { user } = useAuth();
@@ -135,7 +136,7 @@ function TablesLobby(): React.JSX.Element {
         )}
       </header>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
 
       <div className="lobby-toolbar">
         {/* Only the owner creates real tables — every other signed-in
@@ -296,7 +297,7 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>Create table</h3>
-        {error && <div className="error-banner">{error}</div>}
+        {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
         <label>
           Name
           <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -534,7 +535,7 @@ function PracticeLobby(): React.JSX.Element {
               Your balance ({formatChips(user.chips)}) is below the {formatChips(range.minBuyIn)} minimum buy-in for these stakes.
             </p>
           )}
-          {error && <div className="error-banner">{error}</div>}
+          {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
           <button type="button" className="btn-primary practice-start" disabled={!affordable || starting} onClick={start}>
             {starting ? 'Setting up…' : 'Start game'}
           </button>

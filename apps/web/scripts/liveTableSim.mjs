@@ -216,7 +216,7 @@ class Player {
     this.ffmpeg = spawn('ffmpeg', [
       '-loglevel', 'error', '-y', '-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', '15', '-i', '-',
       '-vf', `scale=${size}:force_original_aspect_ratio=decrease,pad=${size}:(ow-iw)/2:(oh-ih)/2`,
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', this.clip,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', this.clip,
     ]);
     this.ffmpegDone = new Promise((r) => this.ffmpeg.on('close', r));
     const cdp = await this.ctx.newCDPSession(this.page);
@@ -227,18 +227,30 @@ class Player {
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: width * 2, maxHeight: height * 2 });
     // Paced by the clock, not the timer: when this machine is busy and a tick comes late, the
-    // latest frame is repeated to catch up, so the video runs at real speed.
+    // latest frame is repeated to catch up, so the video runs at real speed. If the encoder
+    // itself falls behind, frames are skipped rather than queued (nine of them at once can
+    // swamp a laptop) — the video stays in step with the clock, a little jerkier.
     const start = Date.now();
     let written = 0;
+    const stdin = this.ffmpeg.stdin;
     this.ticker = setInterval(() => {
       if (!frame) return;
       const due = Math.floor(((Date.now() - start) * 15) / 1000);
-      for (; written < due; written++) this.ffmpeg.stdin.write(frame);
+      if (stdin.writableLength > 8 * 1024 * 1024) {
+        written = due;
+        this.skipped = (this.skipped ?? 0) + 1;
+        return;
+      }
+      for (; written < due; written++) stdin.write(frame);
     }, 1000 / 15);
   }
 
-  async stopRecording() {
+  stopTicker() {
     clearInterval(this.ticker);
+  }
+
+  async stopRecording() {
+    this.stopTicker();
     this.ffmpeg.stdin.end();
     await this.ffmpegDone;
   }
@@ -481,6 +493,7 @@ const sampler = (async () => {
     await sleep(15_000);
     const s = await Promise.all(players.map((p) => sample(p.page)));
     s.forEach((x, i) => players[i].samples.push({ t: Math.round((Date.now() - t0) / 1000), ...x }));
+    if (!opt('admin-password')) await owner.ctx.storageState({ path: STATE_FILE }).catch(() => undefined);
     log('  ' + s.map((x, i) => `${NAMES[i]} ${String(x.fps ?? 'x')}fps ${String(x.peers?.connected ?? 0)}/${String(PLAYERS - 1)}p`).join(' | '));
   }
 })();
@@ -524,7 +537,14 @@ while (handsStarted < HANDS) {
     while (!ok() && Date.now() < end) await sleep(200);
     return ok();
   };
-  if (!(await until(() => owner.phase === 'in-hand', 30_000))) throw new Error('the hand did not start');
+  // Not started yet? Tap again, as a person would — and note whatever the table said about it.
+  for (let tries = 1; !(await until(() => owner.phase === 'in-hand', 6_000)); tries++) {
+    const said = (await op.locator('.error-banner, [role="alert"]').allInnerTexts().catch(() => [])).join(' / ');
+    log(`  Play Hand tapped, no hand yet (try ${String(tries)})${said ? `: the table says "${said}"` : ''}`);
+    owner.errors.push(`Play Hand needed another tap${said ? `: ${said}` : ''}`);
+    if (tries >= 8) throw new Error('the hand did not start');
+    if (await playHand.isEnabled().catch(() => false)) await playHand.click().catch(() => undefined);
+  }
   log(`Hand ${String(handsStarted)} of ${String(HANDS)} dealt`);
   if (!(await until(() => owner.phase !== 'in-hand', 600_000))) log('  (still going after 10 min)');
   log(`Hand ${String(handsStarted)} over (board ${String(lastBoard)} cards)`);
@@ -551,7 +571,9 @@ if (!flag('keep-table')) {
   }
 }
 
-for (const p of players) await p.stopRecording();
+// All at once: one recording's encoder finishing mustn't keep the others running.
+for (const p of players) p.stopTicker();
+await Promise.all(players.map((p) => p.stopRecording()));
 if (!opt('admin-password')) await owner.ctx.storageState({ path: STATE_FILE }).catch(() => undefined);
 for (const p of players) {
   await p.ctx.close();

@@ -2662,6 +2662,10 @@ browser has to download a character to draw it, but only once:
 - **Characters and card faces:** kept for 30 days. To replace a character,
   give the new file a new name; under the same name, players keep the old
   one for up to 30 days.
+- **The list of characters** (`models/dealers/index.json`): always rechecked,
+  in nginx and in the fetch itself. It was once kept 30 days too, and
+  Safari on an iPhone that had fetched it before the VIP dealers existed went
+  on showing only the old list.
 - **Vite's hashed bundles:** kept for a year.
 - **The page itself:** always rechecked, so a deploy reaches everyone at
   once.

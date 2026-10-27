@@ -17,7 +17,9 @@ export interface DealerCharacter {
 let list: Promise<DealerCharacter[]> | null = null;
 
 function loadList(): Promise<DealerCharacter[]> {
-  list ??= fetch('/models/dealers/index.json')
+  // Always asked again (a quick "has it changed?" to the server): a browser holding an older copy for weeks
+  // (nginx kept it 30 days, once) would otherwise go on missing every character added since.
+  list ??= fetch('/models/dealers/index.json', { cache: 'no-cache' })
     .then((r) => (r.ok ? (r.json() as Promise<DealerCharacter[]>) : []))
     .catch(() => []);
   return list;

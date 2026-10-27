@@ -6,5 +6,6 @@
   { "id": "michelle", "name": "Michelle", "file": "michelle.fbx" },
   { "id": "judy", "name": "Judy", "file": "judy.fbx", "vip": true },
   { "id": "momo", "name": "Momo", "file": "momo.fbx", "vip": true },
-  { "id": "rumi", "name": "Rumi", "file": "rumi.fbx", "vip": true }
+  { "id": "rumi", "name": "Rumi", "file": "rumi.fbx", "vip": true },
+  { "id": "maya", "name": "Maya", "file": "maya.fbx", "vip": true }
 ]

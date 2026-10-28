@@ -2833,3 +2833,28 @@ including the one at a hand's end that applies a move asked for during it.
 
 `ADMIN_START_BALANCE` (dollars) starts a test server's owner with a set balance
 (local testing: $1,000,000). Never set in production.
+
+## CI/CD on our own Mac, not GitHub's runners
+
+GitHub stays the source of truth for the code; the pipeline runs on the
+owner's Mac, registered as a self-hosted Actions runner (labels:
+`self-hosted, macOS, gpu`). GitHub's hosted runners drew the 3D table in
+software and took ~20 minutes, with WebRTC tests timing out at random; the
+Mac runs the same suite on its GPU (Metal), natively — never in Docker — in
+about ten.
+
+- **Before every push:** `scripts/ci-local.sh` — install (frozen lockfile),
+  lint, typecheck, unit tests, the production build, a 20,000-hand simulation,
+  the browser suite. Nothing failing is pushed.
+- **Release:** `gh workflow run release.yml` once main is pushed. Deploys are
+  no longer automatic on push. It SSHes to the server with plain `ssh` (a
+  Docker-based SSH action can't run on a macOS runner) and runs the same
+  server-side deploy as before, then checks production answers.
+- **CI workflow:** the full pipeline by hand on the runner, and the nightly
+  1,000,000-hand simulation. The uptime check runs there too — so all of these
+  only while the Mac is on and awake.
+- **Never a hosted runner**, and never a container action.
+- **The repo is public**, so a fork must never run code on the Mac: no
+  `pull_request` triggers, every job checks it's this repository, and every
+  outside contributor's workflow run needs the owner's approval
+  (Settings → Actions → General: "all outside collaborators").

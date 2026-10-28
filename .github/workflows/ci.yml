@@ -1,32 +1,30 @@
 name: CI
 
+# Runs on the self-hosted Mac (labels: self-hosted, macOS, gpu) — never on
+# GitHub's hosted runners. The gate before every push is the same pipeline
+# run locally (scripts/ci-local.sh); this workflow is for running it on the
+# runner by hand, and for the nightly long simulation.
+#
+# No pull_request trigger: this repo is public, and a pull request from a
+# fork must never run code on the Mac. (The repo also requires approval for
+# every outside contributor's workflow run — Settings → Actions → General.)
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
   schedule:
     - cron: '0 8 * * *' # 08:00 UTC nightly
 
-jobs:
-  lint-typecheck-test:
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
+permissions:
+  contents: read
 
-  e2e:
-    if: github.event_name != 'schedule'
-    needs: lint-typecheck-test
-    runs-on: ubuntu-latest
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'miladmahdavilayen/claude_built_poker'
+    runs-on: [self-hosted, macOS, gpu]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -34,13 +32,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Install Playwright's Chromium
-        working-directory: apps/web
-        run: npx playwright install --with-deps chromium
-      - name: Run E2E suite (gameplay, private tables, waitlist, voice/video WebRTC, session refresh)
-        working-directory: apps/web
-        run: pnpm e2e
+      # The whole pipeline — install, lint, typecheck, unit tests, build, the
+      # simulation smoke test, then the browser suite with the Mac's own GPU
+      # (Metal), natively, not in Docker.
+      - name: Full pipeline
+        run: scripts/ci-local.sh
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
@@ -49,81 +45,10 @@ jobs:
           path: apps/web/playwright-report/
           if-no-files-found: ignore
 
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint-typecheck-test, e2e, simulation-smoke]
-    runs-on: ubuntu-latest
-    steps:
-      - name: SSH in and redeploy
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          # 'ubuntu' on the Oracle server (root SSH is disabled there); set
-          # via the DEPLOY_USER secret so the host can change without an edit.
-          username: ${{ secrets.DEPLOY_USER || 'root' }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            set -e
-            cd /opt/pokerclause
-            git fetch origin main
-            git reset --hard origin/main
-            # Build the new images WITHOUT starting them yet — a schema
-            # migration (if this release has one) needs to run against the
-            # NEW code before the server itself restarts, or it boots
-            # straight into "relation does not exist" and crash-loops
-            # (see DECISIONS.md — this happened on the very first manual
-            # deploy, before this pipeline existed).
-            docker compose build
-            docker compose run --rm server pnpm db:migrate
-            docker compose up -d
-            docker image prune -f
-            # Build layers pile up on every deploy (24 GB on the old host
-            # before anyone noticed); keep only the last week's for speed.
-            docker builder prune -f --filter until=168h
-            # Fail the job loudly if the server didn't actually come back up
-            # healthy — a broken deploy should turn this run red, not look
-            # identical to a working one in the Actions UI.
-            for i in $(seq 1 15); do
-              if curl -sf http://127.0.0.1:4000/health > /dev/null; then
-                echo "Server healthy."
-                exit 0
-              fi
-              sleep 2
-            done
-            echo "Server did not become healthy after deploy — logs:"
-            docker compose logs server --tail 50
-            exit 1
-
-  simulation-smoke:
-    if: github.event_name != 'schedule'
-    needs: lint-typecheck-test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Run simulation smoke test
-        run: |
-          pnpm --filter @pokerclause/sim sim -- \
-            --hands 20000 \
-            --seats random \
-            --mix adversarial \
-            --seed ci-${{ github.run_id }}
-      - name: Upload failure repros
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sim-failures-pr-${{ github.event.pull_request.number || github.run_id }}
-          path: packages/sim/sim-failures/
-          if-no-files-found: ignore
-
   nightly-simulation:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && github.repository == 'miladmahdavilayen/claude_built_poker'
+    runs-on: [self-hosted, macOS, gpu]
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

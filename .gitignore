@@ -20,3 +20,6 @@ blob-report/
 # Raw character downloads (the app uses the copies in apps/web/public/models/dealers)
 /chars/
 /vipchars/
+
+# scripts/ci-local.sh step logs
+.ci-local/

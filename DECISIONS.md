@@ -2853,10 +2853,12 @@ about ten.
 - **CI workflow:** the full pipeline by hand on the runner. (The nightly
   1,000,000-hand simulation is gone: the 20,000-hand run in every pipeline is
   the check.) The Mac only has to be awake to push and release.
-- **Never a hosted runner**, and never a container action — with one
-  exception, the owner's call: the 15-minute uptime check (`uptime.yml`) runs
-  on GitHub's hosted runners, so production is watched around the clock while
-  the Mac sleeps. It's two curls, no checkout, no permissions.
+- **Never a hosted runner**, and never a container action.
+- **No uptime workflow.** It ran on GitHub's hosted runners, which Cloudflare's
+  Bot Fight Mode answers with 403 (on the Free plan no rule can skip it), so it
+  had been disabled since the move to Oracle. The owner checks production by
+  hand instead; an outside monitor that Cloudflare lets through (UptimeRobot)
+  is the option if that changes.
 - **The repo is public**, so a fork must never run code on the Mac: no
   `pull_request` triggers, every job checks it's this repository, and every
   outside contributor's workflow run needs the owner's approval

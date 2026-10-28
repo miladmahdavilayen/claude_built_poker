@@ -3,15 +3,13 @@ name: CI
 # Runs on the self-hosted Mac (labels: self-hosted, macOS, gpu) — never on
 # GitHub's hosted runners. The gate before every push is the same pipeline
 # run locally (scripts/ci-local.sh); this workflow is for running it on the
-# runner by hand, and for the nightly long simulation.
+# runner by hand.
 #
 # No pull_request trigger: this repo is public, and a pull request from a
 # fork must never run code on the Mac. (The repo also requires approval for
 # every outside contributor's workflow run — Settings → Actions → General.)
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 8 * * *' # 08:00 UTC nightly
 
 permissions:
   contents: read
@@ -22,7 +20,7 @@ concurrency:
 
 jobs:
   pipeline:
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'miladmahdavilayen/claude_built_poker'
+    if: github.repository == 'miladmahdavilayen/claude_built_poker'
     runs-on: [self-hosted, macOS, gpu]
     timeout-minutes: 60
     steps:
@@ -45,31 +43,3 @@ jobs:
           path: apps/web/playwright-report/
           if-no-files-found: ignore
 
-  nightly-simulation:
-    if: github.event_name == 'schedule' && github.repository == 'miladmahdavilayen/claude_built_poker'
-    runs-on: [self-hosted, macOS, gpu]
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Run nightly 1,000,000-hand simulation
-        run: |
-          pnpm --filter @pokerclause/sim sim -- \
-            --hands 1000000 \
-            --seats random \
-            --mix adversarial \
-            --workers 4 \
-            --seed nightly-$(date +%Y%m%d) \
-            --fail-fast false
-      - name: Upload failure repros
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-sim-failures-${{ github.run_id }}
-          path: packages/sim/sim-failures/
-          if-no-files-found: ignore

@@ -2850,9 +2850,10 @@ about ten.
   no longer automatic on push. It SSHes to the server with plain `ssh` (a
   Docker-based SSH action can't run on a macOS runner) and runs the same
   server-side deploy as before, then checks production answers.
-- **CI workflow:** the full pipeline by hand on the runner, and the nightly
-  1,000,000-hand simulation. The uptime check runs there too — so all of these
-  only while the Mac is on and awake.
+- **CI workflow:** the full pipeline by hand on the runner. The uptime check
+  runs there too — so both only while the Mac is on and awake. (The nightly
+  1,000,000-hand simulation is gone: the 20,000-hand run in every pipeline is
+  the check.)
 - **Never a hosted runner**, and never a container action.
 - **The repo is public**, so a fork must never run code on the Mac: no
   `pull_request` triggers, every job checks it's this repository, and every

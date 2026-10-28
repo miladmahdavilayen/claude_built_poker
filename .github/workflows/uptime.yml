@@ -1,10 +1,12 @@
 name: Uptime
 
-# Checks production from outside Oracle every 15 minutes — from the
-# self-hosted Mac (never GitHub's hosted runners), so only while it's on. A
-# failed run makes GitHub email the repo owner, so an outage (or Oracle
-# stopping/reclaiming the free server) is noticed even if every Oracle-side
-# alarm is gone with it.
+# Checks production from outside Oracle every 15 minutes. A failed run makes
+# GitHub email the repo owner, so an outage (or Oracle stopping/reclaiming
+# the free server) is noticed even if every Oracle-side alarm is gone with it.
+#
+# The one workflow on GitHub's hosted runners, by the owner's choice: it must
+# run around the clock, and the self-hosted Mac sleeps. It's two curls — no
+# checkout, no access to the code (permissions: {}).
 # Note: GitHub pauses scheduled workflows in a public repo after 60 days with
 # no commits — re-enable it from the Actions tab if that ever happens.
 on:
@@ -17,7 +19,7 @@ permissions: {}
 jobs:
   check:
     if: github.repository == 'miladmahdavilayen/claude_built_poker'
-    runs-on: [self-hosted, macOS, gpu]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Game server health

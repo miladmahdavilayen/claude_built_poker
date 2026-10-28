@@ -2850,11 +2850,13 @@ about ten.
   no longer automatic on push. It SSHes to the server with plain `ssh` (a
   Docker-based SSH action can't run on a macOS runner) and runs the same
   server-side deploy as before, then checks production answers.
-- **CI workflow:** the full pipeline by hand on the runner. The uptime check
-  runs there too — so both only while the Mac is on and awake. (The nightly
+- **CI workflow:** the full pipeline by hand on the runner. (The nightly
   1,000,000-hand simulation is gone: the 20,000-hand run in every pipeline is
-  the check.)
-- **Never a hosted runner**, and never a container action.
+  the check.) The Mac only has to be awake to push and release.
+- **Never a hosted runner**, and never a container action — with one
+  exception, the owner's call: the 15-minute uptime check (`uptime.yml`) runs
+  on GitHub's hosted runners, so production is watched around the clock while
+  the Mac sleeps. It's two curls, no checkout, no permissions.
 - **The repo is public**, so a fork must never run code on the Mac: no
   `pull_request` triggers, every job checks it's this repository, and every
   outside contributor's workflow run needs the owner's approval

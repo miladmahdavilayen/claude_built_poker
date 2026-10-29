@@ -2846,7 +2846,11 @@ about ten.
 - **Before every push:** `scripts/ci-local.sh` — install (frozen lockfile),
   lint, typecheck, unit tests, the production build, a 20,000-hand simulation,
   the browser suite. Nothing failing is pushed.
-- **Release:** `gh workflow run release.yml` once main is pushed. Deploys are
+- **Release:** `gh workflow run release.yml` once main is pushed. The deploy
+  script goes to the server as ssh's stdin, so nothing in it may read stdin
+  (`< /dev/null`, `docker compose run -T`): the migration step once swallowed
+  the rest of it — no restart — and the job still passed. The script now ends
+  by printing a marker the workflow requires. Deploys are
   no longer automatic on push. It SSHes to the server with plain `ssh` (a
   Docker-based SSH action can't run on a macOS runner) and runs the same
   server-side deploy as before, then checks production answers.

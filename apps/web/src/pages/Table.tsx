@@ -479,8 +479,8 @@ export function TablePage(): React.JSX.Element {
   const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
   const revealLabel = mySeat && isBluffHand(mySeat.holeCards, state.board) ? 'Show Bluff' : 'Reveal Hand';
   const canManage = user.role === 'admin' || sock.canManageTable;
-  // Sitting out — or about to, from the next hand: the sit-out button then offers to sit back in.
-  const sittingOut = !!mySeat && (mySeat.status === 'sitting-out' || mySeat.sittingOutNextHand);
+  // Out of the next hand (sitting out, or about to): the sit-out button then offers to sit back in.
+  const sittingOut = !!mySeat && mySeat.sittingOutNextHand;
   // On an open-invite table the queue is for people who came with its link — not the owner, who seats themselves.
   const waitlistJoinable = !mySeat && (!state.settings.openSeating || (sock.canTakeSeat && user.role !== 'admin'));
   // Something in the menu wants this viewer's attention: a seat open for them at the waitlist's head.

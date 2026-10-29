@@ -87,7 +87,7 @@ export interface ProjectedSeat {
   joiningNextHand: boolean;
   /** This player asked to move to that empty seat mid-hand: they move the moment the hand ends. Null otherwise. */
   movingToSeatId: number | null;
-  /** This player asked to sit out: they're dealt out from the next hand (until they sit back in). */
+  /** Out of the next hand: asked to sit out, or sitting out and not yet asked back in (asking mid-hand deals them in from the next). */
   sittingOutNextHand: boolean;
 }
 

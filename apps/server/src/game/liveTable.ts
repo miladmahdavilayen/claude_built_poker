@@ -83,6 +83,8 @@ export interface LiveSeat {
   preAction: 'check-fold' | 'call-any' | 'check' | null;
   consecutiveTimeouts: number;
   sittingOutRequested: boolean;
+  /** Asked to sit back in mid-hand: dealt in from the next one (see sitIn). */
+  sittingInNextHand: boolean;
   /** Non-null for a computer player — see `addBot`. Never has a real `userId`. */
   botPolicyName: string | null;
   /** Owner-private label given to this seat's invite link at creation time — see createSeatAssignment. Never shown to anyone but the owner (see projection.ts's viewerIsAdmin gate). */
@@ -331,6 +333,7 @@ export class LiveTable {
       preAction: null,
       consecutiveTimeouts: 0,
       sittingOutRequested: false,
+      sittingInNextHand: false,
       botPolicyName: null,
       ownerNickname: null,
       pendingChips: 0,
@@ -888,23 +891,42 @@ export class LiveTable {
     }
   }
 
+  /**
+   * Back in from sitting out. Between hands, at once. Mid-hand, from the next
+   * one: marked active now, they'd be a live player in a hand they hold no
+   * cards for — and get its turns. (applyPendingSitOuts deals them back in.)
+   */
   sitIn(seatId: number): void {
     const liveSeat = this.seats[seatId];
     if (liveSeat) liveSeat.sittingOutRequested = false;
     const engineSeat = this.state.seats[seatId];
-    if (engineSeat && engineSeat.status === 'sitting-out') {
-      const newSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, status: 'active' as const } : s));
-      this.state = { ...this.state, seats: newSeats };
+    if (!engineSeat || engineSeat.status !== 'sitting-out') return;
+    if (this.state.phase === 'in-hand') {
+      if (liveSeat) liveSeat.sittingInNextHand = true;
+      return;
     }
+    const newSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, status: 'active' as const } : s));
+    this.state = { ...this.state, seats: newSeats };
   }
 
-  /** Between-hand cleanup: applies any queued sit-out requests, and sits out anyone whose seat busted to zero. */
+  /** Between-hand cleanup: applies any queued sit-out (and sit-back-in) requests, and sits out anyone whose seat busted to zero. */
   applyPendingSitOuts(): void {
     for (let seatId = 0; seatId < this.state.seats.length; seatId++) {
       const engineSeat = this.state.seats[seatId];
       const liveSeat = this.seats[seatId];
       if (!engineSeat || !liveSeat) continue;
-      if (engineSeat.status === 'active' && liveSeat.sittingOutRequested) {
+      // Asked to sit back in during the last hand: dealt in from this one.
+      if (liveSeat.sittingInNextHand) {
+        liveSeat.sittingInNextHand = false;
+        if (engineSeat.status === 'sitting-out' && !liveSeat.sittingOutRequested && engineSeat.stack > 0) {
+          this.state = { ...this.state, seats: this.state.seats.map((s, i) => (i === seatId ? { ...s, status: 'active' as const } : s)) };
+          continue;
+        }
+      }
+      // Whoever played the last hand is still marked folded or all-in until the next deal: they sit out too
+      // (only 'active' used to count — so anyone who'd played the hand, nearly everyone, was dealt in regardless).
+      const seated = engineSeat.status === 'active' || engineSeat.status === 'folded' || engineSeat.status === 'all-in';
+      if (seated && liveSeat.sittingOutRequested) {
         const newSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, status: 'sitting-out' as const } : s));
         this.state = { ...this.state, seats: newSeats };
       }
@@ -1666,7 +1688,8 @@ export class LiveTable {
         leavingAfterHand: s.pendingRemoval !== null,
         joiningNextHand: s.joinsNextHand,
         movingToSeatId: s.pendingMoveTo,
-        sittingOutNextHand: s.sittingOutRequested,
+        // Out of the next hand: asked to sit out, or sitting out now and not asked back in yet.
+        sittingOutNextHand: s.sittingOutRequested || (this.state.seats[s.seatId]?.status === 'sitting-out' && !s.sittingInNextHand && !s.joinsNextHand),
       });
     }
     return map;

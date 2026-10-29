@@ -7,7 +7,13 @@ import { adminLogin, closeTableMenu, createTable, openTableMenu } from './helper
 // word (never who did it, never a raise amount), all-ins, heads up, how
 // many see the flop, the board, showdown — and who won, by name.
 
-const act = (seatId: number, type: string, resultingStack = 100): ProjectedGameEvent => ({ type: 'action-taken', seatId, action: { type }, resultingStack, committedThisStreet: 0 });
+const act = (seatId: number, type: string, resultingStack = 100, committedThisStreet = 0): ProjectedGameEvent => ({
+  type: 'action-taken',
+  seatId,
+  action: { type },
+  resultingStack,
+  committedThisStreet,
+});
 const NAMES = ['Ann', 'Ben', 'Cat', 'Dan', 'Eve'];
 const nameOf = (seatId: number): string => NAMES[seatId]!;
 const start = (seats: number[]): ProjectedGameEvent[] => [
@@ -25,7 +31,45 @@ test('every action is called in a word; all-ins as such; a fold down to two play
     'Heads up',
   ]);
   expect(dealerCalls([act(3, 'call'), { type: 'street-dealt', street: 'flop', board: ['As', 'Kd', '7c'] }], hand, nameOf)).toEqual(['Call', 'Flop']);
-  expect(dealerCalls([act(3, 'bet', 0), act(0, 'call', 0)], hand, nameOf)).toEqual(['All in', 'Call, all in']);
+  expect(dealerCalls([act(3, 'bet', 0, 50), act(0, 'call', 0, 50)], hand, nameOf)).toEqual(['All in', 'Call, all in']);
+});
+
+test('all-ins in the cardroom’s words — "All in", "Call, all in", "All in for less", "All in, not a full raise" — and once everyone is all in, the board runs out without a word', () => {
+  const blinds: ProjectedGameEvent = {
+    type: 'blinds-posted',
+    posts: [
+      { seatId: 1, kind: 'small-blind', amount: 1, allIn: false },
+      { seatId: 2, kind: 'big-blind', amount: 2, allIn: false },
+    ],
+  };
+  const flop: ProjectedGameEvent = { type: 'street-dealt', street: 'flop', board: ['As', 'Kd', '7c'] };
+  const turn: ProjectedGameEvent = { type: 'street-dealt', street: 'turn', board: ['As', 'Kd', '7c', '2h'] };
+  const river: ProjectedGameEvent = { type: 'street-dealt', street: 'river', board: ['As', 'Kd', '7c', '2h', '9s'] };
+
+  // A shove, a call with exactly the last chips, a call short of it, a raise that's more than a call but not a full raise.
+  const hand = newHandTrack();
+  expect(
+    dealerCalls(
+      [...start([0, 1, 2, 3]), blinds, act(3, 'raise', 0, 100), act(0, 'call', 0, 100), act(1, 'call', 0, 40), act(2, 'call', 400, 100)],
+      hand,
+      nameOf,
+    ),
+  ).toEqual(['All in', 'Call, all in', 'All in for less', 'Call']);
+  // Three all in and one with chips left: no more betting — the board is run out silently, then the showdown.
+  expect(dealerCalls([flop, turn, river, { type: 'showdown-reveal', seatId: 3, holeCards: ['Ah', 'Ad'] }], hand, nameOf)).toEqual(['Showdown']);
+
+  const short = newHandTrack();
+  // Raised to 10 (a raise of 8); an all-in to 14 is a raise of only 4 — not a full raise. The next full raise is
+  // still 8 more, from 14: to 22.
+  expect(dealerCalls([...start([0, 1, 2, 3]), blinds, act(3, 'raise', 90, 10), act(0, 'raise', 0, 14), act(1, 'raise', 0, 22)], short, nameOf)).toEqual([
+    'Raise',
+    'All in, not a full raise',
+    'All in',
+  ]);
+  // Two still have chips: the betting goes on, and the flop is called as ever.
+  expect(dealerCalls([act(2, 'call', 80, 22), act(3, 'call', 72, 22), flop], short, nameOf)).toEqual(['Call', 'Call', 'Four players to the flop', 'Flop']);
+  // An opening bet with the last chips is just "All in"; called all in by the last one with chips: silence to the end.
+  expect(dealerCalls([act(2, 'bet', 0, 80), act(3, 'call', 0, 72), turn, river], short, nameOf)).toEqual(['All in', 'All in for less']);
 });
 
 test('how many see the flop: "Four players to the flop", or "Heads up to the flop" when only two do', () => {
@@ -57,17 +101,71 @@ test('the result by name: the winner and their hand, a two-way chop by both name
     ),
   ).toEqual(['Turn', 'River', 'Showdown', 'Ann wins with three aces', 'Ben takes the side pot with three kings']);
   const flush = { amount: 20, handName: 'flush' };
-  expect(dealerCalls([{ type: 'pot-awarded', potIndex: 0, winners: [{ seatId: 0, ...flush }, { seatId: 2, ...flush }] }], newHandTrack(), nameOf)).toEqual([
-    'Ann and Cat split the pot',
-  ]);
   expect(
-    dealerCalls([{ type: 'pot-awarded', potIndex: 0, winners: [{ seatId: 0, ...flush }, { seatId: 1, ...flush }, { seatId: 2, ...flush }] }], newHandTrack(), nameOf),
+    dealerCalls(
+      [
+        {
+          type: 'pot-awarded',
+          potIndex: 0,
+          winners: [
+            { seatId: 0, ...flush },
+            { seatId: 2, ...flush },
+          ],
+        },
+      ],
+      newHandTrack(),
+      nameOf,
+    ),
+  ).toEqual(['Ann and Cat split the pot']);
+  expect(
+    dealerCalls(
+      [
+        {
+          type: 'pot-awarded',
+          potIndex: 0,
+          winners: [
+            { seatId: 0, ...flush },
+            { seatId: 1, ...flush },
+            { seatId: 2, ...flush },
+          ],
+        },
+      ],
+      newHandTrack(),
+      nameOf,
+    ),
   ).toEqual(['The pot is split']);
   expect(
-    dealerCalls([{ type: 'pot-awarded', potIndex: 0, winners: [{ seatId: 3, amount: 20, handName: 'straight flush', bestFive: ['As', 'Ks', 'Qs', 'Js', 'Ts'] }] }], newHandTrack(), nameOf),
+    dealerCalls(
+      [{ type: 'pot-awarded', potIndex: 0, winners: [{ seatId: 3, amount: 20, handName: 'straight flush', bestFive: ['As', 'Ks', 'Qs', 'Js', 'Ts'] }] }],
+      newHandTrack(),
+      nameOf,
+    ),
   ).toEqual(['Dan wins with a royal flush']);
   // Won uncontested — everyone else folded: just who.
   expect(dealerCalls([{ type: 'pot-awarded', potIndex: 0, winners: [{ seatId: 4, amount: 3 }] }], newHandTrack(), nameOf)).toEqual(['Eve wins']);
+});
+
+test('side pots come before the main pot (the engine pays them first): one player winning them all is one call, not one per pot', () => {
+  const showdown = (awards: ProjectedGameEvent[]): string[] => {
+    const hand = newHandTrack();
+    dealerCalls(start([0, 1, 2]), hand, nameOf);
+    return dealerCalls(
+      [
+        { type: 'street-dealt', street: 'river', board: ['As', 'Kd', '7c', '2h', '9s'] },
+        { type: 'showdown-reveal', seatId: 0, holeCards: ['Ah', 'Ac'] },
+        { type: 'showdown-reveal', seatId: 1, holeCards: ['Kh', 'Kc'] },
+        { type: 'showdown-reveal', seatId: 2, holeCards: ['7h', '7d'] },
+        ...awards,
+      ],
+      hand,
+      nameOf,
+    ).filter((c) => c !== 'River' && c !== 'Showdown');
+  };
+  const pot = (potIndex: number, seatId: number): ProjectedGameEvent => ({ type: 'pot-awarded', potIndex, winners: [{ seatId, amount: 10 }] });
+  // Ann wins two side pots and the main pot: one call.
+  expect(showdown([pot(2, 0), pot(1, 0), pot(0, 0)])).toEqual(['Ann wins with three aces']);
+  // Ben wins the side pot, Ann the main: Ann's call first, then Ben's side pot — each once.
+  expect(showdown([pot(2, 1), pot(1, 1), pot(0, 0)])).toEqual(['Ann wins with three aces', 'Ben takes the side pot with three kings']);
 });
 
 test('how the pot was won, made plain: the kicker when the board gives both players the same hand, the deciding cards of a flush, the full house', () => {
@@ -93,14 +191,23 @@ test('how the pot was won, made plain: the kicker when the board gives both play
   expect(showdown(['5h', '4d', '3c', 'Kh', '9s'], { 0: ['Ac', '2d'], 1: ['Kc', 'Kd'] }, [0])).toBe('Ann wins with a straight, five high');
   expect(showdown(['5h', '4d', '3c', '9h', 'Ts'], { 0: ['Ac', 'Qd'], 1: ['Kc', 'Jd'] }, [0])).toBe('Ann wins with ace high');
   // A chop between two: both names, and what they share.
-  expect(showdown(['Ah', 'Kd', 'Qc', 'Jh', 'Ts'], { 0: ['2c', '3d'], 1: ['4c', '5d'] }, [0, 1])).toBe('Ann and Ben split the pot, both with a straight, ace high');
+  expect(showdown(['Ah', 'Kd', 'Qc', 'Jh', 'Ts'], { 0: ['2c', '3d'], 1: ['4c', '5d'] }, [0, 1])).toBe(
+    'Ann and Ben split the pot, both with a straight, ace high',
+  );
 });
 
 test('a winner who chooses to show after everyone folded: "Ann shows the hand", or "Ann shows the bluff" — never "Showdown"', () => {
   const won = (holeCards: string[]): string[] => {
     const hand = newHandTrack();
     dealerCalls(start([0, 1]), hand, nameOf);
-    dealerCalls([{ type: 'street-dealt', street: 'flop', board: ['As', 'Kd', '7c'] }, { type: 'street-dealt', street: 'turn', board: ['As', 'Kd', '7c', '2h'] }], hand, nameOf);
+    dealerCalls(
+      [
+        { type: 'street-dealt', street: 'flop', board: ['As', 'Kd', '7c'] },
+        { type: 'street-dealt', street: 'turn', board: ['As', 'Kd', '7c', '2h'] },
+      ],
+      hand,
+      nameOf,
+    );
     // Ben folds to Ann's bet: she wins, uncontested.
     expect(
       dealerCalls(

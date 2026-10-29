@@ -209,3 +209,84 @@ describe('LiveTable: why a hand can’t start, and a start asked for during the 
     expect(table.state.phase).toBe('in-hand');
   });
 });
+
+describe('LiveTable: sitting out', () => {
+  let table: LiveTable;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    table = new LiveTable('table-4', 'Sit Out', SETTINGS, new MemoryStore(), {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => Date.now(),
+    });
+    table.takeSeat(0, 'a', meta('Alice'), 1000);
+    table.takeSeat(2, 'b', meta('Bob'), 1000);
+    table.takeSeat(4, 'c', meta('Carol'), 1000);
+  });
+
+  afterEach(() => {
+    table.dispose();
+    vi.useRealTimers();
+  });
+
+  const nextHand = async (): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(10_000);
+    table.prepareNextOrbit();
+    table.startNextHand();
+  };
+
+  // The reported bug: asked during a hand they played (so left marked folded or all-in), they were dealt in anyway.
+  it('asked during a hand they play, they sit out from the next one — and back in when they ask', async () => {
+    table.startNextHand();
+    table.sitOut(2);
+    expect(table.projectionFor(2).seats[2]?.sittingOutNextHand).toBe(true);
+    // Bob folds when it's his turn — so the hand leaves him marked 'folded' (the case that slipped through).
+    for (let guard = 0; table.state.phase === 'in-hand' && guard < 100; guard++) {
+      const seatId = table.state.betting.actingSeat!;
+      const toCall = table.state.betting.currentBet - table.state.seats[seatId]!.committedThisStreet;
+      if (seatId === 2) table.applyPlayerAction(2, { seatId: 2, type: 'fold' });
+      else table.applyPlayerAction(seatId, toCall > 0 ? { seatId, type: 'call' } : { seatId, type: 'check' });
+    }
+    expect(table.state.seats[2]!.status).toBe('folded');
+    await nextHand();
+    expect(table.state.seats[2]!.status).toBe('sitting-out');
+    expect(table.state.seats[2]!.holeCards).toHaveLength(0);
+    await playOut(table);
+    table.sitIn(2);
+    expect(table.projectionFor(2).seats[2]?.sittingOutNextHand).toBe(false);
+    await nextHand();
+    expect(table.state.seats[2]!.holeCards).toHaveLength(2);
+  });
+
+  // The reported bug: sitting back in during a hand they're out of made them a live player in it — no cards,
+  // yet its turns. Now they're dealt in from the next hand; the hand under way never gives them a turn.
+  it('asking back in during a hand they sat out of: no turn in that hand, dealt in from the next', async () => {
+    table.sitOut(2);
+    table.startNextHand();
+    expect(table.state.seats[2]!.status).toBe('sitting-out');
+    table.sitIn(2);
+    expect(table.state.seats[2]!.status).toBe('sitting-out');
+    expect(table.projectionFor(2).seats[2]?.sittingOutNextHand).toBe(false);
+    const turns: number[] = [];
+    for (let guard = 0; table.state.phase === 'in-hand' && guard < 100; guard++) {
+      const seatId = table.state.betting.actingSeat!;
+      turns.push(seatId);
+      expect(table.projectionFor(2).legalActions).toBeFalsy();
+      const toCall = table.state.betting.currentBet - table.state.seats[seatId]!.committedThisStreet;
+      table.applyPlayerAction(seatId, toCall > 0 ? { seatId, type: 'call' } : { seatId, type: 'check' });
+    }
+    expect(turns).not.toContain(2);
+    await nextHand();
+    expect(table.state.seats[2]!.holeCards).toHaveLength(2);
+  });
+
+  it('asked between hands, they sit out at once', async () => {
+    table.startNextHand();
+    await playOut(table);
+    table.sitOut(4);
+    await nextHand();
+    expect(table.state.seats[4]!.status).toBe('sitting-out');
+    expect(table.state.seats[4]!.holeCards).toHaveLength(0);
+  });
+});

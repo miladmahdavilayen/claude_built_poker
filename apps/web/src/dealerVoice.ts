@@ -11,13 +11,19 @@ import { rankHand, winningWords, type RankedHand } from './handWords.js';
 // a female or a male voice of the viewer's choosing, or off.
 //
 // What gets called, as in a cardroom:
-// - every action, in a word: "Check", "Call", "Bet", "Raise", "Fold" — and
-//   "All in" whenever one is. In no-limit the dealer doesn't state raise
-//   amounts unless asked; the amounts are on the table for all to see.
+// - every action, in a word: "Check", "Call", "Bet", "Raise", "Fold". An
+//   all-in, in the cardroom's words: "All in" (a bet or a full raise with
+//   the last chips), "Call, all in" (a call that takes the last chips, just
+//   enough), "All in for less" (a call short of the bet — they can't cover
+//   it), "All in, not a full raise" (more than a call, less than a full
+//   raise: the action isn't reopened). In no-limit the dealer doesn't state
+//   raise amounts unless asked; the amounts are on the table for all to see.
 // - "Heads up" when a fold leaves exactly two players in the pot.
 // - "Option" to the big blind when the betting comes back unraised.
 // - how many see the flop ("Four players to the flop"), then the board as
-//   it's dealt: "Flop", "Turn", "River".
+//   it's dealt: "Flop", "Turn", "River" — while there's betting left. Once
+//   everyone's all in (or all but one), the rest of the board is just run
+//   out, without a word, to the showdown.
 // - "Showdown", then who won: "Alex wins with a flush" ("Alex wins", when
 //   everyone else folded); a chop between two, both names; three or more
 //   ways, just "The pot is split".
@@ -129,7 +135,7 @@ export interface HandTrack {
   inHand: Set<number>;
   /** "Heads up" has been called this hand. */
   headsUp: boolean;
-  /** Who won the main pot (a side pot's winner gets a word only if it's someone else). */
+  /** Who's been named as a winner: the main pot's, then any side pot's — no one is named twice. */
   mainWinners: Set<number>;
   /** The pot's been given out: cards shown now are a winner choosing to show, not a showdown. */
   over: boolean;
@@ -137,9 +143,35 @@ export interface HandTrack {
   board: Card[];
   /** The cards shown at the showdown, by seat — to say exactly how the pot was won. */
   shown: Map<number, readonly Card[]>;
+  /** Who's all in. */
+  allIn: Set<number>;
+  /** The big blind — the smallest full raise. */
+  bigBlind: number;
+  /** This street: the bet to call, and the size of the last full raise (or bet). */
+  currentBet: number;
+  fullRaise: number;
+  /** Side pots given out so far: the engine gives them out before the main pot, and they're called after it (see pot-awarded). */
+  sidePots: PotWinners[];
 }
 
-export const newHandTrack = (): HandTrack => ({ inHand: new Set(), headsUp: false, mainWinners: new Set(), over: false, board: [], shown: new Map() });
+type PotWinners = readonly { seatId: number; handName?: string; bestFive?: readonly Card[] }[];
+
+export const newHandTrack = (): HandTrack => ({
+  inHand: new Set(),
+  headsUp: false,
+  mainWinners: new Set(),
+  over: false,
+  board: [],
+  shown: new Map(),
+  allIn: new Set(),
+  bigBlind: 0,
+  currentBet: 0,
+  fullRaise: 0,
+  sidePots: [],
+});
+
+/** No betting left: everyone still in is all in, or all but one. */
+const runningOut = (hand: HandTrack): boolean => [...hand.inHand].filter((s) => !hand.allIn.has(s)).length <= 1;
 
 /**
  * What the dealer says for a batch of events, in order. The action is
@@ -159,6 +191,19 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
         hand.over = false;
         hand.board = [];
         hand.shown.clear();
+        hand.allIn.clear();
+        hand.bigBlind = 0;
+        hand.currentBet = 0;
+        hand.fullRaise = 0;
+        hand.sidePots = [];
+        break;
+      case 'blinds-posted':
+        for (const post of e.posts) {
+          if (post.allIn) hand.allIn.add(post.seatId);
+          if (post.kind === 'big-blind') hand.bigBlind = post.amount;
+          hand.currentBet = Math.max(hand.currentBet, post.amount);
+        }
+        hand.fullRaise = hand.bigBlind;
         break;
       case 'cards-dealt':
         for (const s of e.seats) hand.inHand.add(s);
@@ -167,7 +212,18 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
         const allIn = e.action.type !== 'fold' && e.action.type !== 'check' && e.resultingStack === 0;
         const word = { fold: 'Fold', check: 'Check', call: 'Call', bet: 'Bet', raise: 'Raise' }[e.action.type];
         if (!word) break;
-        out.push(allIn ? (e.action.type === 'call' ? 'Call, all in' : 'All in') : word);
+        const to = e.committedThisStreet;
+        if (!allIn) out.push(word);
+        else if (to < hand.currentBet) out.push('All in for less');
+        else if (to === hand.currentBet) out.push('Call, all in');
+        else if (hand.currentBet > 0 && to - hand.currentBet < hand.fullRaise) out.push('All in, not a full raise');
+        else out.push('All in');
+        if (allIn) hand.allIn.add(e.seatId);
+        if (to > hand.currentBet) {
+          // A full raise (or an opening bet) sets the size the next one must match; a short all-in doesn't.
+          if (to - hand.currentBet >= hand.fullRaise) hand.fullRaise = to - hand.currentBet;
+          hand.currentBet = to;
+        }
         if (e.action.type === 'fold') {
           const before = hand.inHand.size;
           hand.inHand.delete(e.seatId);
@@ -180,6 +236,13 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
       }
       case 'street-dealt':
         hand.board = [...e.board];
+        hand.currentBet = 0;
+        hand.fullRaise = hand.bigBlind;
+        // Everyone's all in: the board is just run out — no "Flop", "Turn", "River".
+        if (runningOut(hand)) {
+          if (e.street === 'flop' && hand.inHand.size === 2) hand.headsUp = true;
+          break;
+        }
         if (e.street === 'flop') {
           // How many see it: "Four players to the flop" — or, two, heads up (unless that's just been called).
           const n = hand.inHand.size;
@@ -207,37 +270,48 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
         break;
       case 'pot-awarded': {
         hand.over = true;
-        const ids = e.winners.map((w) => w.seatId);
+        // Side pots come first (the engine pays them before the main pot) — held until the main pot's been
+        // called, so a player who wins both is announced once, not "takes the side pot" and then "wins".
+        if (e.potIndex !== 0) hand.sidePots.push(e.winners);
+        // (A side pot after the main pot's been called — not the engine's order — is called at once.)
+        if (e.potIndex !== 0 && hand.mainWinners.size === 0) break;
         // Each winner's hand from their shown cards and the board, against the hands it beat — so the call
         // says exactly how: "two pair, kings and sevens, ace kicker", not just "two pair".
         const ranked = (seatId: number): RankedHand | null => {
           const hole = hand.shown.get(seatId);
           return hole ? rankHand([...hole, ...hand.board]) : null;
         };
-        const beaten = [...hand.shown.keys()]
-          .filter((id) => !ids.includes(id))
-          .map(ranked)
-          .filter((h): h is RankedHand => h !== null);
-        const how = (seatId: number, fallback: { handName?: string; bestFive?: readonly Card[] }): string | null => {
-          const mine = ranked(seatId);
-          return mine ? winningWords(mine, beaten) : winningHand(fallback.handName, fallback.bestFive);
+        const how = (ids: readonly number[], w: PotWinners[number]): string | null => {
+          const mine = ranked(w.seatId);
+          const beaten = [...hand.shown.keys()]
+            .filter((id) => !ids.includes(id))
+            .map(ranked)
+            .filter((h): h is RankedHand => h !== null);
+          return mine ? winningWords(mine, beaten) : winningHand(w.handName, w.bestFive);
         };
-        if (e.potIndex === 0) {
-          for (const id of ids) hand.mainWinners.add(id);
-          if (ids.length === 1) {
-            const w = e.winners[0]!;
-            const words = how(w.seatId, w);
-            out.push(words ? `${nameOf(w.seatId)} wins with ${words}` : `${nameOf(w.seatId)} wins`);
-          } else if (ids.length === 2) {
-            const mine = ranked(ids[0]!);
-            out.push(`${nameOf(ids[0]!)} and ${nameOf(ids[1]!)} split the pot${mine ? `, both with ${winningWords(mine, [])}` : ''}`);
-          } else {
-            out.push('The pot is split');
-          }
-        } else if (ids.length === 1 && !hand.mainWinners.has(ids[0]!)) {
-          const words = how(ids[0]!, e.winners[0]!);
-          out.push(`${nameOf(ids[0]!)} takes the side pot${words ? ` with ${words}` : ''}`);
+        const ids = e.winners.map((w) => w.seatId);
+        if (e.potIndex !== 0) {
+          // Nothing for the main pot here: just the side pots below.
+        } else if (ids.length === 1) {
+          const w = e.winners[0]!;
+          const words = how(ids, w);
+          out.push(words ? `${nameOf(w.seatId)} wins with ${words}` : `${nameOf(w.seatId)} wins`);
+        } else if (ids.length === 2) {
+          const mine = ranked(ids[0]!);
+          out.push(`${nameOf(ids[0]!)} and ${nameOf(ids[1]!)} split the pot${mine ? `, both with ${winningWords(mine, [])}` : ''}`);
+        } else {
+          out.push('The pot is split');
         }
+        if (e.potIndex === 0) for (const id of ids) hand.mainWinners.add(id);
+        // A side pot gets its own word only when someone else won it — once per player, however many side pots.
+        for (const side of hand.sidePots) {
+          const sideIds = side.map((w) => w.seatId);
+          if (sideIds.length !== 1 || hand.mainWinners.has(sideIds[0]!)) continue;
+          hand.mainWinners.add(sideIds[0]!);
+          const words = how(sideIds, side[0]!);
+          out.push(`${nameOf(sideIds[0]!)} takes the side pot${words ? ` with ${words}` : ''}`);
+        }
+        hand.sidePots = [];
         break;
       }
       default:

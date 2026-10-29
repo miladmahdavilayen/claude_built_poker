@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
+import { setCallAudioActive } from './sound.js';
 import { getSharedAudioContext } from './useActiveSpeakers.js';
 
 /**
@@ -283,6 +284,7 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
     localStreamRef.current = null;
     setLocalStream(null);
     setInCall(false);
+    setCallAudioActive(false);
   }, [socket, closeAllPeers]);
 
   const leaveCall = useCallback((): void => {
@@ -298,6 +300,8 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
     localStreamRef.current = null;
     setLocalStream(null);
     setInCall(false);
+    // Off the call: the table's sounds go back to playing past the silent switch (see sound.ts).
+    setCallAudioActive(false);
     // Deliberately does NOT close any peer connection and does NOT tell
     // the server anything — every other human at the table keeps their
     // existing (now track-less again) connection to this socket, ready
@@ -324,6 +328,9 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
       // this particular table ever hits that camera count) means it's
       // already running by the time it's needed. See getSharedAudioContext.
       getSharedAudioContext();
+      // An iPhone refuses the camera and mic while the page's audio session is "playback" (sound.ts):
+      // hand it back to the browser first — before asking.
+      setCallAudioActive(true);
       void navigator.mediaDevices
         .getUserMedia({ audio: true, video: withVideo })
         .then((stream) => {
@@ -342,6 +349,8 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
           }
         })
         .catch((err: unknown) => {
+          // Not in the call after all: playback again.
+          setCallAudioActive(false);
           const message = err instanceof Error ? err.message : 'Could not access microphone/camera.';
           setError(
             location.protocol !== 'https:' && location.hostname !== 'localhost'

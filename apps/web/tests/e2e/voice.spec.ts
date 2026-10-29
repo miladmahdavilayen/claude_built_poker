@@ -212,3 +212,41 @@ test('mute one player from their box, or the whole call from the corner — and 
   await ctxB.close();
   await ctxC.close();
 });
+
+// The reported bug: on an iPhone, the page's audio session set to "playback"
+// (so the table's sounds play past the silent switch) made the camera and mic
+// fail — "audio session category is not compatible with audio capture".
+// Joining the call hands the session back to the browser ("auto") before
+// asking for them; leaving returns it to "playback".
+test('joining the call hands the audio session back to the browser before asking for the camera and mic; leaving makes it playback again', async ({ page }) => {
+  await page.addInitScript(() => {
+    // Safari's Audio Session API, which Chromium lacks — and a record of the session's type each time capture is asked for.
+    const w = window as unknown as { __capture: string[] };
+    w.__capture = [];
+    const session = { type: 'auto' };
+    Object.defineProperty(navigator, 'audioSession', { value: session, configurable: true });
+    const md = navigator.mediaDevices;
+    const gum = md.getUserMedia.bind(md);
+    md.getUserMedia = (c?: MediaStreamConstraints) => {
+      w.__capture.push(session.type);
+      // What an iPhone does with a playback-only session.
+      if (session.type === 'playback') return Promise.reject(new DOMException('The audio session category is not compatible with audio capture.', 'InvalidStateError'));
+      return gum(c);
+    };
+  });
+  const type = (): Promise<string> => page.evaluate(() => (navigator as unknown as { audioSession: { type: string } }).audioSession.type);
+  await adminLogin(page);
+  await createTable(page, { name: 'Audio Session', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(page, 0, 100);
+  // The table's sounds, at rest: playback (past the silent switch).
+  await page.mouse.click(5, 5);
+  await expect.poll(type).toBe('playback');
+
+  await joinCall(page, true);
+  await expect(page.locator('[data-testid="seat-0"] .seat-video video')).toBeVisible({ timeout: 15_000 });
+  expect(await page.evaluate(() => (window as unknown as { __capture: string[] }).__capture)).toEqual(['auto']);
+  expect(await type()).toBe('auto');
+
+  await page.getByRole('button', { name: 'Leave call' }).click();
+  await expect.poll(type).toBe('playback');
+});

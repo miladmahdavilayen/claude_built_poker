@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, takeSeat, tableMenuAction, openTableMenu, closeTableMenu } from './helpers.js';
+import { adminLogin, createTable, guestSignup, inviteToSeat, openOwnerMenu, takeSeat, tableMenuAction, openTableMenu, closeTableMenu, startHand, playHandToCompletion } from './helpers.js';
 
 test('leaving a table navigates back to the lobby and genuinely frees the seat for someone else', async ({ browser }) => {
   const ctxA = await browser.newContext();
@@ -304,4 +304,46 @@ test('a private table the owner leaves stays in their lobby, under Private table
   await guestSignup(other, 'Nosy');
   await expect(other.locator('.table-card', { hasText: 'Homegame Private' })).toHaveCount(0);
   await expect(other.getByTestId('lobby-private-tables')).toHaveCount(0);
+});
+
+// The corner buttons: sit out (or back in) and leave — a guest comes back by
+// their own invite link, the admin goes back to the lobby.
+test('the corner’s sit-out and leave buttons: sit out and back in; a guest leaves and rejoins by their link; the admin leaves to the lobby', async ({ browser }) => {
+  const ctxOwner = await browser.newContext();
+  const ctxGuest = await browser.newContext();
+  const owner = await ctxOwner.newPage();
+  const guest = await ctxGuest.newPage();
+  await adminLogin(owner);
+  await createTable(owner, { name: 'Corner Buttons', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(owner, 0, 100);
+  await guestSignup(guest, 'Gwen');
+  await inviteToSeat(owner, guest, 1, 100);
+
+  // Sit out, then back in — mid-hand it's "from the next hand", and the button says so.
+  await startHand(owner);
+  await guest.getByRole('button', { name: 'Sit out next hand' }).click();
+  await expect(guest.getByRole('button', { name: 'Sit back in' })).toBeVisible();
+  await guest.getByRole('button', { name: 'Sit back in' }).click();
+  await expect(guest.getByRole('button', { name: 'Sit out next hand' })).toBeVisible();
+
+  // The guest leaves (it asks first) and comes back by their own invite link — once the hand is over (leaving
+  // mid-hand waits for it to end).
+  await playHandToCompletion([owner, guest]);
+  await guest.getByRole('button', { name: 'Leave table' }).click();
+  await guest.getByRole('button', { name: 'No, stay' }).click();
+  await expect(guest.locator('[data-testid="seat-1"]')).not.toHaveAttribute('data-seat-status', 'empty');
+  await guest.getByRole('button', { name: 'Leave table' }).click();
+  await guest.getByRole('button', { name: 'Yes, leave' }).click();
+  await expect(guest).toHaveURL(/\/left/, { timeout: 10_000 });
+  await guest.getByRole('button', { name: 'Rejoin table' }).click();
+  await expect(guest).toHaveURL(/\/table\//, { timeout: 10_000 });
+
+  // The admin leaves to the lobby, with everything still there.
+  await owner.getByRole('button', { name: 'Leave table' }).click();
+  await owner.getByRole('button', { name: 'Yes, leave' }).click();
+  await expect(owner).toHaveURL(/\/lobby/, { timeout: 10_000 });
+  await expect(owner.getByRole('button', { name: 'Create table' })).toBeVisible();
+
+  await ctxOwner.close();
+  await ctxGuest.close();
 });

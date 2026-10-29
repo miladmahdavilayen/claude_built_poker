@@ -1839,7 +1839,7 @@ input[type='range']::-moz-range-thumb {
 
 /* The voluntary post-fold-win reveal button — same size/shape as the
    fold/check/call buttons it sits above (reusing .action-buttons on
-   desktop and matching .bet-overlay-rail--left's own button sizing on a
+   desktop and matching the bet overlay rail's own button sizing on a
    phone below), just royal purple instead of red/gray/green so it never
    reads as another in-hand action. See RevealHandButton.tsx. */
 .btn-reveal-hand {
@@ -1864,18 +1864,20 @@ input[type='range']::-moz-range-thumb {
   font-weight: 600;
   padding: 10px 20px;
 }
-/* Phone-only: pinned to the left edge, directly above where the fold/
-   check/call rail (.bet-overlay-rail--left) sits during the viewer's own
-   turn — same fixed corner, same button footprint, just a different
-   moment (between hands, not mid-action) and a different button. */
+/* Phone-only: in the bottom-right corner, between hands — right where the
+   turn's own buttons are (see .bet-overlay), within the thumb's reach. */
 .reveal-hand-rail {
   position: fixed;
-  left: 0;
+  right: 0;
   bottom: 0;
   z-index: 40;
   padding: 6px;
-  padding-left: calc(6px + env(safe-area-inset-left));
+  padding-right: calc(6px + env(safe-area-inset-right));
   padding-bottom: calc(6px + env(safe-area-inset-bottom));
+}
+/* The 3D table's Play Hand sits in that corner too, between hands: the reveal button goes just above it. */
+.table-page:has(.felt-3d .start-hand-panel) .reveal-hand-rail {
+  bottom: calc(84px + env(safe-area-inset-bottom));
 }
 .reveal-hand-rail .btn-reveal-hand {
   min-height: 51px;
@@ -1914,7 +1916,7 @@ input[type='range']::-moz-range-thumb {
   inset: 0;
   z-index: 40;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: flex-end;
   pointer-events: none;
 }
@@ -1927,7 +1929,8 @@ input[type='range']::-moz-range-thumb {
      fairness banner, the action timer) — see .bet-overlay's comment — even
      though the rail is otherwise just as tall as its own content demands.
      overflow-y is the fallback if content ever still exceeds that. */
-  max-height: calc(100vh - 90px);
+  /* Stops just under the action timer (which sits below the menu button — see .table-page.immersive .action-timer). */
+  max-height: calc(100dvh - 112px - env(safe-area-inset-top));
   background: rgba(6, 9, 14, 0.74);
   backdrop-filter: blur(1px);
   display: flex;
@@ -1937,12 +1940,8 @@ input[type='range']::-moz-range-thumb {
   padding-bottom: calc(6px + env(safe-area-inset-bottom));
   overflow-y: auto;
 }
-.bet-overlay-rail--left {
-  justify-content: flex-end;
-  padding-left: calc(6px + env(safe-area-inset-left));
-  border-radius: 0 14px 0 0;
-}
-.bet-overlay-rail--left button {
+/* Check, Call and Fold, in the right rail under Raise (ActionBar.tsx). */
+.bet-overlay-rail > :is(.btn-fold, .btn-check, .btn-call) {
   min-height: 51px;
   font-size: 14px;
   font-weight: 700;
@@ -4529,9 +4528,9 @@ button.admin-user-row:hover:not(:disabled) {
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   pointer-events: none;
-  --card-w: 44px;
-  --card-h: 62px;
-  --card-font: 19px;
+  --card-w: 56px;
+  --card-h: 78px;
+  --card-font: 21px;
 }
 .board-hud .card {
   width: var(--card-w);
@@ -4552,11 +4551,11 @@ button.admin-user-row:hover:not(:disabled) {
 @media (max-width: 600px) {
   .board-hud {
     top: 24px;
-    gap: 3px;
+    gap: 4px;
     padding: 4px 6px;
-    --card-w: 34px;
-    --card-h: 48px;
-    --card-font: 15px;
+    --card-w: 46px;
+    --card-h: 64px;
+    --card-font: 17px;
   }
   .felt-3d .fairness-commitment {
     top: 6px;
@@ -4812,8 +4811,8 @@ button.admin-user-row:hover:not(:disabled) {
   margin-bottom: 4px;
 }
 .seat--compact .seat-compact-cards .card {
-  width: 42px;
-  height: 60px;
+  width: 48px;
+  height: 67px;
   font-size: 19px;
 }
 .seat--compact.seat-has-video .seat-compact-cards {
@@ -4855,10 +4854,12 @@ button.admin-user-row:hover:not(:disabled) {
   border-radius: 0;
 }
 .table-page.immersive .felt-3d .board-hud {
-  top: calc(10px + env(safe-area-inset-top));
+  /* 4% of the screen down from the top edge, where the eye finds it more easily. */
+  top: calc(10px + 4dvh + env(safe-area-inset-top));
 }
 .table-page.immersive .felt-3d .action-ticker {
-  top: calc(64px + env(safe-area-inset-top));
+  /* Under the board strip (10px + 4% down, ~90px tall), never beside it. */
+  top: calc(106px + 4dvh + env(safe-area-inset-top));
   left: calc(12px + env(safe-area-inset-left));
 }
 .table-page.immersive .felt-3d .fairness-commitment {
@@ -4876,7 +4877,7 @@ button.admin-user-row:hover:not(:disabled) {
 
 @media (max-width: 600px) {
   .table-page.immersive .felt-3d .action-ticker {
-    top: calc(96px + env(safe-area-inset-top));
+    top: calc(92px + 4dvh + env(safe-area-inset-top));
     left: calc(8px + env(safe-area-inset-left));
   }
   .table-page.immersive .felt-3d .fairness-commitment {
@@ -5451,9 +5452,28 @@ button.fairness-link {
   bottom: calc(12px + env(safe-area-inset-bottom));
   z-index: 6;
   display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+/* Two columns, bottom-aligned: the sounds over the chat, and beside them leaving and sitting out. */
+.table-corner-col {
+  display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+/* A short screen (a phone on its side) has no height to spare: the corner lies along the bottom instead —
+   two rows, the chat at the far left, leaving and sitting out above it. */
+@media (max-height: 500px) {
+  .table-corner {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .table-corner .table-corner-col {
+    flex-direction: row-reverse;
+    gap: 6px;
+  }
 }
 .table-voice-button {
   position: relative;
@@ -5623,11 +5643,13 @@ button.fairness-link {
 /* ---- The call, on your own seat box: small round buttons on its top edge, each with a finger-sized tap area. ---- */
 .seat-call {
   position: absolute;
-  left: 50%;
-  top: 0;
-  transform: translate(-50%, calc(-100% - 6px));
+  /* A small column just outside the box's right edge, from its bottom up — the top of the box is where
+     your button or blind marker (D, SB, BB) sits, so the two never meet. */
+  left: calc(100% + 8px);
+  bottom: 0;
   z-index: 5;
   display: flex;
+  flex-direction: column-reverse;
   gap: 8px;
 }
 .seat-call-btn {
@@ -5773,4 +5795,70 @@ button.fairness-link {
   top: -8px;
   left: -8px;
   z-index: 2;
+}
+
+/* The music button on the login page and in the lobby (BackgroundMusic.tsx): small, bottom-left. */
+.music-toggle {
+  position: fixed;
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(14, 18, 26, 0.8);
+  color: var(--accent-strong);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.music-toggle--off {
+  color: #9aa3ad;
+}
+
+/* The open sizer, in the one right-hand rail: the slider's handle (which
+   grows into the "Raise $X" button) hangs half its height past the track's
+   ends — room for it above and below, so at the minimum or the maximum it
+   never lands on the presets or the −/+ buttons; and a track a little
+   shorter, so the whole sizer fits under the action timer on a phone. */
+.bet-overlay-rail--sizing .vbs-track {
+  height: clamp(170px, 36vh, 380px);
+  margin: 28px 0;
+}
+.bet-overlay-rail--sizing .bet-overlay-presets button {
+  min-height: 34px;
+}
+
+/* A face-up card: the classic face drawn for the 3D table's felt (cardArt.ts), filling the card — the same
+   cards everywhere: the 2D table, the cards shown over a player's head, the board strip over the 3D table. */
+.card.card-face {
+  padding: 0;
+  overflow: hidden;
+  background: #fbfaf5;
+  /* The artwork has its own rounded corners and border: the card follows them. */
+  border-radius: 7%/5%;
+}
+.card-face .card-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+  pointer-events: none;
+}
+/* Sitting out (or about to): the chair's badge turns gold, the button too, so you can see you're out. */
+.table-presence-button--out {
+  color: var(--accent-strong);
+  border-color: rgba(242, 189, 77, 0.6);
+}
+/* The break panel is words around one button ("Waiting for…", "Shuffling…", Play Hand): only the button takes
+   taps — the rest lets them through to the seat boxes it can lie over on a small screen. */
+.start-hand-panel {
+  pointer-events: none;
+}
+.start-hand-panel button {
+  pointer-events: auto;
 }

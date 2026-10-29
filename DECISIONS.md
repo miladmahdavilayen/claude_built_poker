@@ -2863,3 +2863,52 @@ about ten.
   `pull_request` triggers, every job checks it's this repository, and every
   outside contributor's workflow run needs the owner's approval
   (Settings → Actions → General: "all outside collaborators").
+
+## Music before the game, and the table's sounds on their own switch
+
+- **Background music** on the login page (a calm jazz piano) and in the lobby
+  (a gentle swing) — none at a table. Both are public domain (CC0) by Alex
+  McCulloch, credited in `public/audio/CREDITS.md`; loudness-normalized to
+  about −23 LUFS, their top end softened, 96 kbps (a candidate with a constant
+  bright tick was passed over as tiring). One player at the app's root
+  (`BackgroundMusic.tsx`) picks the track from the route and crossfades;
+  browsers won't start it before the first tap, so that starts it. A button
+  turns it off, remembered. iPhones ignore a page's volume, so the files
+  themselves are quiet.
+- **The table's own sounds** (shuffle, cards, chips, wins) go through one
+  volume in `sound.ts` with its own mute button, right above the dealer's
+  voice — on whenever a table opens. The seat-offer alert bypasses it: a
+  summons, not table noise.
+
+## Table polish: one action rail, real card art everywhere, rooms apart from dealers
+
+- **Phones: one action rail on the right** — Raise/Bet on top, Check/Call,
+  Fold — within the thumb's reach; Raise opens the sizer in the same rail. It
+  covers every turn, including Call/Fold only (a short stack facing an all-in),
+  which used to fall back to the desktop bar and squeeze the table. Reveal Hand
+  / Show Bluff sits bottom-right too.
+- **Play Hand tapped during the break between hands** is dealt the moment the
+  break ends (once, however many tapped) instead of being refused with a
+  misleading message; each reason a hand can't start has its own answer
+  (`LiveTable.startHandBlocker`).
+- **Every face-up card is the table's own artwork** (`public/cards`, Adrian
+  Kennard's CC0 deck): the board strip over the 3D table, cards shown over a
+  player's head, your own, the 2D table. The board strip sits a little lower and
+  bigger.
+- **Your own dealer button** isn't drawn on the 3D felt for you (you have the D
+  on your box); your call buttons sit beside your box, clear of it.
+- **The dealer says how a pot was won**, from the shown cards (`handWords.ts`):
+  the hand in full ("a full house, aces full of nines"), and the deciding card
+  when a beaten hand had the same name ("two pair, kings and sevens, ace
+  kicker"); a winner who chooses to show is "Ann shows the hand / the bluff".
+- **The room is its own table setting** (`tableTheme`: classic or VIP), apart
+  from the dealer — any dealer in either room. Tables from before keep the room
+  their dealer gave them.
+- **Sit out and leave** are buttons in the corner stack. Leaving always asks
+  first; a guest comes back by their invite link, a real account (the admin
+  included) goes to the lobby.
+- **iPhone calls:** the "playback" audio session (table sounds past the silent
+  switch) forbids the mic and camera, so it's handed back to the browser
+  ("auto") while in a call.
+- 3D seat boxes brought back on screen are checked against the page's
+  controls again, so a chair just past the edge can't land its box on them.

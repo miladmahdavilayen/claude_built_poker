@@ -18,9 +18,10 @@ function easeInOut(t: number): number {
 export class DealerButton3d {
   readonly group = new THREE.Group();
   private readonly top: THREE.Mesh;
+  private readonly side: THREE.Mesh;
   private readonly disposables: { dispose: () => void }[] = [];
   private s: number | null = null;
-  /** Where the viewer sits (edge fraction), or null: their own button sits by their cards, bigger and lit. */
+  /** Where the viewer sits (edge fraction), or null: their own button isn't drawn for them (see update). */
   private viewerS: number | null = null;
   private readonly glow: THREE.Mesh;
   private slide: { from: number; to: number; start: number; dur: number } | null = null;
@@ -39,6 +40,7 @@ export class DealerButton3d {
     const side = new THREE.Mesh(sideGeo, sideMat);
     side.position.y = height / 2;
     side.castShadow = castShadows;
+    this.side = side;
     this.top = new THREE.Mesh(faceGeo, topMat);
     this.top.position.y = height + 0.0008;
     // A soft gold ring under the puck — only for your own button, so you can't miss it.
@@ -99,8 +101,13 @@ export class DealerButton3d {
     const p = edgePoint(s, TABLE.railWidth + depth);
     this.group.position.set(p.x + p.nz * sideways, 0, p.z - p.nx * sideways);
     this.group.scale.setScalar(1 + 0.35 * mine);
-    this.glow.visible = mine > 0.5;
-    if (this.glow.visible) (this.glow.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.25 * Math.sin(now / 320) ** 2;
+    // At your own seat, the puck is for everyone else: you have the D on your own box, so for you it steps
+    // out of sight once it's there (and slides in and out of it as anyone else's would). (The group stays
+    // "visible" — the button is still on the table, just not drawn for its own holder.)
+    const yours = mine > 0.5;
+    this.side.visible = !yours;
+    this.top.visible = !yours;
+    this.glow.visible = false;
     this.top.rotation.y = viewYaw;
   }
 

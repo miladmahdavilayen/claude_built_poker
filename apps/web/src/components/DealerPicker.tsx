@@ -2,20 +2,27 @@ import { useEffect, useState } from 'react';
 import { orderedDealers, type DealerCharacter } from '../table3d/dealers.js';
 
 /**
- * The owner's choice of house dealer for this table — opened by
- * double-tapping her on the 3D table. Everyone at the table sees the
- * change (it's the table's `houseDealer` setting).
+ * The owner's choice of house dealer and room for this table — opened by
+ * double-tapping her on the 3D table, or from the table menu. The two are
+ * apart: any dealer, VIP or not, can deal in either room. Everyone at the
+ * table sees the change (the table's `houseDealer` and `tableTheme`
+ * settings).
  */
 export function DealerPicker({
   characters,
   current,
   onPick,
+  theme,
+  onTheme,
   onClose,
 }: {
   characters: readonly DealerCharacter[];
   /** The table's setting: a character id, or none (the first character deals). */
   current: string | undefined;
   onPick: (id: string) => void;
+  /** The table's room now, and the choice of it. */
+  theme: 'classic' | 'vip';
+  onTheme: (theme: 'classic' | 'vip') => void;
   onClose: () => void;
 }): React.JSX.Element {
   // On a phone, the double tap's own trailing click lands wherever the finger was — on the backdrop or a
@@ -44,8 +51,29 @@ export function DealerPicker({
   return (
     <div className="modal-backdrop" style={ready ? undefined : { pointerEvents: 'none' }} onClick={onClose}>
       <div className="modal dealer-picker" role="dialog" aria-label="Choose the house dealer" onClick={(e) => e.stopPropagation()}>
+        <h3>Table</h3>
+        <div className="dealer-picker-list" role="radiogroup" aria-label="Table room">
+          {(
+            [
+              ['classic', 'Classic room'],
+              ['vip', '★ VIP room'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={theme === value}
+              className={`dealer-picker-option${theme === value ? ' dealer-picker-option--active' : ''}${value === 'vip' ? ' dealer-picker-option--vip' : ''}`}
+              onClick={() => onTheme(value)}
+            >
+              {label}
+              {theme === value && <span className="dealer-picker-check"> ✓</span>}
+            </button>
+          ))}
+        </div>
         <h3>House dealer</h3>
-        <p className="muted">Everyone at this table sees who you pick.</p>
+        <p className="muted">Any dealer can deal in either room. Everyone at this table sees what you pick.</p>
         {vip.length > 0 && (
           <>
             <h4 className="dealer-picker-heading">VIP dealers</h4>

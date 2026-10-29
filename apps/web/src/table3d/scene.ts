@@ -1581,18 +1581,35 @@ export class TableScene {
           if (ox <= 0 || oy <= 0) continue;
           moved = true;
           const up = a.y < (f.y0 + f.y1) / 2;
-          // Up off the screen's top is no way out: go sideways instead.
-          const roomUp = a.y - oy - a.h / 2 >= margin;
-          if (oy < ox && (!up || roomUp)) a.y += up ? -oy : oy;
-          else a.x += a.x < (f.x0 + f.x1) / 2 ? -ox : ox;
+          // Clear of it, not just by the overlap: a box inside a tall control (the corner stack) moved by
+          // its own height would still be inside. Up off the screen's top is no way out: sideways instead.
+          const above = f.y0 - 4 - a.h / 2;
+          const below = f.y1 + 4 + a.h / 2;
+          const roomUp = above - a.h / 2 >= margin;
+          if (oy < ox && (!up || roomUp)) a.y = up ? above : below;
+          else {
+            // Sideways — toward whichever side has room: a control at the screen's edge (the corner stack)
+            // can't be cleared by going further toward that edge; the clamp below would only put it back.
+            const left = a.x < (f.x0 + f.x1) / 2;
+            const roomLeft = f.x0 - 4 - a.w >= margin;
+            const roomRight = f.x1 + 4 + a.w <= this.width - margin;
+            if (left && roomLeft) a.x = f.x0 - 4 - a.w / 2;
+            else if (!left && roomRight) a.x = f.x1 + 4 + a.w / 2;
+            else if (roomRight) a.x = f.x1 + 4 + a.w / 2;
+            else if (roomLeft) a.x = f.x0 - 4 - a.w / 2;
+            else a.y = up ? above : below;
+          }
         }
         // On screen — fully when standing; seated, a player off to the side is
         // off to the side, but a nameplate above someone's head never leaves the top.
+        const was = { x: a.x, y: a.y };
         if (eyes) a.y = Math.max(a.h / 2 + margin, a.y);
         else {
           a.x = Math.min(this.width - a.w / 2 - margin, Math.max(a.w / 2 + margin, a.x));
           a.y = Math.min(this.height - a.h / 2 - margin, Math.max(a.h / 2 + margin, a.y));
         }
+        // Brought back on screen (a chair just past the edge): look again — it may now be on a control.
+        if (Math.abs(a.x - was.x) > 0.5 || Math.abs(a.y - was.y) > 0.5) moved = true;
       }
       if (!moved) break;
     }

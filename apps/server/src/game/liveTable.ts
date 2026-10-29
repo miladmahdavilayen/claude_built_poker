@@ -1042,6 +1042,37 @@ export class LiveTable {
     if (this.revealedSeatIds.delete(fromSeatId)) this.revealedSeatIds.add(toSeatId);
   }
 
+  /**
+   * Why a hand can't start right now — null when it can. Each reason gets
+   * its own answer (see the 'start-hand' handler): a hand already dealt (by
+   * another player's tap, or a double tap) needs none; the break between
+   * hands means "deal when it's over"; too few players, or no real one,
+   * needs saying as such — not one message for all four.
+   */
+  startHandBlocker(): 'in-hand' | 'no-human' | 'too-few-players' | 'break' | null {
+    if (this.state.phase === 'in-hand') return 'in-hand';
+    if (!this.seats.some((s) => s.userId !== null)) return 'no-human';
+    if (this.dealtInCount() < 2) return 'too-few-players';
+    if (this.nextHandAt !== null && this.callbacks.now() < this.nextHandAt) return 'break';
+    return null;
+  }
+
+  private queuedStart: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * "Play Hand", tapped while the dealer's still between hands (a phone's
+   * clock a little ahead of the server's shows the button a moment early):
+   * dealt the moment the break ends — once, however many tapped it.
+   */
+  startAfterBreak(start: () => void): void {
+    if (this.queuedStart) return;
+    const wait = Math.max(0, (this.nextHandAt ?? 0) - this.callbacks.now());
+    this.queuedStart = setTimeout(() => {
+      this.queuedStart = null;
+      if (this.canStartHand()) start();
+    }, wait + 10);
+  }
+
   canStartHand(): boolean {
     // At least one real human must be seated — otherwise a table left with
     // only bots would deal itself forever with nobody watching, burning
@@ -1635,6 +1666,7 @@ export class LiveTable {
         leavingAfterHand: s.pendingRemoval !== null,
         joiningNextHand: s.joinsNextHand,
         movingToSeatId: s.pendingMoveTo,
+        sittingOutNextHand: s.sittingOutRequested,
       });
     }
     return map;
@@ -1732,5 +1764,7 @@ export class LiveTable {
     this.clearClock();
     this.clearBotMove();
     this.clearNextHandTimer();
+    if (this.queuedStart) clearTimeout(this.queuedStart);
+    this.queuedStart = null;
   }
 }

@@ -1,7 +1,17 @@
 import type { Card } from '@pokerclause/engine';
 
-const SUIT_SYMBOL: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
-const RED_SUITS = new Set(['h', 'd']);
+const SUIT_NAME: Record<string, string> = { s: 'spades', h: 'hearts', d: 'diamonds', c: 'clubs' };
+const RANK_NAME: Record<string, string> = { A: 'Ace', K: 'King', Q: 'Queen', J: 'Jack', T: '10' };
+
+/**
+ * The classic face — the very artwork on the 3D table's cards (public/cards:
+ * Adrian Kennard's CC0 deck, portrait jacks, queens and kings) — filling the
+ * card. The same files the table loads, cached by the browser for weeks.
+ */
+function Face({ card }: { card: Card }): React.JSX.Element {
+  const name = `${RANK_NAME[card.slice(0, -1)] ?? card.slice(0, -1)} of ${SUIT_NAME[card.slice(-1)] ?? card.slice(-1)}`;
+  return <img className="card-art" src={`/cards/${card}.webp`} alt={name} draggable={false} decoding="async" />;
+}
 
 /**
  * `justRevealed` plays a one-shot 3D flip from a card-back to the real
@@ -25,13 +35,9 @@ export function PlayingCard({
   if (faceDown || card === null) {
     return <div className="card card-back" aria-hidden="true" />;
   }
-  const rank = card.slice(0, -1);
-  const suit = card.slice(-1);
-  const isRed = RED_SUITS.has(suit);
   const front = (
-    <div className={`card ${isRed ? 'card-red' : 'card-black'}${winning ? ' card-winning' : ''}`}>
-      <span className="card-rank">{rank}</span>
-      <span className="card-suit">{SUIT_SYMBOL[suit] ?? suit}</span>
+    <div className={`card card-face${winning ? ' card-winning' : ''}`}>
+      <Face card={card} />
     </div>
   );
   if (!justRevealed) return front;
@@ -39,9 +45,8 @@ export function PlayingCard({
     <div className="card-flip-wrap">
       <div className="card-flip-inner">
         <div className="card card-back card-flip-face card-flip-back" aria-hidden="true" />
-        <div className={`card ${isRed ? 'card-red' : 'card-black'} card-flip-face card-flip-front`}>
-          <span className="card-rank">{rank}</span>
-          <span className="card-suit">{SUIT_SYMBOL[suit] ?? suit}</span>
+        <div className="card card-face card-flip-face card-flip-front">
+          <Face card={card} />
         </div>
       </div>
     </div>

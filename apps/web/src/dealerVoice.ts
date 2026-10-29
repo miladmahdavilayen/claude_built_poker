@@ -1,5 +1,8 @@
 import type { ProjectedGameEvent, ProjectedTableState } from '@pokerclause/shared';
 import { useEffect, useRef, useState } from 'react';
+import type { Card } from '@pokerclause/engine';
+import { isBluffHand } from './handStrength.js';
+import { rankHand, winningWords, type RankedHand } from './handWords.js';
 
 // The house dealer's voice: the calls a live dealer makes out loud as the
 // hand goes on — the action, never who did it; only the result names
@@ -18,6 +21,8 @@ import { useEffect, useRef, useState } from 'react';
 // - "Showdown", then who won: "Alex wins with a flush" ("Alex wins", when
 //   everyone else folded); a chop between two, both names; three or more
 //   ways, just "The pot is split".
+// - a winner who chooses to show after everyone folded: "Alex shows the
+//   hand", or "Alex shows the bluff" — as their button said.
 
 export type DealerVoiceChoice = 'off' | 'female' | 'male';
 
@@ -126,9 +131,15 @@ export interface HandTrack {
   headsUp: boolean;
   /** Who won the main pot (a side pot's winner gets a word only if it's someone else). */
   mainWinners: Set<number>;
+  /** The pot's been given out: cards shown now are a winner choosing to show, not a showdown. */
+  over: boolean;
+  /** The board so far. */
+  board: Card[];
+  /** The cards shown at the showdown, by seat — to say exactly how the pot was won. */
+  shown: Map<number, readonly Card[]>;
 }
 
-export const newHandTrack = (): HandTrack => ({ inHand: new Set(), headsUp: false, mainWinners: new Set() });
+export const newHandTrack = (): HandTrack => ({ inHand: new Set(), headsUp: false, mainWinners: new Set(), over: false, board: [], shown: new Map() });
 
 /**
  * What the dealer says for a batch of events, in order. The action is
@@ -145,6 +156,9 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
         hand.inHand.clear();
         hand.headsUp = false;
         hand.mainWinners.clear();
+        hand.over = false;
+        hand.board = [];
+        hand.shown.clear();
         break;
       case 'cards-dealt':
         for (const s of e.seats) hand.inHand.add(s);
@@ -165,6 +179,7 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
         break;
       }
       case 'street-dealt':
+        hand.board = [...e.board];
         if (e.street === 'flop') {
           // How many see it: "Four players to the flop" — or, two, heads up (unless that's just been called).
           const n = hand.inHand.size;
@@ -177,24 +192,51 @@ export function dealerCalls(events: readonly ProjectedGameEvent[], hand: HandTra
         }
         break;
       case 'showdown-reveal':
+        // After the pot's gone, it's the winner choosing to show (Reveal Hand / Show Bluff) — said as the
+        // button they tapped says it. Before, it's a showdown.
+        if (hand.over) {
+          out.push(isBluffHand(e.holeCards, hand.board) ? `${nameOf(e.seatId)} shows the bluff` : `${nameOf(e.seatId)} shows the hand`);
+          break;
+        }
+        hand.shown.set(e.seatId, e.holeCards);
         if (!showdown) out.push('Showdown');
         showdown = true;
         break;
+      case 'hand-complete':
+        hand.over = true;
+        break;
       case 'pot-awarded': {
+        hand.over = true;
         const ids = e.winners.map((w) => w.seatId);
+        // Each winner's hand from their shown cards and the board, against the hands it beat — so the call
+        // says exactly how: "two pair, kings and sevens, ace kicker", not just "two pair".
+        const ranked = (seatId: number): RankedHand | null => {
+          const hole = hand.shown.get(seatId);
+          return hole ? rankHand([...hole, ...hand.board]) : null;
+        };
+        const beaten = [...hand.shown.keys()]
+          .filter((id) => !ids.includes(id))
+          .map(ranked)
+          .filter((h): h is RankedHand => h !== null);
+        const how = (seatId: number, fallback: { handName?: string; bestFive?: readonly Card[] }): string | null => {
+          const mine = ranked(seatId);
+          return mine ? winningWords(mine, beaten) : winningHand(fallback.handName, fallback.bestFive);
+        };
         if (e.potIndex === 0) {
           for (const id of ids) hand.mainWinners.add(id);
           if (ids.length === 1) {
             const w = e.winners[0]!;
-            const with_ = winningHand(w.handName, w.bestFive);
-            out.push(with_ ? `${nameOf(w.seatId)} wins with ${with_}` : `${nameOf(w.seatId)} wins`);
+            const words = how(w.seatId, w);
+            out.push(words ? `${nameOf(w.seatId)} wins with ${words}` : `${nameOf(w.seatId)} wins`);
           } else if (ids.length === 2) {
-            out.push(`${nameOf(ids[0]!)} and ${nameOf(ids[1]!)} split the pot`);
+            const mine = ranked(ids[0]!);
+            out.push(`${nameOf(ids[0]!)} and ${nameOf(ids[1]!)} split the pot${mine ? `, both with ${winningWords(mine, [])}` : ''}`);
           } else {
             out.push('The pot is split');
           }
         } else if (ids.length === 1 && !hand.mainWinners.has(ids[0]!)) {
-          out.push(`${nameOf(ids[0]!)} takes the side pot`);
+          const words = how(ids[0]!, e.winners[0]!);
+          out.push(`${nameOf(ids[0]!)} takes the side pot${words ? ` with ${words}` : ''}`);
         }
         break;
       }

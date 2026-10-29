@@ -30,6 +30,13 @@ export interface TableSettings extends TableConfig {
    * double-tapping the house dealer, and everyone at the table sees it.
    */
   houseDealer?: string;
+  /**
+   * The 3D table's room — the classic green-felt room or the VIP high-limit
+   * one — chosen apart from the dealer: any dealer can deal in either. Absent
+   * (a table from before it was a setting): the VIP room if its dealer is a
+   * VIP character, as it used to be.
+   */
+  tableTheme?: 'classic' | 'vip';
 }
 
 /** On an open-invite table, a free seat held for the first person on the waitlist until `expiresAt` (epoch ms). */
@@ -80,6 +87,8 @@ export interface ProjectedSeat {
   joiningNextHand: boolean;
   /** This player asked to move to that empty seat mid-hand: they move the moment the hand ends. Null otherwise. */
   movingToSeatId: number | null;
+  /** This player asked to sit out: they're dealt out from the next hand (until they sit back in). */
+  sittingOutNextHand: boolean;
 }
 
 /** Blind/ante/straddle changes the owner made mid-hand, applied from the next deal. */

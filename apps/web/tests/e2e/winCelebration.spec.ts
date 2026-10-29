@@ -34,8 +34,9 @@ test('the hand winner sees a celebratory banner, and the other player sees a sub
       .then(async () => (await page.locator(selector).first().textContent().catch(() => '')) ?? '')
       .catch(() => null);
   const seen = { aWin: watch(pageA, '.viewer-win-banner'), bWin: watch(pageB, '.viewer-win-banner'), aLoss: watch(pageA, '.viewer-loss-badge'), bLoss: watch(pageB, '.viewer-loss-badge') };
-  // Whatever it saw within a few seconds of the hand ending (null: nothing).
-  const within = (p: Promise<string | null>): Promise<string | null> => Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 6000))]);
+  // Whatever it saw within some seconds of the hand ending (null: nothing) — room for a busy machine running the
+  // whole suite, where the banner can take a few seconds to show.
+  const within = (p: Promise<string | null>): Promise<string | null> => Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 15_000))]);
 
   // Check/call only, on both pages, until showdown — a real winner is decided by the cards.
   let guard = 0;

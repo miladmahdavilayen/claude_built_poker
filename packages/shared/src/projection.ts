@@ -17,6 +17,7 @@ export interface SeatMeta {
   leavingAfterHand?: boolean;
   joiningNextHand?: boolean;
   movingToSeatId?: number | null;
+  sittingOutNextHand?: boolean;
 }
 
 export interface ProjectionContext {
@@ -105,6 +106,7 @@ export function projectStateForSeat(
       leavingAfterHand: meta.leavingAfterHand ?? false,
       joiningNextHand: meta.joiningNextHand ?? false,
       movingToSeatId: meta.movingToSeatId ?? null,
+      sittingOutNextHand: meta.sittingOutNextHand ?? false,
     };
   });
 

@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext.js';
 import { ActionBar } from '../components/ActionBar.js';
@@ -18,11 +18,14 @@ import { TableMenu, TableMenuSection } from '../components/TableMenu.js';
 import { TableViewOptions } from '../components/TableViewMenu.js';
 import { DealerVoiceIcon } from '../components/DealerVoiceIcon.js';
 import { MuteAllCallsButton, PeerMuteButton } from '../components/CallAudioButtons.js';
+import { TableSoundButton } from '../components/TableSoundButton.js';
+import { LeaveTableButton, SitOutButton } from '../components/SeatPresenceButtons.js';
+import { setTableSoundMuted } from '../sound.js';
 import { SeatCallControls } from '../components/SeatCallControls.js';
 import { DealerPicker } from '../components/DealerPicker.js';
 import { SeatMoveModal } from '../components/SeatMoveModal.js';
 import { FairnessCheck } from '../components/FairnessCheck.js';
-import { dealerIsVip, dealerModelUrl, useDealerCharacters } from '../table3d/dealers.js';
+import { dealerModelUrl, tableTheme, useDealerCharacters } from '../table3d/dealers.js';
 import type { PotAnimator } from '../table3d/TableScene3D.js';
 import { useTableView } from '../table3d/useTableView.js';
 import type { ChatMessageRecord } from '../types.js';
@@ -105,6 +108,8 @@ export function TablePage(): React.JSX.Element {
   const audioBlocked = useMediaBlocked();
   // The house dealer's spoken calls (see dealerVoice.ts) — the voice is the viewer's choice, in the menu.
   const dealerVoiceChoice = useDealerVoiceChoice();
+  // The table's own sounds are on whenever a table opens, like the dealer's voice: a mute lasts the visit.
+  useEffect(() => setTableSoundMuted(false), []);
   const dealerVoice = dealerVoiceChoice.choice;
   useEffect(unlockSpeechOnFirstTap, []);
   useDealerAnnouncements(sock.latestEvents, dealerVoice, sock.state);
@@ -116,13 +121,20 @@ export function TablePage(): React.JSX.Element {
   const view = useTableView();
   const is3d = view.effective !== '2d';
   // Where the 3D scene put each seat and the pot on screen (% of the felt), for the DOM layers over it.
-  const [layout3d, setLayout3d] = useState<{ seats: SeatPosition[]; pot: { left: number; top: number }; boardTop: { left: number; top: number } } | null>(null);
+  const [layout3d, setLayout3d] = useState<{
+    seats: SeatPosition[];
+    pot: { left: number; top: number };
+    boardTop: { left: number; top: number };
+  } | null>(null);
   const potAnimatorRef = useRef<PotAnimator | null>(null);
   const [splitEffects, setSplitEffects] = useState<SplitSeatEffects>(NO_SPLIT_EFFECTS);
   // On the 3D table, your action buttons wait until your cards are actually in front of you —
   // never more than a few seconds, though: the clock on your turn is already running.
   // Tied to the hand it was reported for, so a new hand starts with them not yet down.
-  const [ownCardsDown, setOwnCardsDown] = useState<{ hand: string | null; landed: boolean }>({ hand: null, landed: false });
+  const [ownCardsDown, setOwnCardsDown] = useState<{
+    hand: string | null;
+    landed: boolean;
+  }>({ hand: null, landed: false });
   const handIdRef = useRef<string | null>(null);
   handIdRef.current = sock.state?.handId ?? null;
   const onOwnCards = useCallback((landed: boolean) => setOwnCardsDown({ hand: handIdRef.current, landed }), []);
@@ -144,7 +156,14 @@ export function TablePage(): React.JSX.Element {
       const at = new Date().toISOString();
       setDealerChat((prev) => [
         ...prev.slice(-30),
-        ...lines.map((message, i) => ({ id: `dealer-${String(Date.now())}-${String(i)}`, tableId: tableId ?? '', userId: null, displayName: 'Dealer', message, createdAt: at })),
+        ...lines.map((message, i) => ({
+          id: `dealer-${String(Date.now())}-${String(i)}`,
+          tableId: tableId ?? '',
+          userId: null,
+          displayName: 'Dealer',
+          message,
+          createdAt: at,
+        })),
       ]);
     },
     [tableId],
@@ -162,7 +181,13 @@ export function TablePage(): React.JSX.Element {
   const [movingBot, setMovingBot] = useState<number | null>(null);
   const [moveBotNote, setMoveBotNote] = useState<string | null>(null);
   // The fairness check: the hand it's for, captured when opened (a new hand starting doesn't swap it).
-  const [fairness, setFairness] = useState<{ handId: string | null; commitment: string | null; board: string[]; mine: string[]; players: number } | null>(null);
+  const [fairness, setFairness] = useState<{
+    handId: string | null;
+    commitment: string | null;
+    board: string[];
+    mine: string[];
+    players: number;
+  } | null>(null);
   // '' is a real intermediate state (the field cleared, not yet retyped) —
   // coercing an empty string straight to 0 made the DOM input's value jump
   // to "0" mid-edit, so retyping "500" over a cleared "500" produced "0500".
@@ -176,7 +201,12 @@ export function TablePage(): React.JSX.Element {
   const [bottomTab, setBottomTab] = useState<'chat' | 'log'>('chat');
   const [chatOpen, setChatOpen] = useState(false);
   const [lastSeenChatId, setLastSeenChatId] = useState<string | null | undefined>(undefined);
-  const [seatMenu, setSeatMenu] = useState<{ seatId: number; x: number; y: number; empty?: boolean } | null>(null);
+  const [seatMenu, setSeatMenu] = useState<{
+    seatId: number;
+    x: number;
+    y: number;
+    empty?: boolean;
+  } | null>(null);
   const [addBotModal, setAddBotModal] = useState<number | null>(null);
   const [botPersona, setBotPersona] = useState(BOT_PERSONAS[0]!.id);
   // Each persona actually added sinks to the bottom of the list — so
@@ -210,7 +240,11 @@ export function TablePage(): React.JSX.Element {
   const [rejoinPath] = useState<string | null>(() => {
     if (!tableId) return null;
     const key = `pokerclause-rejoin:${tableId}`;
-    const fromUrl = assignToken ? `/table/${tableId}?assign=${encodeURIComponent(assignToken)}` : inviteCode ? `/table/${tableId}?code=${encodeURIComponent(inviteCode)}` : null;
+    const fromUrl = assignToken
+      ? `/table/${tableId}?assign=${encodeURIComponent(assignToken)}`
+      : inviteCode
+        ? `/table/${tableId}?code=${encodeURIComponent(inviteCode)}`
+        : null;
     try {
       if (fromUrl) localStorage.setItem(key, fromUrl);
       return fromUrl ?? localStorage.getItem(key);
@@ -287,13 +321,7 @@ export function TablePage(): React.JSX.Element {
         .join(',')
     : '';
   const positions = useMemo(
-    () =>
-      visibleSeatKey === ''
-        ? []
-        : seatPositionsFor(
-            visibleSeatKey.split(',').map(Number),
-            sock.state?.viewerSeatId ?? null,
-          ),
+    () => (visibleSeatKey === '' ? [] : seatPositionsFor(visibleSeatKey.split(',').map(Number), sock.state?.viewerSeatId ?? null)),
     [visibleSeatKey, sock.state?.viewerSeatId],
   );
 
@@ -309,7 +337,12 @@ export function TablePage(): React.JSX.Element {
   // puts a stand-in camera on every occupied seat, bots included — for
   // checking the layout with a full table on camera.
   const fakeCameras = import.meta.env.DEV && searchParams.get('fakeCameras') === '1';
-  const humanCameraSeats: { seatId: number; displayName: string; stream: MediaStream; isLocal: boolean }[] = [];
+  const humanCameraSeats: {
+    seatId: number;
+    displayName: string;
+    stream: MediaStream;
+    isLocal: boolean;
+  }[] = [];
   for (const seat of canSeeVideo ? (sock.state?.seats ?? []) : []) {
     if (seat.status === 'empty' || (seat.isBot && !fakeCameras)) continue;
     let stream: MediaStream | null = null;
@@ -323,7 +356,12 @@ export function TablePage(): React.JSX.Element {
       stream = voice.peers.find((p) => p.userId === seat.playerId)?.stream ?? null;
     }
     if (stream && stream.getVideoTracks().length > 0) {
-      humanCameraSeats.push({ seatId: seat.seatId, displayName: seat.displayName ?? 'Player', stream, isLocal });
+      humanCameraSeats.push({
+        seatId: seat.seatId,
+        displayName: seat.displayName ?? 'Player',
+        stream,
+        isLocal,
+      });
     }
   }
 
@@ -354,7 +392,12 @@ export function TablePage(): React.JSX.Element {
   const tableLayout = is3d ? null : tableLayout2d;
   const placedPositions = useMemo(() => {
     if (is3d) return layout3d?.seats ?? positions;
-    return tableLayout ? positions.map((p) => ({ ...p, ...(tableLayout.seats.get(p.seatId) ?? {}) })) : positions;
+    return tableLayout
+      ? positions.map((p) => ({
+          ...p,
+          ...(tableLayout.seats.get(p.seatId) ?? {}),
+        }))
+      : positions;
   }, [positions, tableLayout, is3d, layout3d]);
   // On a phone, 1-3 human cameras have enough felt space to run noticeably
   // (~20%) bigger tiles than the baseline per-seat-count sizing gives them.
@@ -374,34 +417,14 @@ export function TablePage(): React.JSX.Element {
   // already offers its options), or right-click either.
   const seatGesture = useSeatMenuGesture((seatId, x, y) => setSeatMenu({ seatId, x, y }), user?.role === 'admin');
   const playerSeatGesture = useSeatDoubleTap((seatId: number, x, y) => setSeatMenu({ seatId, x, y }), user?.role === 'admin');
-  // On a phone, during the viewer's turn, the bet overlay's Fold/Call rail
-  // sits in the screen's bottom-left corner — where the chat button lives.
-  // While it's up, lift the button to just above it (measured, since
-  // the rail's height depends on the screen); otherwise it stays put.
-  const [toggleLift, setToggleLift] = useState<number | null>(null);
-  const legalActions = sock.state?.legalActions;
-  useLayoutEffect(() => {
-    const measure = (): void => {
-      const rail = document.querySelector('.bet-overlay-rail--left');
-      const felt = feltRef.current;
-      if (!rail || !felt) {
-        setToggleLift(null);
-        return;
-      }
-      const lift = felt.getBoundingClientRect().bottom - rail.getBoundingClientRect().top + 8;
-      setToggleLift(lift > 8 ? lift : null);
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [legalActions, isCompactScreen]);
   // Open-invite waitlist: chime, vibrate, flash the tab, notify — when a seat is held for this viewer.
   useSeatOfferAlert(sock.state?.seatOffer ?? null, user?.id ?? '', sock.state?.tableName ?? '');
   // Chat messages that arrived while the chat was closed (or on the log tab) — the chat button's badge.
   const chatSeen = chatOpen && bottomTab === 'chat';
   const latestChatId = sock.chat.at(-1)?.id ?? null;
   useEffect(() => {
-    if (lastSeenChatId === undefined && sock.chatHistoryLoaded) setLastSeenChatId(latestChatId); // the history on arrival counts as read
+    if (lastSeenChatId === undefined && sock.chatHistoryLoaded)
+      setLastSeenChatId(latestChatId); // the history on arrival counts as read
     else if (chatSeen && latestChatId !== lastSeenChatId) setLastSeenChatId(latestChatId);
   }, [chatSeen, latestChatId, lastSeenChatId, sock.chatHistoryLoaded]);
   const unreadChat = lastSeenChatId === undefined ? 0 : sock.chat.length - 1 - sock.chat.findIndex((m) => m.id === lastSeenChatId);
@@ -456,6 +479,8 @@ export function TablePage(): React.JSX.Element {
   const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
   const revealLabel = mySeat && isBluffHand(mySeat.holeCards, state.board) ? 'Show Bluff' : 'Reveal Hand';
   const canManage = user.role === 'admin' || sock.canManageTable;
+  // Sitting out — or about to, from the next hand: the sit-out button then offers to sit back in.
+  const sittingOut = !!mySeat && (mySeat.status === 'sitting-out' || mySeat.sittingOutNextHand);
   // On an open-invite table the queue is for people who came with its link — not the owner, who seats themselves.
   const waitlistJoinable = !mySeat && (!state.settings.openSeating || (sock.canTakeSeat && user.role !== 'admin'));
   // Something in the menu wants this viewer's attention: a seat open for them at the waitlist's head.
@@ -492,7 +517,9 @@ export function TablePage(): React.JSX.Element {
   const peerMuteFor = (userId: string | null | undefined, name: string | null | undefined): React.ReactNode =>
     userId && callUserIds.includes(userId) ? <PeerMuteButton userId={userId} name={name ?? 'player'} everyone={callUserIds} /> : undefined;
   // The other players' cameras, worn in the 3D scene (see players3d.ts's FaceScreen).
-  const seatVideos3d = new Map(canSeeVideo ? humanCameraSeats.filter((s) => !s.isLocal && s.seatId !== state.viewerSeatId).map((s) => [s.seatId, s.stream] as const) : []);
+  const seatVideos3d = new Map(
+    canSeeVideo ? humanCameraSeats.filter((s) => !s.isLocal && s.seatId !== state.viewerSeatId).map((s) => [s.seatId, s.stream] as const) : [],
+  );
   // Voice participants with no seat at this table (spectators using voice chat) —
   // shown in the compact VoicePanel strip instead, since there's no seat to
   // render them on. Every human at the table is now a registered `voice.peers`
@@ -561,7 +588,6 @@ export function TablePage(): React.JSX.Element {
     setChatOpen(true);
   };
 
-
   // Open-invite table: whether this viewer can pick a free seat right now —
   // one is held while the waitlist's first person has an offer out.
   const offer = state.seatOffer;
@@ -574,10 +600,20 @@ export function TablePage(): React.JSX.Element {
     const actions: SeatAction[] = [];
     if (seat.status === 'empty') {
       if (!mySeat && !sock.isPractice) actions.push({ label: 'Sit here', onSelect: () => openSeatModal(id) });
-      actions.push({ label: 'Add a computer player', onSelect: () => openAddBotModal(id) });
-      if (!sock.isPractice) actions.push({ label: 'Invite a player to this seat', onSelect: () => openAssignModal(id) });
+      actions.push({
+        label: 'Add a computer player',
+        onSelect: () => openAddBotModal(id),
+      });
+      if (!sock.isPractice)
+        actions.push({
+          label: 'Invite a player to this seat',
+          onSelect: () => openAssignModal(id),
+        });
     } else {
-      actions.push({ label: seat.isBot ? 'Add chips' : 'Rebuy (add chips)', onSelect: () => openRebuyModal(id, seat.stack, seat.pendingChips) });
+      actions.push({
+        label: seat.isBot ? 'Add chips' : 'Rebuy (add chips)',
+        onSelect: () => openRebuyModal(id, seat.stack, seat.pendingChips),
+      });
       if (seat.isBot) {
         actions.push({
           label: 'Move to another seat',
@@ -586,54 +622,78 @@ export function TablePage(): React.JSX.Element {
             setMovingBot(id);
           },
         });
-        actions.push({ label: 'Remove computer player', danger: true, onSelect: () => sock.removeBot(id) });
-      }
-      else if (seat.seatId !== state.viewerSeatId) actions.push({ label: 'Remove player', danger: true, onSelect: () => void sock.removePlayer(id) });
+        actions.push({
+          label: 'Remove computer player',
+          danger: true,
+          onSelect: () => sock.removeBot(id),
+        });
+      } else if (seat.seatId !== state.viewerSeatId)
+        actions.push({
+          label: 'Remove player',
+          danger: true,
+          onSelect: () => void sock.removePlayer(id),
+        });
     }
-    if (state.seats.length - state.removedSeatIds.length > 2) actions.push({ label: 'Delete seat', danger: true, onSelect: () => void sock.deleteSeat(id) });
+    if (state.seats.length - state.removedSeatIds.length > 2)
+      actions.push({
+        label: 'Delete seat',
+        danger: true,
+        onSelect: () => void sock.deleteSeat(id),
+      });
     return actions;
   };
 
   // The chat, always in the felt's bottom-left corner (the table layout
-  // steers seats around it — see useTableLayout.ts), lifted above the bet
-  // overlay's left rail while it's up. A badge counts what's unread.
-  // Right above it, the dealer's voice on and off.
+  // steers seats around it — see useTableLayout.ts; the turn's buttons and
+  // the reveal button are all on the right). A badge counts what's unread.
+  // Above it, the dealer's voice, the table's sounds and the call.
   const chatButton = (
     <div
       className="table-corner"
       data-moved={tableLayout?.toggleSpot ? 'true' : undefined}
       style={
         tableLayout?.toggleSpot
-          ? { left: tableLayout.toggleSpot.left, top: tableLayout.toggleSpot.top, bottom: 'auto' }
-          : toggleLift !== null
-            ? { bottom: toggleLift }
-            : undefined
+          ? {
+              left: tableLayout.toggleSpot.left,
+              top: tableLayout.toggleSpot.top,
+              bottom: 'auto',
+            }
+          : undefined
       }
     >
-      {/* While anyone in the call is talking: everyone's voices off and on, for you. */}
-      {callUserIds.length > 0 && <MuteAllCallsButton />}
-      {speechSupported() && (
+      <div className="table-corner-col">
+        {/* While anyone in the call is talking: everyone's voices off and on, for you. */}
+        {callUserIds.length > 0 && <MuteAllCallsButton />}
+        {/* The table's own sounds (shuffle, cards, chips), right above the dealer's voice. */}
+        <TableSoundButton />
+        {speechSupported() && (
+          <button
+            type="button"
+            className={`table-voice-button${dealerVoice === 'off' ? ' table-voice-button--off' : ''}`}
+            aria-label={dealerVoice === 'off' ? 'Unmute the dealer' : 'Mute the dealer'}
+            aria-pressed={dealerVoice === 'off'}
+            title={dealerVoice === 'off' ? 'Dealer voice off — tap to turn on' : 'Dealer voice on — tap to mute'}
+            onClick={dealerVoiceChoice.toggleMute}
+          >
+            <DealerVoiceIcon muted={dealerVoice === 'off'} />
+          </button>
+        )}
         <button
           type="button"
-          className={`table-voice-button${dealerVoice === 'off' ? ' table-voice-button--off' : ''}`}
-          aria-label={dealerVoice === 'off' ? 'Unmute the dealer' : 'Mute the dealer'}
-          aria-pressed={dealerVoice === 'off'}
-          title={dealerVoice === 'off' ? 'Dealer voice off — tap to turn on' : 'Dealer voice on — tap to mute'}
-          onClick={dealerVoiceChoice.toggleMute}
+          className="table-chat-button"
+          onClick={() => openSheet('chat')}
+          aria-label={unreadChat > 0 ? `Chat, ${String(unreadChat)} new` : 'Chat'}
+          title="Chat and hand log"
         >
-          <DealerVoiceIcon muted={dealerVoice === 'off'} />
+          <span aria-hidden="true">💬</span>
+          {unreadChat > 0 && <span className="table-chat-badge">{unreadChat > 99 ? '99+' : unreadChat}</span>}
         </button>
-      )}
-      <button
-        type="button"
-        className="table-chat-button"
-        onClick={() => openSheet('chat')}
-        aria-label={unreadChat > 0 ? `Chat, ${String(unreadChat)} new` : 'Chat'}
-        title="Chat and hand log"
-      >
-        <span aria-hidden="true">💬</span>
-        {unreadChat > 0 && <span className="table-chat-badge">{unreadChat > 99 ? '99+' : unreadChat}</span>}
-      </button>
+      </div>
+      {/* Beside them, a short column of its own (the stack stays no taller): leaving, and sitting out or back in. */}
+      <div className="table-corner-col">
+        <LeaveTableButton onLeave={() => setLeaveConfirmOpen(true)} />
+        {mySeat && <SitOutButton out={sittingOut} onToggle={() => (sittingOut ? sock.sitIn() : sock.sitOut())} />}
+      </div>
     </div>
   );
 
@@ -657,10 +717,22 @@ export function TablePage(): React.JSX.Element {
     if (movingBot !== null && seat.status === 'empty') return [{ label: 'Move here', onSelect: () => moveBotTo(id) }];
     const out: SeatAction[] = [];
     // Seated already: move here (when, and any blind it costs, are shown first).
-    if (mySeat && seat.status === 'empty') out.push({ label: 'Move to this seat', onSelect: () => setMoveTarget(id) });
+    if (mySeat && seat.status === 'empty')
+      out.push({
+        label: 'Move to this seat',
+        onSelect: () => setMoveTarget(id),
+      });
     if (emptySeatClickable(seat)) out.push({ label: 'Sit here', onSelect: () => openSeatModal(id) });
-    if (user.role === 'admin' || sock.canManageTable) out.push({ label: 'Add a computer player', onSelect: () => openAddBotModal(id) });
-    if (user.role === 'admin' && !sock.isPractice) out.push({ label: 'Invite a player to this seat', onSelect: () => openAssignModal(id) });
+    if (user.role === 'admin' || sock.canManageTable)
+      out.push({
+        label: 'Add a computer player',
+        onSelect: () => openAddBotModal(id),
+      });
+    if (user.role === 'admin' && !sock.isPractice)
+      out.push({
+        label: 'Invite a player to this seat',
+        onSelect: () => openAssignModal(id),
+      });
     return out;
   };
 
@@ -677,7 +749,13 @@ export function TablePage(): React.JSX.Element {
   };
 
   /** A seat's box — placed by % on the 2D table, or anchored in 3D by the scene (`ref`). */
-  const seatSlot = (seatId: number, place: { style?: React.CSSProperties; ref?: (el: HTMLElement | null) => void }): React.ReactNode => {
+  const seatSlot = (
+    seatId: number,
+    place: {
+      style?: React.CSSProperties;
+      ref?: (el: HTMLElement | null) => void;
+    },
+  ): React.ReactNode => {
     const seat = state.seats.find((s) => s.seatId === seatId);
     if (!seat) return null;
     const pending = splitEffects.pending.get(seatId);
@@ -732,13 +810,7 @@ export function TablePage(): React.JSX.Element {
           }
           // On the 3D table your own cards lie face up on the felt in front of you — not twice.
           hideOwnCards={is3d}
-          ownMark={
-            is3d && seatId === state.viewerSeatId && state.phase === 'in-hand'
-              ? state.buttonSeat === seatId
-                ? 'D'
-                : blinds.get(seatId)
-              : undefined
-          }
+          ownMark={is3d && seatId === state.viewerSeatId && state.phase === 'in-hand' ? (state.buttonSeat === seatId ? 'D' : blinds.get(seatId)) : undefined}
           compact={is3d}
         />
       </div>
@@ -768,23 +840,26 @@ export function TablePage(): React.JSX.Element {
           {(mySeat || user.isGuest) && (
             <TableMenuSection title="You">
               {mySeat && (
-                <button type="button" onClick={() => (mySeat.status === 'sitting-out' ? sock.sitIn() : sock.sitOut())}>
-                  {mySeat.status === 'sitting-out' ? 'Sit in' : 'Sit out next hand'}
+                <button type="button" onClick={() => (sittingOut ? sock.sitIn() : sock.sitOut())}>
+                  {sittingOut ? 'Sit in' : 'Sit out next hand'}
                 </button>
               )}
-              <button type="button" onClick={() => {
-                // Any real account (admin, or a signed-in non-guest human)
-                // always has a lobby to go back to, so their own "Leave
-                // table" stays the simple, immediate action it always was.
-                // An invited guest — seated, waiting or watching — gets a
-                // confirm first: see the modal below.
-                setMenuOpen(false);
-                if (!user.isGuest) {
-                  void sock.leaveTable().then(() => navigate('/lobby'));
-                } else {
-                  setLeaveConfirmOpen(true);
-                }
-              }}>
+              <button
+                type="button"
+                onClick={() => {
+                  // Any real account (admin, or a signed-in non-guest human)
+                  // always has a lobby to go back to, so their own "Leave
+                  // table" stays the simple, immediate action it always was.
+                  // An invited guest — seated, waiting or watching — gets a
+                  // confirm first: see the modal below.
+                  setMenuOpen(false);
+                  if (!user.isGuest) {
+                    void sock.leaveTable().then(() => navigate('/lobby'));
+                  } else {
+                    setLeaveConfirmOpen(true);
+                  }
+                }}
+              >
                 Leave table
               </button>
             </TableMenuSection>
@@ -852,6 +927,17 @@ export function TablePage(): React.JSX.Element {
                 }}
               >
                 Table controls
+              </button>
+            )}
+            {canManageLayout && !sock.isPractice && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setDealerPickerOpen(true);
+                }}
+              >
+                Dealer and room
               </button>
             )}
             {immersive.nativeFullscreenSupported && (
@@ -938,13 +1024,19 @@ export function TablePage(): React.JSX.Element {
                 const seat = state.seats.find((s) => s.seatId === seatId);
                 const options = seat ? emptySeatOptions(seat) : [];
                 if (options.length === 1) options[0]!.onSelect();
-                else if (options.length > 1) setSeatMenu({ seatId, x: window.innerWidth / 2 - 135, y: window.innerHeight / 2 - 120, empty: true });
+                else if (options.length > 1)
+                  setSeatMenu({
+                    seatId,
+                    x: window.innerWidth / 2 - 135,
+                    y: window.innerHeight / 2 - 120,
+                    empty: true,
+                  });
               }}
               onPerf={view.reportFrameTime}
               onRequestMode={view.setChoice}
               onOwnCards={onOwnCards}
               dealerModel={dealerModelUrl(dealerCharacters, state.settings.houseDealer)}
-              theme={dealerIsVip(dealerCharacters, state.settings.houseDealer) ? 'vip' : 'classic'}
+              theme={tableTheme(dealerCharacters, state.settings)}
               onDealerDoubleTap={canManageLayout && !sock.isPractice ? () => setDealerPickerOpen(true) : undefined}
               onFail={view.reportFailure}
               onLayout={onLayout3d}
@@ -986,7 +1078,10 @@ export function TablePage(): React.JSX.Element {
           potPosition={is3d ? (layout3d?.pot ?? { left: 50, top: 60 }) : { left: 50, top: (tableLayout?.boardTop ?? 42) + 11 }}
           bannerAnchor={
             is3d
-              ? { left: layout3d?.boardTop.left ?? 50, top: (layout3d?.boardTop.top ?? 40) - 1.5 }
+              ? {
+                  left: layout3d?.boardTop.left ?? 50,
+                  top: (layout3d?.boardTop.top ?? 40) - 1.5,
+                }
               : { left: 50, top: (tableLayout?.boardTop ?? 42) - 7 }
           }
           potAnimator={is3d ? potAnimatorRef.current : null}
@@ -996,12 +1091,7 @@ export function TablePage(): React.JSX.Element {
           onLog={onSplitLog}
         />
         {state.phase !== 'in-hand' && (
-          <HandBreakPanel
-            nextHandAt={state.nextHandAt}
-            canStartHand={state.canStartHand}
-            amSeated={!!mySeat}
-            onStartHand={() => sock.startHand()}
-          />
+          <HandBreakPanel nextHandAt={state.nextHandAt} canStartHand={state.canStartHand} amSeated={!!mySeat} onStartHand={() => sock.startHand()} />
         )}
         {!is3d &&
           placedPositions.map(({ seatId, left, top, betLeft, betTop }) => {
@@ -1009,13 +1099,18 @@ export function TablePage(): React.JSX.Element {
             if (!seat) return null;
             return (
               <Fragment key={seatId}>
-                {seatSlot(seatId, { style: { left: `${String(left)}%`, top: `${String(top)}%` } })}
+                {seatSlot(seatId, {
+                  style: { left: `${String(left)}%`, top: `${String(top)}%` },
+                })}
                 {blinds.has(seatId) && (
                   // In front of the seat: just past where its bet goes, toward the middle.
                   <div
                     className={`blind-tag blind-tag--${blinds.get(seatId)!.toLowerCase()}${seatId === state.viewerSeatId ? ' blind-tag--mine' : ''}`}
                     data-testid={`blind-tag-${String(seatId)}`}
-                    style={{ left: `${String(betLeft + (betLeft - left) * 0.4)}%`, top: `${String(betTop + (betTop - top) * 0.4)}%` }}
+                    style={{
+                      left: `${String(betLeft + (betLeft - left) * 0.4)}%`,
+                      top: `${String(betTop + (betTop - top) * 0.4)}%`,
+                    }}
                   >
                     {blinds.get(seatId)}
                   </div>
@@ -1024,7 +1119,10 @@ export function TablePage(): React.JSX.Element {
                   <div
                     className="bet-chips-slot"
                     data-testid={`bet-chips-${String(seatId)}`}
-                    style={{ left: `${String(betLeft)}%`, top: `${String(betTop)}%` }}
+                    style={{
+                      left: `${String(betLeft)}%`,
+                      top: `${String(betTop)}%`,
+                    }}
                   >
                     <ChipStack amount={seat.committedThisStreet} />
                   </div>
@@ -1060,7 +1158,13 @@ export function TablePage(): React.JSX.Element {
           <div className="table-sheet" role="dialog" aria-label="Chat and hand log" onClick={(e) => e.stopPropagation()}>
             <div className="bottom-tabs">
               {(['chat', 'log'] as const).map((tab) => (
-                <button key={tab} type="button" className={bottomTab === tab ? 'active' : ''} aria-pressed={bottomTab === tab} onClick={() => setBottomTab(tab)}>
+                <button
+                  key={tab}
+                  type="button"
+                  className={bottomTab === tab ? 'active' : ''}
+                  aria-pressed={bottomTab === tab}
+                  onClick={() => setBottomTab(tab)}
+                >
                   {tab === 'chat' ? 'Chat' : 'Hand log'}
                 </button>
               ))}
@@ -1068,7 +1172,11 @@ export function TablePage(): React.JSX.Element {
                 ✕
               </button>
             </div>
-            {bottomTab === 'chat' ? <ChatPanel messages={chatWithDealer} onSend={sock.sendChat} /> : <ActionLog events={sock.recentEvents} seats={state.seats} />}
+            {bottomTab === 'chat' ? (
+              <ChatPanel messages={chatWithDealer} onSend={sock.sendChat} />
+            ) : (
+              <ActionLog events={sock.recentEvents} seats={state.seats} />
+            )}
           </div>
         </div>
       )}
@@ -1116,10 +1224,19 @@ export function TablePage(): React.JSX.Element {
           characters={dealerCharacters}
           current={state.settings.houseDealer}
           onClose={() => setDealerPickerOpen(false)}
-          onPick={(id) => {
-            void sock.updateTableSettings({ houseDealer: id });
-            setDealerPickerOpen(false);
-          }}
+          // A table that never chose its room keeps the one it has: picking a dealer doesn't move it.
+          onPick={(id) =>
+            void sock.updateTableSettings(
+              state.settings.tableTheme
+                ? { houseDealer: id }
+                : {
+                    houseDealer: id,
+                    tableTheme: tableTheme(dealerCharacters, state.settings),
+                  },
+            )
+          }
+          theme={tableTheme(dealerCharacters, state.settings)}
+          onTheme={(theme) => void sock.updateTableSettings({ tableTheme: theme })}
         />
       )}
 
@@ -1304,13 +1421,7 @@ export function TablePage(): React.JSX.Element {
             ) : (
               <>
                 <p>Send this link to the person you want in seat {assignModal}:</p>
-                <input
-                  type="text"
-                  className="assign-link-input"
-                  readOnly
-                  value={assignedLink}
-                  onFocus={(e) => e.currentTarget.select()}
-                />
+                <input type="text" className="assign-link-input" readOnly value={assignedLink} onFocus={(e) => e.currentTarget.select()} />
                 <div className="modal-actions">
                   <button
                     type="button"
@@ -1334,9 +1445,7 @@ export function TablePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => setTerminateConfirmOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Terminate this table?</h3>
-            <p>
-              This ends the table for everyone right now, refunds every seated human&rsquo;s current stack, and cannot be undone.
-            </p>
+            <p>This ends the table for everyone right now, refunds every seated human&rsquo;s current stack, and cannot be undone.</p>
             <div className="modal-actions">
               <button type="button" onClick={() => setTerminateConfirmOpen(false)}>
                 No, keep it running
@@ -1361,8 +1470,8 @@ export function TablePage(): React.JSX.Element {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Reset this table?</h3>
             <p>
-              This empties every seat and refunds every seated human&rsquo;s current stack, but the table itself stays &mdash;
-              same name, same settings, same link.
+              This empties every seat and refunds every seated human&rsquo;s current stack, but the table itself stays &mdash; same name, same settings, same
+              link.
             </p>
             <div className="modal-actions">
               <button type="button" onClick={() => setResetConfirmOpen(false)}>
@@ -1392,10 +1501,19 @@ export function TablePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => setLeaveConfirmOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Leave this table?</h3>
-            <p>
-              {mySeat ? 'Your seat is freed and your chips are set aside for you. ' : ''}You can come back any time while the table is open,
-              with the same invite link. If you just want a short break, use &ldquo;Sit out next hand&rdquo; instead.
-            </p>
+            {user.isGuest ? (
+              <p>
+                {mySeat ? 'Your seat is freed and your chips are set aside for you. ' : ''}
+                You can come back any time while the table is open, with the same invite link. If you just want a short break, use &ldquo;Sit out next
+                hand&rdquo; instead.
+              </p>
+            ) : (
+              <p>
+                {mySeat ? 'Your seat is freed and your chips go back to your balance. ' : ''}
+                You&rsquo;ll be back in the lobby
+                {mySeat ? ', and can sit down here again any time the table is open' : ''}. For a short break, use &ldquo;Sit out next hand&rdquo; instead.
+              </p>
+            )}
             <div className="modal-actions">
               <button type="button" onClick={() => setLeaveConfirmOpen(false)}>
                 No, stay
@@ -1406,9 +1524,21 @@ export function TablePage(): React.JSX.Element {
                 onClick={() => {
                   setLeaveConfirmOpen(false);
                   leavingIntentionallyRef.current = true;
-                  // The guest's session stays: their invite link brings
-                  // them straight back (Left.tsx's "Rejoin table").
-                  void sock.leaveTable().then(() => navigate('/left', { replace: true, state: { rejoin: rejoinPath, tableName: state.tableName } }));
+                  // A guest's session stays: their invite link brings them straight back (Left.tsx's "Rejoin
+                  // table"). Any real account — the admin included — goes back to the lobby, as ever.
+                  if (user.isGuest) {
+                    void sock.leaveTable().then(() =>
+                      navigate('/left', {
+                        replace: true,
+                        state: {
+                          rejoin: rejoinPath,
+                          tableName: state.tableName,
+                        },
+                      }),
+                    );
+                  } else {
+                    void sock.leaveTable().then(() => navigate('/lobby'));
+                  }
                 }}
               >
                 Yes, leave

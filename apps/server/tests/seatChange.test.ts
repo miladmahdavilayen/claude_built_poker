@@ -159,3 +159,53 @@ describe('LiveTable: the owner moving a computer player', () => {
     await playOut(table);
   });
 });
+
+describe('LiveTable: why a hand can’t start, and a start asked for during the break', () => {
+  let table: LiveTable;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    table = new LiveTable('table-3', 'Start', SETTINGS, new MemoryStore(), {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => Date.now(),
+    });
+  });
+
+  afterEach(() => {
+    table.dispose();
+    vi.useRealTimers();
+  });
+
+  it('names each reason: no real player, too few, a hand already dealt, the break — and none when it can', async () => {
+    expect(table.startHandBlocker()).toBe('no-human');
+    table.takeSeat(0, 'a', meta('Alice'), 1000);
+    expect(table.startHandBlocker()).toBe('too-few-players');
+    table.takeSeat(2, 'b', meta('Bob'), 1000);
+    expect(table.startHandBlocker()).toBeNull();
+    table.startNextHand();
+    expect(table.startHandBlocker()).toBe('in-hand');
+    await playOut(table);
+    expect(table.startHandBlocker()).toBe('break');
+  });
+
+  it('a tap during the break deals the hand the moment it ends — once, however many tapped', async () => {
+    table.takeSeat(0, 'a', meta('Alice'), 1000);
+    table.takeSeat(2, 'b', meta('Bob'), 1000);
+    table.startNextHand();
+    await playOut(table);
+    let dealt = 0;
+    const deal = (): void => {
+      dealt++;
+      table.prepareNextOrbit();
+      table.startNextHand();
+    };
+    table.startAfterBreak(deal);
+    table.startAfterBreak(deal);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(table.state.phase).toBe('hand-complete');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(dealt).toBe(1);
+    expect(table.state.phase).toBe('in-hand');
+  });
+});

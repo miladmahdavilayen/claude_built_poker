@@ -45,9 +45,14 @@ export function dealerModelUrl(chars: readonly DealerCharacter[], setting: strin
   return pick ? `/models/dealers/${pick.file}` : null;
 }
 
-/** Whether a table's dealer (its setting, as dealerModelUrl picks it) is a VIP character — whose table is the VIP room. */
+/** Whether a table's dealer (its setting, as dealerModelUrl picks it) is a VIP character. */
 export function dealerIsVip(chars: readonly DealerCharacter[], setting: string | undefined): boolean {
   return (chars.find((c) => c.id === setting) ?? orderedDealers(chars)[0])?.vip === true;
+}
+
+/** A table's room: its own setting — or, for a table that never chose one, the VIP room if its dealer is a VIP character. */
+export function tableTheme(chars: readonly DealerCharacter[], settings: { houseDealer?: string; tableTheme?: 'classic' | 'vip' }): 'classic' | 'vip' {
+  return settings.tableTheme ?? (dealerIsVip(chars, settings.houseDealer) ? 'vip' : 'classic');
 }
 
 /** VIP characters first, then the rest, each in list order. */

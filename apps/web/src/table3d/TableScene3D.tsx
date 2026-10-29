@@ -4,10 +4,10 @@ import { avatarHue } from '../avatarColor.js';
 import { formatChips } from '../chips.js';
 import { blindTags } from '../positionLabels.js';
 import { ActionTicker, describeTableAction, type ActionKind } from '../components/ActionTicker.js';
-import { PlayingCard } from '../components/PlayingCard.js';
 import type { SeatPosition } from '../seatLayout.js';
 import type { QualityTier, TableTheme, View3dMode } from './quality.js';
 import { TableScene, type SceneSnapshot, type ScreenLayout } from './scene.js';
+import { PlayingCard } from '../components/PlayingCard.js';
 
 /** What the split-pot announcement drives on the 3D table (see SplitPotAnnouncement.tsx). */
 export interface PotAnimator {
@@ -306,6 +306,7 @@ export default function TableScene3D({
           */}
           {boardShown > 0 && state.board.length > 0 && (
             <div className="board-hud" data-testid="board-hud" aria-label="Board">
+              {/* The very cards on the felt (the same classic faces — cardArt.ts), upright. */}
               {state.board.slice(0, boardShown).map((c, i) => (
                 <PlayingCard key={`${c}-${String(i)}`} card={c} winning={winningCards.has(c)} />
               ))}

@@ -690,6 +690,12 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect(t.settings.houseDealer).toBe('ava');
       expect((await store.listTables()).find((r) => r.id === t.tableId)?.config).toMatchObject({ houseDealer: 'ava' });
       expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${t.tableId}/settings`, headers, payload: { houseDealer: '../x' } })).statusCode).toBe(400);
+      // The room is its own setting, apart from the dealer: classic or VIP, nothing else.
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${t.tableId}/settings`, headers, payload: { tableTheme: 'vip' } })).statusCode).toBe(200);
+      expect(t.settings.tableTheme).toBe('vip');
+      expect(t.settings.houseDealer).toBe('ava');
+      expect((await store.listTables()).find((r) => r.id === t.tableId)?.config).toMatchObject({ houseDealer: 'ava', tableTheme: 'vip' });
+      expect((await app.inject({ method: 'PATCH', url: `/admin/tables/${t.tableId}/settings`, headers, payload: { tableTheme: 'gold' } })).statusCode).toBe(400);
     });
 
     it('an open-invite table’s starting chips can be changed from the lobby, but it can’t be made public', async () => {

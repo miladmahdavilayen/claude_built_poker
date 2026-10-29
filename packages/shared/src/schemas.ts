@@ -180,6 +180,8 @@ export const UpdateTableSettingsSchema = z
       .max(40)
       .regex(/^[a-z0-9-]*$/)
       .optional(),
+    /** The 3D table's room: the classic green-felt room, or the VIP high-limit room — whichever dealer deals. */
+    tableTheme: z.enum(['classic', 'vip']).optional(),
   })
   .strict();
 export type UpdateTableSettingsIntent = z.infer<typeof UpdateTableSettingsSchema>;

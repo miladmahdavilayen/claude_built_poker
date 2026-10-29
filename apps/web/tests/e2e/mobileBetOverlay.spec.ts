@@ -57,41 +57,38 @@ test('a raise-capable turn on a phone-width viewport shows left/right bet-overla
   await expect(raiseFirst.locator('.bet-overlay')).toBeVisible();
   await expect(raiseFirst.locator('.action-bar')).toHaveCount(0);
 
-  // Folded away until wanted: the right rail is just a Raise button — no
-  // slider covering the table — and pressing it opens the sizer.
+  // Folded away until wanted: the rail holds the turn's buttons — Raise on top, then Check/Call, then Fold —
+  // no slider covering the table, and pressing Raise opens the sizer.
   await expect(raiseFirst.locator('.vbs-track')).toHaveCount(0);
   const foldedRail = await raiseFirst.locator('.bet-overlay-rail--right').boundingBox();
-  expect(foldedRail!.height).toBeLessThan(90);
+  expect(foldedRail!.height).toBeLessThan(mobileViewport.height * 0.4);
+  const order = await raiseFirst.locator('.bet-overlay-rail--right button').allTextContents();
+  expect(order[0]).toMatch(/^(Raise|Bet)$/);
+  expect(order.at(-1)).toBe('Fold');
   await raiseFirst.locator('.bet-overlay-open').click();
   await expect(raiseFirst.locator('.vbs-track')).toBeVisible();
   // Nothing picked yet: the handle is a plain $, not a button.
   await expect(raiseFirst.getByTestId('vbs-thumb')).toHaveText('$');
 
-  const leftRailBox = await raiseFirst.locator('.bet-overlay-rail--left').boundingBox();
   const rightRailBox = await raiseFirst.locator('.bet-overlay-rail--right').boundingBox();
   const fairnessBox = await raiseFirst.locator('.fairness-commitment').boundingBox();
   const timerBox = await raiseFirst.locator('.action-timer').boundingBox();
-  if (!leftRailBox || !rightRailBox) throw new Error('Bet overlay rail has no bounding box.');
+  if (!rightRailBox) throw new Error('Bet overlay rail has no bounding box.');
+  // One rail, on the right (within the thumb's reach): nothing of the overlay on the left at all.
+  await expect(raiseFirst.locator('.bet-overlay-rail--left')).toHaveCount(0);
   if (!fairnessBox || !timerBox) throw new Error('Fairness banner / action timer has no bounding box.');
 
   // Each rail is sized for real tap targets, not squeezed to a strict
   // percentage — but still clearly narrower than the screen.
-  expect(leftRailBox.width).toBeLessThan(mobileViewport.width * 0.35);
   expect(rightRailBox.width).toBeLessThan(mobileViewport.width * 0.35);
-  // The gap between the rails' facing inner edges — the actual visible,
-  // unobstructed center — still covers the clear majority of the screen.
-  const centerGap = rightRailBox.x - (leftRailBox.x + leftRailBox.width);
-  expect(centerGap).toBeGreaterThan(mobileViewport.width * 0.5);
+  // Everything left of the rail — the visible, unobstructed table — is the clear majority of the screen.
+  expect(rightRailBox.x).toBeGreaterThan(mobileViewport.width * 0.6);
   // Bottom-anchored to their own (much shorter than full-screen) content
   // height — this is what keeps them clear of the felt's top corners.
-  expect(leftRailBox.height).toBeLessThan(mobileViewport.height * 0.85);
   expect(rightRailBox.height).toBeLessThan(mobileViewport.height * 0.85);
-  expect(leftRailBox.y + leftRailBox.height).toBeGreaterThan(mobileViewport.height - 5);
   expect(rightRailBox.y + rightRailBox.height).toBeGreaterThan(mobileViewport.height - 5);
   // The exact regression: neither rail's rectangle overlaps the fairness
   // banner's or the action timer's rectangle.
-  expect(rectsOverlap(leftRailBox, fairnessBox)).toBe(false);
-  expect(rectsOverlap(leftRailBox, timerBox)).toBe(false);
   expect(rectsOverlap(rightRailBox, fairnessBox)).toBe(false);
   expect(rectsOverlap(rightRailBox, timerBox)).toBe(false);
 

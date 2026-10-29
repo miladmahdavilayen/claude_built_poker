@@ -1029,16 +1029,29 @@ export function attachSocketServer(
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to start a hand.');
       const seatId = table.seatOfUser(data.userId);
       if (seatId === null) return emitError('NOT_SEATED', 'You must be seated to start a hand.');
-      if (!table.canStartHand()) {
-        return emitError('CANNOT_START_HAND', 'Need at least two seated players, including one real human, and no hand already in progress.');
-      }
       // prepareNextOrbit is a harmless no-op before a table's very first
       // hand (fresh seats have nothing to refill/apply) and is required
       // before every hand after the first (time-bank refill, queued
       // sit-outs, auto-sit-out of busted seats) — always safe to call
       // right before dealing, first hand or not.
-      table.prepareNextOrbit();
-      table.startNextHand(); // broadcasts internally; no separate broadcastTable call needed here.
+      const deal = (): void => {
+        table.prepareNextOrbit();
+        table.startNextHand(); // broadcasts internally; no separate broadcastTable call needed here.
+      };
+      switch (table.startHandBlocker()) {
+        case null:
+          return deal();
+        // Already dealt — another player tapped first, or this was a double tap: what they asked for has happened.
+        case 'in-hand':
+          return;
+        // Still between hands (their clock a moment ahead of ours): dealt the moment the break ends.
+        case 'break':
+          return table.startAfterBreak(deal);
+        case 'no-human':
+          return emitError('CANNOT_START_HAND', 'A real player needs to be seated to start a hand.');
+        case 'too-few-players':
+          return emitError('CANNOT_START_HAND', 'At least two players with chips need to be seated to start a hand.');
+      }
     });
 
     socket.on('join-waitlist', (): void => {

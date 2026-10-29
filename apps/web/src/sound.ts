@@ -53,13 +53,83 @@ function speaker(c: AudioContext): AudioNode {
   return mediaOut?.node ?? c.destination;
 }
 
+// ---- The table's own sounds, on and off ----
+//
+// The shuffle, the cards, the chips, the win and reveal sounds all go
+// through one volume (`tableSounds`), so a viewer can mute them — apart
+// from the dealer's voice and the call, which have their own buttons. The
+// seat-offer alert doesn't: it's a summons, not table noise. On whenever a
+// table opens (Table.tsx turns it back on).
+
+let tableBus: { ctx: AudioContext; gain: GainNode } | null = null;
+let tableMuted = false;
+const muteListeners = new Set<() => void>();
+
+function tableSounds(c: AudioContext): AudioNode {
+  if (!tableBus || tableBus.ctx !== c) {
+    const gain = c.createGain();
+    gain.gain.value = tableMuted ? 0 : 1;
+    gain.connect(speaker(c));
+    tableBus = { ctx: c, gain };
+  }
+  return tableBus.gain;
+}
+
+export function isTableSoundMuted(): boolean {
+  return tableMuted;
+}
+
+export function setTableSoundMuted(muted: boolean): void {
+  if (muted === tableMuted) return;
+  tableMuted = muted;
+  // A short fade, so muting mid-shuffle doesn't click.
+  if (tableBus) tableBus.gain.gain.setTargetAtTime(muted ? 0 : 1, tableBus.ctx.currentTime, 0.02);
+  for (const l of muteListeners) l();
+}
+
+export function onTableSoundMuteChange(listener: () => void): () => void {
+  muteListeners.add(listener);
+  return () => muteListeners.delete(listener);
+}
+
+// ---- The audio session: playback, or the call's ----
+//
+// "playback" lets the table's sounds past the silent switch — but it also
+// forbids recording: with it set, an iPhone refuses the camera and mic
+// ("audio session category is not compatible with audio capture"). So while
+// this viewer is in the call, the session goes back to "auto", where the
+// browser picks what a call needs (as it always did before), and returns to
+// "playback" when they leave.
+
+let callActive = false;
+
+function audioSession(): { type: string } | undefined {
+  return typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+}
+
+function applySessionType(): void {
+  const session = audioSession();
+  if (session) session.type = callActive ? 'auto' : 'playback';
+}
+
+/**
+ * The viewer joining (before asking for the camera and mic) or leaving the
+ * call: the audio session follows — see above. Safe to call either way, on
+ * any browser.
+ */
+export function setCallAudioActive(active: boolean): void {
+  if (active === callActive) return;
+  callActive = active;
+  applySessionType();
+}
+
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   if (!ctx) {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return null;
-    const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
-    if (session) session.type = 'playback';
+    const session = audioSession();
+    applySessionType();
     ctx = new Ctor();
     if (!session && isIOS() && typeof ctx.createMediaStreamDestination === 'function') {
       const el = document.createElement('audio');
@@ -148,7 +218,7 @@ function burst(c: AudioContext, startTime: number, durationSec: number, frequenc
   gain.gain.setValueAtTime(0.0001, startTime);
   gain.gain.exponentialRampToValueAtTime(peakGain, startTime + Math.min(0.01, durationSec / 4));
   gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSec);
-  src.connect(filter).connect(gain).connect(speaker(c));
+  src.connect(filter).connect(gain).connect(tableSounds(c));
   src.start(startTime);
   src.stop(startTime + durationSec + 0.02);
 }
@@ -180,7 +250,7 @@ export function playChipSound(delaySec = 0): void {
   burst(c, start + 0.045, 0.03, 5200, 0.08);
 }
 
-function playTone(startTime: number, durationSec: number, frequency: number, peakGain: number, type: OscillatorType): void {
+function playTone(startTime: number, durationSec: number, frequency: number, peakGain: number, type: OscillatorType, alert = false): void {
   const c = getCtx();
   if (!c) return;
   const osc = c.createOscillator();
@@ -190,7 +260,7 @@ function playTone(startTime: number, durationSec: number, frequency: number, pea
   gain.gain.setValueAtTime(0.0001, startTime);
   gain.gain.exponentialRampToValueAtTime(peakGain, startTime + 0.02);
   gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSec);
-  osc.connect(gain).connect(speaker(c));
+  osc.connect(gain).connect(alert ? speaker(c) : tableSounds(c));
   osc.start(startTime);
   osc.stop(startTime + durationSec + 0.02);
 }
@@ -245,8 +315,9 @@ export function playSeatOfferAlert(): void {
   const c = getCtx();
   if (!c) return;
   const now = c.currentTime;
-  [784, 1046.5, 1568].forEach((freq, i) => playTone(now + i * 0.14, 0.4, freq, 0.14, 'triangle'));
-  [784, 1046.5, 1568].forEach((freq, i) => playTone(now + 0.75 + i * 0.14, 0.4, freq, 0.12, 'triangle'));
+  // Straight to the speaker: muting the table's sounds never silences a seat being held for you.
+  [784, 1046.5, 1568].forEach((freq, i) => playTone(now + i * 0.14, 0.4, freq, 0.14, 'triangle', true));
+  [784, 1046.5, 1568].forEach((freq, i) => playTone(now + 0.75 + i * 0.14, 0.4, freq, 0.12, 'triangle', true));
 }
 
 // ---- Trophy fanfares (see components/TrophyCelebration.tsx) ----
@@ -298,7 +369,7 @@ function trophyBus(c: AudioContext): GainNode {
   wet.gain.value = 0.3;
   input.connect(comp);
   input.connect(verb).connect(wet).connect(comp);
-  comp.connect(speaker(c));
+  comp.connect(tableSounds(c));
   fanfareBus = { ctx: c, input };
   return input;
 }
@@ -490,7 +561,7 @@ export function playSplitPotSound(ways = 2): void {
   const now = c.currentTime;
   const out = c.createGain();
   out.gain.value = 0.9;
-  out.connect(speaker(c));
+  out.connect(tableSounds(c));
   // The single note before it divides.
   bell(c, out, now, NOTE.E5, 0.09, 0.5);
   const voices = Math.min(4, Math.max(2, ways));

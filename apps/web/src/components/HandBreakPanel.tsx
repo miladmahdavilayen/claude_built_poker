@@ -47,6 +47,15 @@ export function HandBreakPanel({
 
   const onBreak = remainingMs !== null && remainingMs > 0;
 
+  // One tap, one request: the button holds until the table's answer arrives (a new state), or 3s at most.
+  const [sent, setSent] = useState(false);
+  useEffect(() => setSent(false), [nextHandAt, canStartHand]);
+  useEffect(() => {
+    if (!sent) return;
+    const t = setTimeout(() => setSent(false), 3000);
+    return () => clearTimeout(t);
+  }, [sent]);
+
   return (
     <div className="start-hand-panel">
       {onBreak ? (
@@ -60,7 +69,15 @@ export function HandBreakPanel({
         </>
       ) : amSeated ? (
         <>
-          <button type="button" className="btn-start-hand" disabled={!canStartHand} onClick={onStartHand}>
+          <button
+            type="button"
+            className="btn-start-hand"
+            disabled={!canStartHand || sent}
+            onClick={() => {
+              setSent(true);
+              onStartHand();
+            }}
+          >
             Play Hand
           </button>
           {!canStartHand && <span className="start-hand-hint">Waiting for at least 2 seated players&hellip;</span>}

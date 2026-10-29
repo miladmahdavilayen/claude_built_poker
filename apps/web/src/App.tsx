@@ -9,6 +9,7 @@ import { LoginPage } from './pages/Login.js';
 import { ProfilePage } from './pages/Profile.js';
 import { TablePage } from './pages/Table.js';
 import { WaiverPage } from './pages/Waiver.js';
+import { BackgroundMusic } from './components/BackgroundMusic.js';
 import { installAudioUnlock } from './sound.js';
 
 export function App(): React.JSX.Element {
@@ -35,22 +36,26 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <Routes>
-      <Route path="/waiver" element={<Navigate to="/" replace />} />
-      <Route path="/" element={<Navigate to={user ? '/lobby' : '/login'} replace />} />
-      <Route path="/login" element={<LoginRoute user={user} />} />
-      <Route path="/lobby" element={user ? <LobbyPage /> : <RedirectToLogin />} />
-      <Route path="/profile" element={user && !user.isGuest ? <ProfilePage /> : <Navigate to="/lobby" replace />} />
-      <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboardPage /> : <Navigate to="/lobby" replace />} />
-      <Route path="/table/:tableId" element={user ? <TablePage /> : <RedirectToLogin />} />
-      {/* Not gated on `user` — an invited guest's session is already
-          logged out by the time they land here (see Table.tsx's
-          leave-table confirm and Left.tsx's own doc comment), and this
-          page must still render for them regardless. */}
-      <Route path="/left" element={<LeftTablePage />} />
-      {import.meta.env.DEV && <Route path="/dev/celebrations" element={<CelebrationPreviewPage />} />}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      {/* Soft music on the login page and in the lobby (none at a table) — see BackgroundMusic.tsx. */}
+      <BackgroundMusic />
+      <Routes>
+        <Route path="/waiver" element={<Navigate to="/" replace />} />
+        <Route path="/" element={<Navigate to={user ? '/lobby' : '/login'} replace />} />
+        <Route path="/login" element={<LoginRoute user={user} />} />
+        <Route path="/lobby" element={user ? <LobbyPage /> : <RedirectToLogin />} />
+        <Route path="/profile" element={user && !user.isGuest ? <ProfilePage /> : <Navigate to="/lobby" replace />} />
+        <Route path="/admin" element={user?.role === 'admin' ? <AdminDashboardPage /> : <Navigate to="/lobby" replace />} />
+        <Route path="/table/:tableId" element={user ? <TablePage /> : <RedirectToLogin />} />
+        {/* Not gated on `user` — an invited guest's session is already
+            logged out by the time they land here (see Table.tsx's
+            leave-table confirm and Left.tsx's own doc comment), and this
+            page must still render for them regardless. */}
+        <Route path="/left" element={<LeftTablePage />} />
+        {import.meta.env.DEV && <Route path="/dev/celebrations" element={<CelebrationPreviewPage />} />}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
 

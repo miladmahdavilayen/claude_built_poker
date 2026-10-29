@@ -68,36 +68,20 @@ export function ActionBar({
     </button>
   );
 
-  if (isCompact && showsAmount) {
+  if (isCompact) {
     const confirmType = legalActions.canRaise ? 'raise' : 'bet';
     const verb = legalActions.canRaise ? 'Raise' : 'Bet';
 
+    // Phones: every action in ONE thin rail down the RIGHT edge, within the
+    // thumb's reach — Raise/Bet on top, then Check/Call, then Fold at the
+    // bottom. The center majority of the screen (the board, your cards,
+    // the cameras) has no overlay element over it at all. Raise opens the
+    // bet sizer in the same rail, in their place (✕ brings them back), so
+    // the slider keeps its full height and nothing overlaps it. See the
+    // .bet-overlay-rail CSS.
     return (
       <div className="bet-overlay">
-        {/* Fold/Check/Call live in a thin rail hugging the LEFT edge only —
-            the center majority of the screen (board cards, the viewer's own
-            hole cards, camera windows) has no overlay element over it at
-            all, faded or otherwise. See the matching right rail below and
-            the .bet-overlay-rail CSS. */}
-        <div className="bet-overlay-rail bet-overlay-rail--left">
-          {foldButton}
-          {checkButton}
-          {callButton}
-        </div>
-        {legalActions.isAllInOnly ? (
-          // Nothing to size: all-in is the only raise.
-          <div className="bet-overlay-rail bet-overlay-rail--right">
-            <button type="button" className="btn-bet bet-overlay-confirm" onClick={() => commit(confirmType)}>
-              All-in
-            </button>
-          </div>
-        ) : !sizing ? (
-          <div className="bet-overlay-rail bet-overlay-rail--right">
-            <button type="button" className="btn-bet bet-overlay-open" onClick={() => setSizing(true)}>
-              {verb}
-            </button>
-          </div>
-        ) : (
+        {sizing && showsAmount && !legalActions.isAllInOnly ? (
           <div className="bet-overlay-rail bet-overlay-rail--right bet-overlay-rail--sizing">
             <button type="button" className="bet-overlay-close" aria-label={`Close the ${verb.toLowerCase()} slider`} onClick={() => setSizing(false)}>
               ✕
@@ -147,6 +131,23 @@ export function ActionBar({
                 +
               </button>
             </div>
+          </div>
+        ) : (
+          <div className="bet-overlay-rail bet-overlay-rail--right">
+            {showsAmount &&
+              (legalActions.isAllInOnly ? (
+                // Nothing to size: all-in is the only raise.
+                <button type="button" className="btn-bet bet-overlay-confirm" onClick={() => commit(confirmType)}>
+                  All-in
+                </button>
+              ) : (
+                <button type="button" className="btn-bet bet-overlay-open" onClick={() => setSizing(true)}>
+                  {verb}
+                </button>
+              ))}
+            {checkButton}
+            {callButton}
+            {foldButton}
           </div>
         )}
       </div>

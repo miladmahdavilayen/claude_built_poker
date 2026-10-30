@@ -50,6 +50,7 @@ import { fakeCameraStream } from '../devFakeCamera.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
 import { useJustRevealedSeats } from '../useJustRevealedSeats.js';
+import { useNoTableSelection } from '../useNoTableSelection.js';
 import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
@@ -173,6 +174,7 @@ export function TablePage(): React.JSX.Element {
     [],
   );
   const isCompactScreen = useIsCompactScreen();
+  useNoTableSelection();
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
   // Moving your own seat to an empty one (anyone seated): the seat it's to.

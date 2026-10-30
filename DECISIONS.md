@@ -2916,3 +2916,17 @@ about ten.
   ("auto") while in a call.
 - 3D seat boxes brought back on screen are checked against the page's
   controls again, so a chair just past the edge can't land its box on them.
+
+## The board strip bigger, no leaning over the board
+
+- **The board strip's cards are 30% bigger** (73×101, 60×83 on a phone) from
+  the same card art; the action ticker below it moves down to match.
+- **Leaning in over the community cards is gone** — the pull-down drag and the
+  Lean in button. A vertical drag only looks up and down. The one lean left is
+  the automatic one at seats 1 and 9, past the house dealer.
+- **Nothing at the table is selectable by touch.** A double tap, press-and-hold
+  or drag anywhere on the table page — turning the 3D view, a seat, the board
+  strip, the controls round the edge, the 2D table too — never selects text,
+  never brings up iOS's callout and never double-tap zooms. The stylesheet says
+  so for all of `.table-page`; `useNoTableSelection` drops any selection a
+  browser makes anyway. Text boxes (the chat) stay selectable.

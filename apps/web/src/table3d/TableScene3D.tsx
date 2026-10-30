@@ -91,7 +91,6 @@ export default function TableScene3D({
   const sceneGen = useRef(0);
   const [potShown, setPotShown] = useState(0);
   const [lookAway, setLookAway] = useState(false);
-  const [leaning, setLeaning] = useState(false);
   const [boardShown, setBoardShown] = useState(0);
   // Each player's latest action (and a counter, so the same action twice still flashes) — for the edge markers.
   const [lastActs, setLastActs] = useState<Map<number, { text: string; kind: ActionKind; n: number }>>(new Map());
@@ -260,23 +259,8 @@ export default function TableScene3D({
       {mode === 'seated' && state.viewerSeatId !== null && (
         <>
           <div className="table3d-look-hint" aria-hidden="true">
-            Drag to look around · pull down to lean over the board · double-tap to center
+            Drag to look around · double-tap to center
           </div>
-          {/* Bend forward over the rail for a closer look — at seats 1 and 9 you also lean in on your own when you turn toward the dealer. */}
-          <button
-            type="button"
-            className={`table3d-lean${leaning ? ' table3d-lean--on' : ''}`}
-            aria-pressed={leaning}
-            aria-label={leaning ? 'Sit back' : 'Lean in'}
-            onClick={() => {
-              const on = !leaning;
-              setLeaning(on);
-              scene?.setLean(on);
-            }}
-          >
-            <span aria-hidden="true">{leaning ? '⇩' : '⇧'}</span>
-            <span className="table3d-btn-label">{leaning ? ' Sit back' : ' Lean in'}</span>
-          </button>
           <button
             type="button"
             className="table3d-whole"

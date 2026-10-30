@@ -4438,23 +4438,6 @@ button.admin-user-row:hover:not(:disabled) {
 .table3d-vignette {
   background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 65%, rgba(0, 0, 0, 0.35) 100%);
 }
-.table3d-lean {
-  position: absolute;
-  right: 12px;
-  top: 124px;
-  z-index: 8;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(8, 12, 16, 0.72);
-  color: #f2f4f7;
-  font-weight: 700;
-  font-size: 13px;
-}
-.table3d-lean--on {
-  border-color: rgba(63, 224, 197, 0.8);
-  color: #b8fff1;
-}
 .table3d-whole {
   position: absolute;
   right: 12px;
@@ -4490,8 +4473,7 @@ button.admin-user-row:hover:not(:disabled) {
 /* On a phone the seated view's controls are smaller and start below the Play Hand panel; the drag hint sits above the Full screen button. */
 @media (max-width: 600px) {
   .table3d-recenter,
-  .table3d-whole,
-  .table3d-lean {
+  .table3d-whole {
     font-size: 11px;
     padding: 4px 9px;
     min-height: 34px;
@@ -4501,9 +4483,6 @@ button.admin-user-row:hover:not(:disabled) {
   }
   .table3d-whole {
     top: 242px;
-  }
-  .table3d-lean {
-    top: 284px;
   }
   .table3d--standing .table3d-whole {
     top: 200px;
@@ -4528,9 +4507,10 @@ button.admin-user-row:hover:not(:disabled) {
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   pointer-events: none;
-  --card-w: 56px;
-  --card-h: 78px;
-  --card-font: 21px;
+  /* 30% over the first size (56×78), from the same 720×1008 card art, so it stays sharp. */
+  --card-w: 73px;
+  --card-h: 101px;
+  --card-font: 27px;
 }
 .board-hud .card {
   width: var(--card-w);
@@ -4546,16 +4526,16 @@ button.admin-user-row:hover:not(:disabled) {
 }
 /* The break's Play Hand panel moves down under the board strip. */
 .felt-3d .start-hand-panel {
-  top: 88px;
+  top: 111px;
 }
 @media (max-width: 600px) {
   .board-hud {
     top: 24px;
     gap: 4px;
     padding: 4px 6px;
-    --card-w: 46px;
-    --card-h: 64px;
-    --card-font: 17px;
+    --card-w: 60px;
+    --card-h: 83px;
+    --card-font: 22px;
   }
   .felt-3d .fairness-commitment {
     top: 6px;
@@ -4700,7 +4680,7 @@ button.admin-user-row:hover:not(:disabled) {
 }
 @media (max-width: 600px) {
   .action-ticker {
-    top: 84px;
+    top: 124px;
     left: 8px;
   }
   .action-ticker-line {
@@ -4742,12 +4722,23 @@ button.admin-user-row:hover:not(:disabled) {
     font-size: 14px;
   }
 }
-/* A finger held on the 3D table is a look-around, never a text selection or iOS's press-and-hold menu. */
-.felt-3d,
-.felt-3d * {
+/* A finger held or double-tapped anywhere at the table — the 3D view being turned, a seat, the board strip, the
+   controls round the edge — is never a text selection, iOS's press-and-hold menu, or a double-tap zoom (see
+   useNoTableSelection). Only what you type in stays selectable. */
+.table-page,
+.table-page * {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+.table-page {
+  touch-action: manipulation;
+}
+.table-page input,
+.table-page textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 /* On a phone the seated view's buttons are round icons, out of the table's way. */
 @media (max-width: 600px) {
@@ -4755,8 +4746,7 @@ button.admin-user-row:hover:not(:disabled) {
     display: none;
   }
   .table3d-recenter,
-  .table3d-whole,
-  .table3d-lean {
+  .table3d-whole {
     width: 38px;
     height: 38px;
     min-height: 38px;
@@ -4858,8 +4848,8 @@ button.admin-user-row:hover:not(:disabled) {
   top: calc(10px + 4dvh + env(safe-area-inset-top));
 }
 .table-page.immersive .felt-3d .action-ticker {
-  /* Under the board strip (10px + 4% down, ~90px tall), never beside it. */
-  top: calc(106px + 4dvh + env(safe-area-inset-top));
+  /* Under the board strip (10px + 4% down, ~113px tall), never beside it. */
+  top: calc(130px + 4dvh + env(safe-area-inset-top));
   left: calc(12px + env(safe-area-inset-left));
 }
 .table-page.immersive .felt-3d .fairness-commitment {
@@ -4877,7 +4867,7 @@ button.admin-user-row:hover:not(:disabled) {
 
 @media (max-width: 600px) {
   .table-page.immersive .felt-3d .action-ticker {
-    top: calc(92px + 4dvh + env(safe-area-inset-top));
+    top: calc(111px + 4dvh + env(safe-area-inset-top));
     left: calc(8px + env(safe-area-inset-left));
   }
   .table-page.immersive .felt-3d .fairness-commitment {

@@ -2930,3 +2930,23 @@ about ten.
   never brings up iOS's callout and never double-tap zooms. The stylesheet says
   so for all of `.table-page`; `useNoTableSelection` drops any selection a
   browser makes anyway. Text boxes (the chat) stay selectable.
+
+## The players at the 3D table are people
+
+- **Every seated player is somebody** (`table3d/playerAvatar.ts`): a man or a
+  woman, their own face (skin, eyes, brows, nose, lips, a painted face texture
+  with stubble or make-up), a dozen hairstyles, beards, now and then a cap,
+  beanie, fedora, cowboy hat, visor or headphones, glasses or sunglasses, and
+  their own clothes — a blazer over a shirt (and tie), a hoodie, a tee, a polo,
+  a sweater or turtleneck, an open leather jacket, a puffer vest, a varsity
+  jacket — all from their seat's seed, coloured from their avatar hue, so a
+  player looks the same every time. They blink, and look over the table at the
+  others rather than down at their cards.
+- **Cheaper than the simple bodies they replace**: the body is one skinned mesh
+  per material on the same skeleton (the joints bend smoothly), the head a few
+  merged meshes on its bone, colours are vertex colours, the face texture is
+  the only per-player one (256×128). A table of eight: 65 draw calls instead of
+  160, 180k triangles instead of 368k (82k on the Low tier), 6.7 MB of geometry
+  instead of 34 MB.
+- The house dealer is untouched: its stand-in body still comes from
+  `humanBody.ts`.

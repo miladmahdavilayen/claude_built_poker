@@ -1,12 +1,14 @@
 import * as THREE from 'three';
-import { buildHumanBody, playerStyle, type BoneName } from './humanBody.js';
+import type { BoneName } from './humanBody.js';
+import { avatarLook, buildPlayerAvatar, setBlink, type PlayerAvatar } from './playerAvatar.js';
 import type { SeatPlacement3d } from './seatLayout3d.js';
 
 // The other players, sitting at the table: a body in each occupied chair
 // (everyone's but your own — you're the one looking), leaning in with
 // their forearms on the rail, breathing, glancing about. Their name and
-// stack (the DOM layer over the scene) float above their head. Clothes and
-// looks come from their avatar colour, so each one stays recognisable.
+// stack (the DOM layer over the scene) float above their head. Each is
+// somebody of their own — face, hair, clothes (playerAvatar.ts) — from their
+// avatar colour and seed, so each one stays recognisable.
 //
 // A player on camera wears it as their face: a screen in the scene itself,
 // on their head and turned the way they face (see FaceScreen). So it is
@@ -22,7 +24,8 @@ const SEATED: Partial<Record<BoneName, [number, number, number]>> = {
   spine: [14, 0, 0],
   chest: [8, 0, 0],
   neck: [-6, 0, 0],
-  head: [6, 0, 0],
+  // Looking over the table at the others (not down at their own cards): their faces are what you see.
+  head: [-9, 0, 0],
   upperArmR: [-66, 0, -14],
   foreArmR: [-32, 0, 22],
   handR: [10, 0, 0],
@@ -40,7 +43,13 @@ interface Body {
   face: FaceScreen | null;
   /** The viewer's own body: in their own chair, under their eyes. */
   own: boolean;
+  avatar: PlayerAvatar;
+  /** When the next blink starts (seconds, scene time). */
+  nextBlink: number;
 }
+
+/** A blink: lids down and up again in this long (seconds). */
+const BLINK_S = 0.16;
 
 /** The screen's size, table units (about half a metre): a head and shoulders, 3:4 like the seat boxes' video. */
 export const FACE_SCREEN = { width: 0.62, height: 0.82 } as const;
@@ -223,6 +232,7 @@ export class SeatedPlayers {
   readonly group = new THREE.Group();
   private readonly bodies = new Map<number, Body>();
   private readonly castShadows: boolean;
+  private readonly detail: 'high' | 'low';
   /** Who is on camera (seat → their stream), whether or not their body is built yet. */
   private videos = new Map<number, MediaStream>();
   private readonly toCamera = new THREE.Vector3();
@@ -232,8 +242,9 @@ export class SeatedPlayers {
   private readonly upright = new THREE.Quaternion();
   private readonly yaw = new THREE.Euler();
 
-  constructor(castShadows: boolean) {
+  constructor(castShadows: boolean, detail: 'high' | 'low' = 'high') {
     this.castShadows = castShadows;
+    this.detail = detail;
   }
 
   /**
@@ -255,8 +266,8 @@ export class SeatedPlayers {
       }
       if (!body) {
         const root = new THREE.Group();
-        const built = buildHumanBody(root, playerStyle(p.hue, p.seed), this.castShadows);
-        body = { root, bones: built.bones, disposables: built.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false };
+        const avatar = buildPlayerAvatar(root, avatarLook(p.hue, p.seed), { castShadows: this.castShadows, detail: this.detail });
+        body = { root, bones: avatar.bones, disposables: avatar.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false, avatar, nextBlink: (p.seed % 400) / 100 };
         this.bodies.set(p.seatId, body);
         this.group.add(root);
       }
@@ -309,7 +320,7 @@ export class SeatedPlayers {
   }
 
   /**
-   * Breathing, and an occasional look around — small, so it never distracts.
+   * Breathing, blinking, and an occasional look around — small, so it never distracts.
    * A screen turns with its player's head, and shows only from the front:
    * from behind (`eye` is the camera) the head itself is what you see.
    */
@@ -326,6 +337,10 @@ export class SeatedPlayers {
         continue;
       }
       head.rotation.y = Math.sin(t * 0.23 + b.phase * 3) * 14 * DEG * Math.max(0, Math.sin(t * 0.11 + b.phase));
+      // A blink every few seconds, now and then a double one.
+      if (t > b.nextBlink + BLINK_S) b.nextBlink = t + 2.2 + ((b.phase * 7.3 + t * 0.37) % 1) * 3.6 - (((b.phase + t) % 1) < 0.15 ? 2.1 : 0);
+      const k = (t - b.nextBlink) / BLINK_S;
+      setBlink(b.avatar, k > 0 && k < 1 ? Math.sin(k * Math.PI) : 0);
       if (!b.face) continue;
       // Upright like a face, however far they lean in, and turned the way they sit. Not with the
       // modelled head's idle glances: where the real person looks is in their video.

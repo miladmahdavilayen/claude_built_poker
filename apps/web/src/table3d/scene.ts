@@ -219,7 +219,7 @@ export class TableScene {
     this.scene.add(this.cards.group);
     this.button = new DealerButton3d(shadows);
     this.scene.add(this.button.group);
-    this.players = new SeatedPlayers(shadows);
+    this.players = new SeatedPlayers(shadows, tier === 'low' ? 'low' : 'high');
     this.scene.add(this.players.group);
     // Until the character loads, a stand-in keeps the same timing from the dealer's spot.
     this.dealer = new GhostDealer(new THREE.Vector3(0.3, 0.45, HOUSE.dealerZ - 0.55));

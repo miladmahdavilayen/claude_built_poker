@@ -4800,18 +4800,24 @@ button.admin-user-row:hover:not(:disabled) {
   justify-content: center;
   margin-bottom: 4px;
 }
-/* A hand shown down over a player's head: near the board strip's own size, so it reads from across the table (the
-   box is laid out around it, so it stays clear of everything else). */
+/* A hand shown down over a player's head: on screen exactly the board strip's size (see .board-hud), whatever the
+   box is scaled by — for its distance (--box-scale, set by scene.ts) and on a phone (.seat's --mobile-shrink and
+   --fit-scale) — and the box is laid out around it, so it stays clear of everything else. */
+.seat--compact .seat-compact-cards {
+  --undo-scale: calc(var(--box-scale, 1) * var(--mobile-shrink, 1) * var(--fit-scale, 1));
+}
 .seat--compact .seat-compact-cards .card {
-  width: 64px;
-  height: 89px;
-  font-size: 25px;
+  /* Never squeezed by a narrow box: the box grows round them instead. */
+  flex-shrink: 0;
+  width: calc(73px / var(--undo-scale));
+  height: calc(101px / var(--undo-scale));
+  font-size: calc(27px / var(--undo-scale));
 }
 @media (max-width: 600px) {
   .seat--compact .seat-compact-cards .card {
-    width: 54px;
-    height: 75px;
-    font-size: 21px;
+    width: calc(60px / var(--undo-scale));
+    height: calc(83px / var(--undo-scale));
+    font-size: calc(22px / var(--undo-scale));
   }
 }
 .seat--compact.seat-has-video .seat-compact-cards {

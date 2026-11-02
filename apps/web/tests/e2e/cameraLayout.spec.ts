@@ -270,15 +270,16 @@ test('4 human cameras during an active hand on a phone screen never overlap the 
   await closeAll(contexts);
 });
 
-// Two players on camera, across the table from each other: each one's camera screen is as big as the room around it
-// allows, not a small window on their head — and still over nothing: the board strip, the page's controls, anyone's
-// nameplate (scene.ts's fitFaces).
+// Two players on camera, across the table from each other (seated): each one's camera screen is as big as the room
+// around it allows, not a small window on their head — exactly over their seat (never moved sideways, their head
+// always inside it), and over nothing: the board strip, the page's controls, anyone's nameplate (scene.ts's
+// fitFaces). A hand shown down over their head is the board strip's own size.
 for (const [label, viewport] of [
   ['laptop', LAPTOP_VIEWPORT],
   ['phone', PHONE_VIEWPORT],
 ] as const) {
-  test(`heads-up on the 3D table (${label}): the other player's camera is big, and over nothing`, async ({ browser }) => {
-    test.setTimeout(120_000);
+  test(`heads-up on the 3D table (${label}): the other player's camera is big, on their seat, and over nothing`, async ({ browser }) => {
+    test.setTimeout(150_000);
     const { pages, contexts } = await seatHumans(browser, ['Pat'], viewport, 9, [4]);
     const [owner] = pages as [Page, Page];
     await owner.evaluate(() => localStorage.setItem('pokerclause.tableQuality', 'low'));
@@ -288,11 +289,15 @@ for (const [label, viewport] of [
     await expect(owner.locator('[data-testid="seat-4"] .seat-video video')).toHaveCount(1, { timeout: 60_000 });
     await (await openTableMenu(owner)).getByLabel(/3D — Seated/).check();
     await closeTableMenu(owner);
-    type Box = { seatId: number; x0: number; y0: number; x1: number; y1: number; k: number };
+    type Box = { seatId: number; x0: number; y0: number; x1: number; y1: number; k: number; headX: number; headY: number };
     const boxes = (): Promise<Box[]> => owner.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => { faceBoxes: Box[] } } }).__scene3d?.debugState().faceBoxes ?? []);
-    await expect.poll(async () => (await boxes()).find((b) => b.seatId === 4)?.k ?? 0, { timeout: 60_000 }).toBeGreaterThan(2);
+    await expect.poll(async () => (await boxes()).find((b) => b.seatId === 4)?.k ?? 0, { timeout: 60_000 }).toBeGreaterThan(1.6);
     await owner.waitForTimeout(800);
     const face = (await boxes()).find((b) => b.seatId === 4)!;
+    // On their seat: centred over them, their head inside it.
+    expect(Math.abs((face.x0 + face.x1) / 2 - face.headX)).toBeLessThan(2);
+    expect(face.headY).toBeGreaterThan(face.y0);
+    expect(face.headY).toBeLessThan(face.y1);
     const r = { left: face.x0, right: face.x1, top: face.y0, bottom: face.y1 } as DOMRect;
     const canvas = (await owner.getByTestId('table-3d').boundingBox())!;
     for (const sel of ['[data-testid^="seat-"]', '.table-corner', '.board-hud', '.table-menu-button', '.table3d-whole']) {
@@ -303,6 +308,16 @@ for (const [label, viewport] of [
         expect(rectsOverlap(r, other), `${label}: the camera screen over ${sel}`).toBe(false);
       }
     }
+    // Played to a showdown: their cards over their head, the board strip's size.
+    await startHand(owner);
+    await playHandToCompletion(pages);
+    const shown = owner.getByTestId('showdown-cards').locator('.card').first();
+    await expect(shown).toBeVisible({ timeout: 15_000 });
+    await owner.waitForTimeout(800);
+    const card = (await shown.boundingBox())!;
+    const board = (await owner.locator('.board-hud .card').first().boundingBox())!;
+    expect(Math.abs(card.width - board.width)).toBeLessThan(1.5);
+    expect(Math.abs(card.height - board.height)).toBeLessThan(1.5);
     await closeAll(contexts);
   });
 }

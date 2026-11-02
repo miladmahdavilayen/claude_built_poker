@@ -2957,10 +2957,14 @@ about ten.
   you sit** (`scene.ts`'s `fitFaces`): worked out on screen every time the view
   moves or the table changes — never over the board, anyone's cards or bet,
   the pot, the dealer's tray, the page's controls, a nameplate or another
-  screen. It stays with its player: over their head where there's room,
-  otherwise the nearest clear space by their place (beside it, or down over
-  the empty felt in front of them), its nameplate above it — or over its
-  bottom edge when there's no room above. At most: 60% of the screen's height
+  screen (what's on the felt counts only once it's there: an empty spot is
+  room). It stays with its player: seated, exactly over their seat — never
+  moved sideways, their head always inside it, only bigger or smaller;
+  standing, over their head where there's room, otherwise the nearest clear
+  space by their place. Its nameplate goes above it — or over its bottom edge
+  when there's no room above. Each is sized on its own first; where two would
+  meet, the bigger gives way (a fair share, not first come). The markers for
+  players out of view keep clear of all of it. At most: 60% of the screen's height
   for one player in view, 46% for two, 36% for three or four, 28% beyond;
   never wider than a fair share of the width (a phone held upright gets
   narrower ones). Smaller than it stands only when that's the only way to
@@ -2971,5 +2975,6 @@ about ten.
   still goes by the way they sit (from behind or side-on, their head shows).
   A screen moved off its player's head leaves the head to be seen.
 - Size and place are eased over a few frames, so a screen glides.
-- **Cards shown over a player's head are bigger**: 64×89 (54×75 on a phone),
-  near the board strip's size; their nameplate is laid out around them.
+- **Cards shown over a player's head are the board strip's size on screen**
+  (73×101, 60×83 on a phone), whatever their box is scaled by for its
+  distance or for a phone; their nameplate is laid out around them.

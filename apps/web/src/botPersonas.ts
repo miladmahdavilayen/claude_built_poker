@@ -15,3 +15,19 @@ export const BOT_PERSONAS: readonly { id: string; label: string }[] = [
   { id: 'check-fold', label: 'Pushover' },
   { id: 'random-legal', label: 'Wildcard' },
 ];
+
+/**
+ * The owner's test players (the admin's only — the server refuses anyone else): they always check or call, so every
+ * hand goes to a showdown, and each turns on a "camera" a few seconds after sitting down — its own short looping clip
+ * (testBotCameras.ts). For trying out cameras, sound, the dealer and the showdown without a table of people.
+ * Mirrors @pokerclause/sim's TEST_CAMERA_BOTS (in the same order as their clips).
+ */
+export const TEST_BOT_PERSONAS: readonly { id: string; label: string }[] = [
+  { id: 'test-cam-ava', label: 'Test Ava (camera, always calls)' },
+  { id: 'test-cam-ben', label: 'Test Ben (camera, always calls)' },
+  { id: 'test-cam-cleo', label: 'Test Cleo (camera, always calls)' },
+  { id: 'test-cam-dev', label: 'Test Dev (camera, always calls)' },
+  { id: 'test-cam-eli', label: 'Test Eli (camera, always calls)' },
+  { id: 'test-cam-fay', label: 'Test Fay (camera, always calls)' },
+  { id: 'test-cam-gus', label: 'Test Gus (camera, always calls)' },
+];

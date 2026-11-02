@@ -9,6 +9,8 @@ export type { BotPolicy, SeatView, SeatViewSeat } from './types.js';
 export { projectSeatView } from './projection.js';
 export {
   ALL_BOT_POLICIES,
+  TEST_CAMERA_BOTS,
+  TEST_CAMERA_BOT_NAMES,
   adversarial,
   allanKeating,
   callingStation,

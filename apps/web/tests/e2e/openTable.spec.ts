@@ -26,7 +26,8 @@ test('an open-invite table: one link for everyone — pick a seat, a waitlist wh
   const owner = await (await browser.newContext()).newPage();
   await adminLogin(owner);
   const link = (await createTable(owner, { name: 'Group Chat Game', smallBlind: 1, bigBlind: 2, maxSeats: 2, isPrivate: false, openSeating: true }))!;
-  expect(link).toMatch(/\/table\/[^?]+\?code=[A-Za-z0-9_-]{16}$/);
+  // The link also carries the owner's table view (see withInviterView).
+  expect(link).toMatch(/\/table\/[^?]+\?code=[A-Za-z0-9_-]{16}&view=(2d|seated|standing)$/);
 
   // Two people from the group chat take the two seats themselves.
   const ann = await arriveByLink(browser, link, 'Ann');

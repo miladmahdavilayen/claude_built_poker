@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { adminGetTableSettings, adminUpdateTableSettings } from '../api.js';
 import { diffSettings, formFromSettings, TableSettingsFields, type SettingsForm } from './TableSettingsForm.js';
 import { ErrorBanner } from './ErrorBanner.js';
+import { withInviterView } from '../table3d/quality.js';
 
 /**
  * The owner's settings editor for a table, opened from the lobby by holding
@@ -53,7 +54,7 @@ export function TableSettingsModal({
 
   // A private table's live invite link — the same one the owner menu at the
   // table shows — so the owner can grab it here and share it.
-  const link = inviteCode ? `${window.location.origin}/table/${tableId}?code=${inviteCode}` : null;
+  const link = inviteCode ? withInviterView(`${window.location.origin}/table/${tableId}?code=${inviteCode}`) : null;
   const copyLink = (): void => {
     if (!link) return;
     void navigator.clipboard.writeText(link).then(() => setCopied(true));

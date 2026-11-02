@@ -2941,7 +2941,9 @@ about ten.
   a sweater or turtleneck, an open leather jacket, a puffer vest, a varsity
   jacket — all from their seat's seed, coloured from their avatar hue, so a
   player looks the same every time. They blink, and look over the table at the
-  others rather than down at their cards.
+  others rather than down at their cards. They sit up straight (near 90°),
+  not bent over the table, so from beside them you see past them to everyone
+  else.
 - **Cheaper than the simple bodies they replace**: the body is one skinned mesh
   per material on the same skeleton (the joints bend smoothly), the head a few
   merged meshes on its bone, colours are vertex colours, the face texture is
@@ -2958,8 +2960,11 @@ about ten.
   moves or the table changes — never over the board, anyone's cards or bet,
   the pot, the dealer's tray, the page's controls, a nameplate or another
   screen (what's on the felt counts only once it's there: an empty spot is
-  room). It stays with its player: seated, exactly over their seat — never
-  moved sideways, their head always inside it, only bigger or smaller;
+  room; an empty seat's "Tap to fill" box steps aside for a camera rather than
+  holding it back; the view and menu buttons are kept clear like any control).
+  It stays with its player: seated, over their seat — their head always well
+  inside it, centred on them where there's room and slid only as far as the
+  screen's edge makes it (never off them), only bigger or smaller;
   standing, over their head where there's room, otherwise the nearest clear
   space by their place. Its nameplate goes above it — or over its bottom edge
   when there's no room above. Each is sized on its own first; where two would
@@ -2971,10 +2976,100 @@ about ten.
   stay clear; with nowhere clear at all (or its player out of view) the
   screen goes and their head shows.
 - To be sized exactly, a screen faces you square-on and is drawn over the
-  table (not into it), at its player's distance; whether you see it at all
-  still goes by the way they sit (from behind or side-on, their head shows).
+  table (not into it), at its player's distance. You see it from anywhere but
+  behind them (past about 110° from the way they face): side-on counts, so
+  turning to the player right beside you shows their camera. The one other
+  exception is the house dealer standing in between (the players either side
+  of the dealer, to each other) — their head shows, until you lean past.
   A screen moved off its player's head leaves the head to be seen.
 - Size and place are eased over a few frames, so a screen glides.
 - **Cards shown over a player's head are the board strip's size on screen**
   (73×101, 60×83 on a phone), whatever their box is scaled by for its
   distance or for a phone; their nameplate is laid out around them.
+
+## The owner's test players
+
+- Seven computer players for testing — **Test Ava … Test Gus**
+  (`@pokerclause/sim`'s `testCamera.ts`) — that the admin alone can seat, on any
+  table (the server's add-bot refuses anyone else; the add-bot menu lists them
+  only for the admin, under "Test players (owner only)").
+- They never fold and never raise: check when they can, call otherwise (all in
+  for less included), so every hand they're in goes to a showdown.
+- A few seconds (3) after sitting down each "turns on a camera": its own
+  six-second looping clip (`public/test-cams/`, cut from the Blender Foundation's
+  Sintel and Big Buck Bunny trailers, CC BY 3.0 — see the credits there),
+  240×320 from the picture alone (the Sintel trailer's letterbox bars cropped
+  off), quiet (about −28 dB, in the file itself: an iPhone ignores a page's
+  volume), WebM where the browser plays it, MP4 otherwise. `testBotCameras.ts`
+  turns it into a MediaStream like a real camera's (canvas-captured picture,
+  Web Audio sound), so the seat's video, the 3D table's screens, the call's
+  sound and mute buttons, and the camera layout all treat it as a person on
+  camera.
+
+## Your hand, wherever you look (seated 3D)
+
+- Seated, your two cards lie on the felt in front of you; turn your head away
+  (to look at another player, say) and they'd be gone. So the scene watches
+  whether they're wholly on screen (`ownCardsOnScreen`), and when they aren't
+  the page shows your hand face up just above your own box — the board strip's
+  size (73×101, 60×83 on a phone), easily read — kept clear by the camera
+  screens and nameplates like any control. Looking back at the felt, it goes:
+  never shown twice. Not once you've folded.
+
+## The 2D table's cards stay readable, and nothing covers them
+
+- A crowded 2D table shrinks every seat by one factor (useTableLayout.ts's
+  `--fit-scale`) — on a 9-seat phone to about half, which left your own hand
+  ~18×26 px and a hand shown down ~12×17: unreadable. Now:
+  - **Your own seat** is drawn full size (`--own-scale` 1) whenever that fits
+    without squeezing everyone else below 80% of what they'd otherwise get,
+    with your hand never under 46×65; the layout counts it at that size, so
+    nothing overlaps. Only on the most cramped screens (a phone held
+    sideways, a full table) is it scaled like the rest. The solver decides,
+    and the page draws exactly what it decided — a size that depends on the
+    scale it's solving for would never settle (it didn't: the first try
+    looped until React gave up).
+  - **A hand shown down** is drawn at least the board's cards' size (38×54)
+    over the room its seat keeps for its cards (`.seat-cards-zoom`, left out
+    of the layout's measurements for the same reason). On a camera box it
+    sits just above the box, not over the face — below it for a box along the
+    top edge.
+- The SB/BB tag sits where the seat's bet goes (a spot the layout keeps clear
+  of the board and every seat), beside the chips when there's a bet — it used
+  to sit past the bet and could land on a community card.
+- "+$10" and "Not this hand" sit just clear of the seat's real box instead of
+  over its cards.
+- On a phone the fairness line (the commitment during the hand, then "Verify
+  hand fairness") is under the pot, part of the board the seats keep clear
+  of, instead of in the top-left corner under a seat.
+- The chat cluster, once moved out of a crowded corner, kept the size it had
+  when it moved; buttons joining it as a hand started made it overlap your
+  seat. Its size is now kept current.
+- None of this touches the 3D table: its seats are drawn by the compact seat
+  branch, and the 2D layout isn't run there.
+
+## An invited player starts in the inviter's view
+
+- Every invite link (the seat invite, a private or open-invite table's link,
+  the one the lobby gives on creating a table) carries the inviter's table
+  view at the moment it's made (`view=2d|seated|standing`). Whoever opens it
+  starts in that view; the page then drops `view=` from the address, so the
+  player's own choice from the menu sticks from then on (and a refresh keeps
+  it). Per browser, like the view itself — no server state.
+
+## 3D recommended for 4+ players
+
+- A game of 4 or more players on the 2D table shows a notice (top of the
+  screen, with the table's other notices): the 3D table is recommended for
+  that many, with "Switch to 3D" right there, or ✕ — dismissed, it stays
+  away at that table for the browser session. Not shown on the 3D table, or
+  when 3D was chosen but the device fell back to 2D.
+
+## 3D: no action buttons before the street has landed
+
+- Seated at the 3D table, your action buttons already waited for your own two
+  cards to land; the flop, turn and river didn't — and the safety wait (3
+  seconds, the turn clock is already running) was started once per hand, so
+  after preflop it never held anything back again. Now the buttons also wait
+  until every community card dealt so far is down and face up on the felt
+  (what the board strip shows), and the safety wait starts over each street.

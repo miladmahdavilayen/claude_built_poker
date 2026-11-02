@@ -95,9 +95,19 @@ test("an opponent's video shows no card-back placeholders during the hand, only 
   // heads-up with no folds always reaches one.
   await playHandToCompletion([pageOwner, pageGuest]);
 
-  // Now that it's a genuine showdown reveal, Priya's video shows her real
-  // (face-up) cards too.
-  await expect(pageOwner.locator('[data-testid="seat-1"] .seat-video .card:not(.card-back)')).toHaveCount(2, { timeout: 10_000 });
+  // Now that it's a genuine showdown reveal, Priya's real (face-up) cards
+  // show too — just above her camera box, the board's cards' size, so
+  // they're readable without covering her face.
+  const shown = pageOwner.locator('[data-testid="seat-1"] .seat-cards-above-video .card:not(.card-back)');
+  await expect(shown).toHaveCount(2, { timeout: 10_000 });
+  await expect(pageOwner.locator('[data-testid="seat-1"] .seat-video .card')).toHaveCount(0);
+  const video = (await pageOwner.locator('[data-testid="seat-1"] .seat-video').boundingBox())!;
+  for (const card of await shown.all()) {
+    const b = (await card.boundingBox())!;
+    expect(b.width).toBeGreaterThanOrEqual(37);
+    const over = b.y < video.y + video.height && b.y + b.height > video.y + 1;
+    expect(over, 'a shown card over her video').toBe(false);
+  }
 
   await ctxOwner.close();
   await ctxGuest.close();

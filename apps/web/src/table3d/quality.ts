@@ -55,6 +55,19 @@ export function loadViewChoice(): TableViewChoice {
   return 'seated';
 }
 
+/**
+ * An invite link carries the inviter's table view (`view=`): whoever opens it starts in that view — 2D or 3D — and
+ * changes it from the menu if they like (Table.tsx applies it once, then drops it from the address).
+ */
+export function withInviterView(link: string): string {
+  return `${link}${link.includes('?') ? '&' : '?'}view=${loadViewChoice()}`;
+}
+
+/** A link's `view=`, if it's one of the views. */
+export function parseViewChoice(v: string | null): TableViewChoice | null {
+  return v === '2d' || v === 'seated' || v === 'standing' ? v : null;
+}
+
 export function saveViewChoice(choice: TableViewChoice): void {
   try {
     window.localStorage.setItem(VIEW_KEY, choice);

@@ -29,7 +29,7 @@ import {
   type SeatOffer,
   type WaitlistEntry,
 } from '@pokerclause/shared';
-import { ALL_BOT_POLICIES, projectSeatView, type BotPolicy } from '@pokerclause/sim';
+import { ALL_BOT_POLICIES, TEST_CAMERA_BOTS, projectSeatView, type BotPolicy } from '@pokerclause/sim';
 import type { SeatInviteRecord, Store } from '../db/store.js';
 import { commitmentFor, deriveDeckForHand, generateServerSeed } from '../rng/commitReveal.js';
 import { GameBook, type PlayerKind } from './gameBook.js';
@@ -47,6 +47,9 @@ export function seatOfferMs(): number {
 
 export const SELECTABLE_BOT_POLICIES: readonly BotPolicy[] = ALL_BOT_POLICIES.filter((p) => p.name !== 'adversarial');
 
+/** The owner's test players (see @pokerclause/sim's testCamera.ts): seatable by the admin only — see socketServer's add-bot. */
+export const isTestBotPersona = (persona: string): boolean => TEST_CAMERA_BOTS.some((p) => p.name === persona);
+
 // Deliberately single-word — this is what actually renders on a seat
 // (tight on space, especially at a 9-max table or on a phone), not the
 // fuller descriptive label a player picks from in the "Add bot" modal
@@ -62,6 +65,13 @@ export const BOT_PERSONA_LABELS: Readonly<Record<string, string>> = {
   'check-fold': 'Pushover',
   'short-stacker': 'Stacker',
   'allan-keating': 'Keating',
+  'test-cam-ava': 'Test Ava',
+  'test-cam-ben': 'Test Ben',
+  'test-cam-cleo': 'Test Cleo',
+  'test-cam-dev': 'Test Dev',
+  'test-cam-eli': 'Test Eli',
+  'test-cam-fay': 'Test Fay',
+  'test-cam-gus': 'Test Gus',
 };
 
 // A bot "thinks" for a random 1–6 seconds before acting, so it doesn't
@@ -207,7 +217,7 @@ export class LiveTable {
   private readonly seatAssignments = new Map<string, SeatInviteRecord>();
   private botMoveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly botRng: RandomSource = cryptoSource();
-  private readonly botPolicies = new Map<string, BotPolicy>(SELECTABLE_BOT_POLICIES.map((p) => [p.name, p]));
+  private readonly botPolicies = new Map<string, BotPolicy>([...SELECTABLE_BOT_POLICIES, ...TEST_CAMERA_BOTS].map((p) => [p.name, p]));
   /** Seat slots the owner deleted — see ProjectedTableState.removedSeatIds for why they're hidden rather than renumbered. */
   private readonly removedSeatIds = new Set<number>();
   /** Engine-config changes made mid-hand, applied when that hand ends — see updateSettings/addSeat. */

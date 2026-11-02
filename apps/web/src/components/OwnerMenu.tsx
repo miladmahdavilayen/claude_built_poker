@@ -6,6 +6,7 @@ import { MoneyInput } from './MoneyInput.js';
 import { ReportDownloads } from './ReportDownloads.js';
 import { diffSettings, formFromSettings, TableSettingsFields, type SettingsForm } from './TableSettingsForm.js';
 import { ErrorBanner } from './ErrorBanner.js';
+import { withInviterView } from '../table3d/quality.js';
 
 /** The form starts from where the table is heading — settings in force, overlaid with anything queued for the next hand. */
 function formFromState(state: ProjectedTableState): SettingsForm {
@@ -168,7 +169,7 @@ export function OwnerMenu({
                     className="assign-link-input"
                     readOnly
                     aria-label="Private table link"
-                    value={`${window.location.origin}/table/${tableId}?code=${inviteCode}`}
+                    value={withInviterView(`${window.location.origin}/table/${tableId}?code=${inviteCode}`)}
                     onFocus={(e) => e.currentTarget.select()}
                   />
                 )}

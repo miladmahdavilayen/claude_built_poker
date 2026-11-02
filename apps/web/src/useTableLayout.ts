@@ -52,6 +52,11 @@ export interface TableLayout {
    * corner.
    */
   toggleSpot: { left: number; top: number } | null;
+  /**
+   * What the viewer's own seat is drawn at (as --own-scale): 1 — full size, its cards readable whatever the table's
+   * scale — wherever that fits without squeezing everyone else much; just `scale`, like the rest, where it doesn't.
+   */
+  ownScale: number;
   /** The window size this was solved for — a new size starts over. */
   viewport: string;
 }
@@ -69,7 +74,9 @@ const BOARD_TOPS = [0.42, 0.46, 0.5, 0.38];
  * with a full table on camera) does it step down, and it's never covered
  * either way.
  */
-const BOARD_SCALES = [1, 0.85, 0.72];
+// The last step brings a phone's board (60×83 cards, styles.css's --board-card-w) back to the old 38×54 — never smaller
+// than the board was before it grew.
+const BOARD_SCALES = [1, 0.85, 0.72, 0.63];
 const READABLE = 0.45;
 /** A bet's chip stack, at scale 1, when none is on the table to measure. */
 const DEFAULT_BET = { w: 44, h: 34 };
@@ -91,6 +98,10 @@ interface Problem {
   bet: { w: number; h: number };
   /** Fixed controls on the felt (the chat button) that no seat may cover — relative to the felt's center. */
   obstacles: Box[];
+  /** The first seat is the viewer's own. */
+  hasViewer: boolean;
+  /** Solving with the viewer's seat at full size (×1), not × the scale. */
+  ownFixed?: boolean;
 }
 
 interface Box {
@@ -133,21 +144,32 @@ interface Placed {
   board: Box;
 }
 
+/** What seat `i`'s extent is multiplied by at this scale: the scale — or 1 for the viewer's own, at full size. */
+const k = (pr: Problem, i: number, scale: number): number => (pr.ownFixed && i === 0 ? 1 : scale);
+
 /** Places every seat (and its bet) for a shape, board height and scale; null if anything collides. */
 function place(pr: Problem, shape: number, boardTop: number, scale: number): Placed | null {
-  const halfW = Math.max(...pr.seats.map((e) => Math.max(e.l, e.r))) * scale;
-  const halfH = Math.max(...pr.seats.map((e) => Math.max(e.t, e.b))) * scale;
+  // The ring is inset by the biggest seat — but not by the viewer's own at full size (at the bottom center): it
+  // alone just sits higher, clear of the edge.
+  const ring = pr.ownFixed ? pr.seats.slice(1) : pr.seats;
+  const halfW = Math.max(...ring.map((e) => Math.max(e.l, e.r))) * scale;
+  const halfH = Math.max(...ring.map((e) => Math.max(e.t, e.b))) * scale;
   const reach = pr.rail * RAIL_OVERHANG;
   const a = pr.width / 2 + reach - halfW;
   const b = pr.height / 2 + reach - halfH;
   if (a <= 0 || b <= 0) return null;
   const centers = ringPoints(pr.seats.length, a, b, shape);
+  if (pr.ownFixed) {
+    const c = centers[0]!;
+    c.y = Math.min(c.y, pr.height / 2 + reach - pr.seats[0]!.b);
+  }
   const boardCy = pr.height * boardTop - pr.height / 2;
   const board: Box = { l: -pr.board.w / 2, r: pr.board.w / 2, t: boardCy - pr.board.h / 2, b: boardCy + pr.board.h / 2 };
   const limit: Box = { l: -pr.width / 2 - reach, r: pr.width / 2 + reach, t: -pr.height / 2 - reach, b: pr.height / 2 + reach };
   const boxes: Box[] = centers.map((c, i) => {
     const e = pr.seats[i]!;
-    return { l: c.x - e.l * scale, r: c.x + e.r * scale, t: c.y - e.t * scale, b: c.y + e.b * scale };
+    const m = k(pr, i, scale);
+    return { l: c.x - e.l * m, r: c.x + e.r * m, t: c.y - e.t * m, b: c.y + e.b * m };
   });
   for (let i = 0; i < boxes.length; i++) {
     const s = boxes[i]!;
@@ -184,8 +206,20 @@ function place(pr: Problem, shape: number, boardTop: number, scale: number): Pla
 
 type Solution = { scale: number; shape: number; boardTop: number; placed: Placed };
 
+/**
+ * The best layout — with the viewer's own seat at full size (its cards readable however small the rest get) unless
+ * that doesn't fit, or squeezes everyone else to much less than they'd otherwise get (a phone held sideways, a full
+ * table): then it's scaled like the rest.
+ */
+function solve(pr: Problem): (Solution & { boardScale: number; ownFixed: boolean }) | null {
+  const scaled = solveBoard({ ...pr, ownFixed: false });
+  const full = pr.hasViewer && pr.seats.length > 2 ? solveBoard({ ...pr, ownFixed: true }) : null;
+  if (full && (!scaled || full.scale >= scaled.scale * 0.8)) return { ...full, ownFixed: true };
+  return scaled ? { ...scaled, ownFixed: false } : null;
+}
+
 /** The best layout, shrinking the board a step at a time only while seats would otherwise drop below READABLE. */
-function solve(pr: Problem): (Solution & { boardScale: number }) | null {
+function solveBoard(pr: Problem): (Solution & { boardScale: number }) | null {
   let best: (Solution & { boardScale: number }) | null = null;
   for (const boardScale of BOARD_SCALES) {
     const s = solveAt({ ...pr, board: { w: pr.board.w * boardScale, h: pr.board.h * boardScale } });
@@ -223,13 +257,19 @@ function solveAt(pr: Problem): Solution | null {
   return best;
 }
 
-function measureExtent(slot: HTMLElement, scale: number): Extent | null {
+function measureExtent(slot: HTMLElement, layoutScale: number, ownScale: number): Extent | null {
   const seat = slot.querySelector<HTMLElement>(':scope > .seat');
   if (!seat) return null;
+  // Your own seat is drawn at its own scale (TableLayout.ownScale).
+  const scale = seat.classList.contains('seat-viewer') ? ownScale : layoutScale;
   const s = slot.getBoundingClientRect();
   const cx = s.left + s.width / 2;
   const cy = s.top + s.height / 2;
-  const rects = [seat, ...seat.querySelectorAll<HTMLElement>('*')].map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+  // A hand shown down is drawn readable over the room its seat keeps for it (.seat-cards-zoom): the room is what counts.
+  const rects = [seat, ...seat.querySelectorAll<HTMLElement>('*')]
+    .filter((el) => !el.closest('.seat-cards-zoom'))
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.width > 0 && r.height > 0);
   if (rects.length === 0) return null;
   return {
     l: (cx - Math.min(...rects.map((r) => r.left))) / scale,
@@ -247,6 +287,7 @@ function sameLayout(a: TableLayout, b: TableLayout): boolean {
     a.boardScale !== b.boardScale ||
     a.boardTop !== b.boardTop ||
     a.minFeltHeight !== b.minFeltHeight ||
+    a.ownScale !== b.ownScale ||
     a.toggleSpot?.left !== b.toggleSpot?.left ||
     a.toggleSpot?.top !== b.toggleSpot?.top ||
     a.viewport !== b.viewport ||
@@ -274,11 +315,12 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
     const felt = feltRef.current;
     if (!felt || ringSeatIds.length === 0) return;
     const scale = layout?.scale ?? 1;
+    const ownScale = layout?.ownScale ?? 1;
     const boardScale = layout?.boardScale ?? 1;
     const extents: Extent[] = [];
     for (const id of ringSeatIds) {
       const slot = felt.querySelector<HTMLElement>(`.seat-slot[data-testid="seat-${String(id)}"]`);
-      const e = slot ? measureExtent(slot, scale) : null;
+      const e = slot ? measureExtent(slot, scale, ownScale) : null;
       if (!e) return;
       extents.push(e);
     }
@@ -302,6 +344,10 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
       const l = toggleEl.offsetLeft - felt.clientWidth / 2;
       const t = toggleEl.offsetTop - felt.clientHeight / 2;
       toggleHome.current = { l, r: l + toggleEl.offsetWidth, t, b: t + toggleEl.offsetHeight };
+    } else if (toggleEl && toggleEl.offsetWidth > 0 && toggleHome.current) {
+      // Moved away, it can still grow (a button joins it as a hand starts): its home keeps its corner, at the new size.
+      const home = toggleHome.current;
+      toggleHome.current = { l: home.l, r: home.l + toggleEl.offsetWidth, t: home.b - toggleEl.offsetHeight, b: home.b };
     }
     const obstacles = toggleEl && toggleHome.current ? [toggleHome.current] : [];
     const pr: Problem = {
@@ -312,9 +358,10 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
       // Measured at full size: the board is drawn at `boardScale` right now.
       board: { w: (boardRect?.width ?? 0) / boardScale, h: (boardRect?.height ?? 0) / boardScale },
       obstacles,
+      hasViewer: !!felt.querySelector(`.seat-slot[data-testid="seat-${String(ringSeatIds[0])}"] > .seat-viewer`),
       bet: betSize ? { w: Math.max(DEFAULT_BET.w, betSize.w / scale), h: Math.max(DEFAULT_BET.h, betSize.h / scale) } : DEFAULT_BET,
     };
-    const key = JSON.stringify([pr.width, pr.height, pr.rail, pr.obstacles.map((o) => [round(o.l), round(o.t)]), ringSeatIds, extents.map((e) => [round(e.l), round(e.r), round(e.t), round(e.b)]), round(pr.board.w), round(pr.board.h), round(pr.bet.w), round(pr.bet.h)]);
+    const key = JSON.stringify([pr.hasViewer, pr.width, pr.height, pr.rail, pr.obstacles.map((o) => [round(o.l), round(o.t)]), ringSeatIds, extents.map((e) => [round(e.l), round(e.r), round(e.t), round(e.b)]), round(pr.board.w), round(pr.board.h), round(pr.bet.w), round(pr.bet.h)]);
     if (key === lastKey.current) return;
     lastKey.current = key;
     // A felt we stretched earlier keeps that height until the window itself changes.
@@ -339,7 +386,7 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
       pr.height = height;
       minFeltHeight = height + 2 * pr.rail; // the felt is border-box: its rails count toward min-height
     }
-    const toggleSpot = enterShown && best !== clear && obstacles.length > 0 ? findToggleSpot(felt, cx, cy, pr, best, obstacles[0]!) : null;
+    const toggleSpot = enterShown && best !== clear && obstacles.length > 0 ? findToggleSpot(felt, cx, cy, { ...pr, ownFixed: best.ownFixed }, best, obstacles[0]!) : null;
     const seats = new Map<number, SeatPlacement>();
     ringSeatIds.forEach((id, i) => {
       const c = best.placed.centers[i]!;
@@ -351,8 +398,10 @@ export function useTableLayout(feltRef: RefObject<HTMLElement | null>, ringSeatI
         betTop: ((bet.y + pr.height / 2) / pr.height) * 100,
       });
     });
+    const fit = Math.floor(best.scale * 100) / 100;
     const next: TableLayout = {
-      scale: Math.floor(best.scale * 100) / 100,
+      scale: fit,
+      ownScale: best.ownFixed ? 1 : fit,
       boardScale: best.boardScale,
       boardTop: best.boardTop * 100,
       seats,
@@ -379,7 +428,8 @@ function findToggleSpot(felt: HTMLElement, cx: number, cy: number, pr: Problem, 
   const busy: Box[] = [sol.placed.board];
   sol.placed.centers.forEach((c, i) => {
     const e = pr.seats[i]!;
-    busy.push({ l: c.x - e.l * sol.scale, r: c.x + e.r * sol.scale, t: c.y - e.t * sol.scale, b: c.y + e.b * sol.scale });
+    const m = k(pr, i, sol.scale);
+    busy.push({ l: c.x - e.l * m, r: c.x + e.r * m, t: c.y - e.t * m, b: c.y + e.b * m });
   });
   const bw = (pr.bet.w * sol.scale) / 2;
   const bh = (pr.bet.h * sol.scale) / 2;

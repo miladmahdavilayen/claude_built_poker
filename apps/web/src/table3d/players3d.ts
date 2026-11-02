@@ -21,11 +21,13 @@ const DEG = Math.PI / 180;
 
 /** The seated pose, degrees XYZ per bone (see houseDealer.ts for the axes). */
 const SEATED: Partial<Record<BoneName, [number, number, number]>> = {
-  spine: [14, 0, 0],
-  chest: [8, 0, 0],
-  neck: [-6, 0, 0],
-  // Looking over the table at the others (not down at their own cards): their faces are what you see.
-  head: [-9, 0, 0],
+  // Sitting up straight, near 90° — not bent over the table: from beside them you see past them to everyone else
+  // (their head and camera screen stay over their own seat).
+  spine: [3, 0, 0],
+  chest: [2, 0, 0],
+  neck: [-1, 0, 0],
+  // Looking straight across the table at the others (not down at their own cards): their faces are what you see.
+  head: [-2, 0, 0],
   upperArmR: [-66, 0, -14],
   foreArmR: [-32, 0, 22],
   handR: [10, 0, 0],
@@ -60,8 +62,12 @@ export const FACE_SCREEN = { width: 0.62, height: 0.82 } as const;
 /** Where it sits on the neck bone: the head's middle a little above its own, just in front of the face. */
 const FACE_AT = { y: 0.14 + 0.1, z: 0.14 };
 const FRAME = 0.024;
-/** cos 78°: turned further from you than that, a face is a profile — the head shows instead. */
-const FACE_SIDE_ON = 0.2;
+/**
+ * cos 110°: seen from further round behind them than that, their back is to you — the head shows instead. Side-on (the
+ * player right beside you, both of you facing into the table) still shows their screen: it faces you whatever way
+ * they sit.
+ */
+const FACE_BEHIND = -0.34;
 
 /** A rounded-corner mask, shared: white inside, clear at the corners. */
 let roundMask: THREE.CanvasTexture | null = null;
@@ -406,10 +412,10 @@ export class SeatedPlayers {
   }
 
   /**
-   * Whether `eye` sees the player's face: in front of their screen, and not
-   * so far round to the side that it would be their profile (past about 78°
-   * — the two players either side of the house dealer, say, both facing down
-   * the table: to each other they're side-on).
+   * Whether `eye` gets their screen: anywhere but behind them (past about
+   * 110° from the way they face). Side-on counts — the player right beside
+   * you, turned to. (Whether the house dealer stands in between is the
+   * scene's to say: see scene.ts's fitFaces.)
    */
   private faceFront(b: Body, eye: THREE.Vector3): boolean {
     const neck = b.bones.get('neck')!;
@@ -417,7 +423,7 @@ export class SeatedPlayers {
     neck.localToWorld(this.facePos.set(0, FACE_AT.y, FACE_AT.z));
     const yaw = b.root.rotation.y;
     this.faceNormal.set(Math.sin(yaw), 0, Math.cos(yaw));
-    return this.toCamera.subVectors(eye, this.facePos).normalize().dot(this.faceNormal) > FACE_SIDE_ON;
+    return this.toCamera.subVectors(eye, this.facePos).normalize().dot(this.faceNormal) > FACE_BEHIND;
   }
 
 
@@ -426,7 +432,8 @@ export class SeatedPlayers {
     const out: { seatId: number; at: THREE.Vector3; edges: [THREE.Vector3, THREE.Vector3]; front: boolean; object: THREE.Object3D }[] = [];
     for (const [seatId, b] of this.bodies) {
       if (!b.face || b.own) continue;
-      const front = this.faceFront(b, eye);
+      // Seen only if it's shown at all (not taken away — the house dealer in between, say).
+      const front = this.faceFront(b, eye) && b.faceShown;
       const g = b.face.group;
       const half = FACE_SCREEN.width / 2;
       out.push({ seatId, at: this.facePos.clone(), edges: [g.localToWorld(new THREE.Vector3(-half, 0, 0)), g.localToWorld(new THREE.Vector3(half, 0, 0))], front, object: g });

@@ -33,7 +33,13 @@ test('the hand winner sees a celebratory banner, and the other player sees a sub
       .waitFor({ state: 'visible', timeout: 120_000 })
       .then(async () => (await page.locator(selector).first().textContent().catch(() => '')) ?? '')
       .catch(() => null);
-  const seen = { aWin: watch(pageA, '.viewer-win-banner'), bWin: watch(pageB, '.viewer-win-banner'), aLoss: watch(pageA, '.viewer-loss-badge'), bLoss: watch(pageB, '.viewer-loss-badge') };
+  const seen = {
+    aWin: watch(pageA, '.viewer-win-banner'),
+    bWin: watch(pageB, '.viewer-win-banner'),
+    aLoss: watch(pageA, '.viewer-loss-badge'),
+    bLoss: watch(pageB, '.viewer-loss-badge'),
+    split: watch(pageA, '[data-testid="split-pot-banner"]'),
+  };
   // Whatever it saw within some seconds of the hand ending (null: nothing) — room for a busy machine running the
   // whole suite, where the banner can take a few seconds to show.
   const within = (p: Promise<string | null>): Promise<string | null> => Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 15_000))]);
@@ -56,7 +62,14 @@ test('the hand winner sees a celebratory banner, and the other player sees a sub
   const [aWin, bWin] = await Promise.all([within(seen.aWin), within(seen.bWin)]);
   // At least one page sees its own win. With random cards checked down to a
   // showdown, a genuine split pot (both playing the board, say) is a real
-  // outcome, and then BOTH pages rightly show their own "You Win!".
+  // outcome — and that's announced by the split-pot banner instead (see
+  // WinCelebration.tsx), not a "You Win!" for anyone: nothing more to check.
+  if (aWin === null && bWin === null) {
+    expect(await within(seen.split), 'no win banner, and no split pot either').not.toBeNull();
+    await ctxA.close();
+    await ctxB.close();
+    return;
+  }
   expect(aWin !== null || bWin !== null).toBe(true);
   if (aWin !== null) expect(aWin).toContain('You Win!');
   if (bWin !== null) expect(bWin).toContain('You Win!');

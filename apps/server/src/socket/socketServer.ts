@@ -24,6 +24,7 @@ import { Server, type Socket } from 'socket.io';
 import { verifyAccessToken } from '../auth/session.js';
 import type { Store } from '../db/store.js';
 import type { LiveTable, VacatedSeat } from '../game/liveTable.js';
+import { isTestBotPersona } from '../game/liveTable.js';
 import { TableRegistry } from '../game/tableRegistry.js';
 import { inviteLockout } from '../security/lockouts.js';
 import { filterProfanity } from './profanityFilter.js';
@@ -783,6 +784,8 @@ export function attachSocketServer(
       const parsed = AddBotSchema.safeParse(raw);
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed add-bot payload.');
       const { seatId, persona, buyIn } = parsed.data;
+      // The owner's test players (camera clips, never fold) are the admin's alone, on any table.
+      if (isTestBotPersona(persona) && data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the owner can add a test player.');
       const range = table.checkBuyInRange(buyIn);
       if (!range.ok) return emitError(range.code, range.message);
       const result = table.addBot(seatId, persona, buyIn);

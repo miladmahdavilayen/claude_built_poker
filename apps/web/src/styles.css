@@ -1007,6 +1007,34 @@ input[type='range']::-moz-range-thumb {
   display: flex;
   gap: 6px;
 }
+/* The 2D board, the 3D board strip's size (see .board-hud): big enough to read at a glance on any screen. The table
+   layout measures it, so the seats keep clear of it whatever the size. A hand shown down is drawn the same size
+   (--board-card-w/h, used by .seat-cards-zoom). */
+.felt:not(.felt-3d) {
+  --board-card-w: 73px;
+  --board-card-h: 101px;
+  --board-card-font: 27px;
+}
+@media (max-width: 600px) {
+  .felt:not(.felt-3d) {
+    --board-card-w: 60px;
+    --board-card-h: 83px;
+    --board-card-font: 22px;
+  }
+}
+/* A phone held sideways: barely 390px tall. */
+@media (max-height: 500px) {
+  .felt:not(.felt-3d) {
+    --board-card-w: 52px;
+    --board-card-h: 72px;
+    --board-card-font: 19px;
+  }
+}
+.felt:not(.felt-3d) .board-cards .card {
+  width: var(--board-card-w);
+  height: var(--board-card-h);
+  font-size: var(--board-card-font);
+}
 .pot-display {
   background: rgba(0, 0, 0, 0.4);
   padding: 4px 14px;
@@ -1265,6 +1293,61 @@ input[type='range']::-moz-range-thumb {
   }
 }
 
+/* Placed just clear of the seat's real box on the 2D felt (WinCelebration.tsx's SeatBadge): the same pop, from there. */
+.win-badge.seat-badge--above,
+.viewer-loss-badge.seat-badge--above {
+  transform: translate(-50%, -100%);
+}
+.win-badge.seat-badge--below,
+.viewer-loss-badge.seat-badge--below {
+  transform: translate(-50%, 0);
+}
+.win-badge.seat-badge--above {
+  animation-name: win-badge-pop-above;
+}
+.win-badge.seat-badge--below {
+  animation-name: win-badge-pop-below;
+}
+@keyframes win-badge-pop-above {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -80%) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -110%) scale(1.1);
+  }
+  25% {
+    transform: translate(-50%, -100%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -120%) scale(0.9);
+  }
+}
+@keyframes win-badge-pop-below {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -20%) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, 10%) scale(1.1);
+  }
+  25% {
+    transform: translate(-50%, 0) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 20%) scale(0.9);
+  }
+}
 .viewer-loss-badge {
   position: absolute;
   transform: translate(-50%, -140%);
@@ -1412,6 +1495,18 @@ input[type='range']::-moz-range-thumb {
   font-size: 11px;
   color: var(--muted);
   font-family: ui-monospace, monospace;
+}
+/* On a phone, under the pot (BoardAndPot's footer): one line, the same height either way. */
+.fairness-commitment.fairness-commitment--board,
+.fairness-link.fairness-link--board {
+  position: static;
+  height: 16px;
+  line-height: 16px;
+  margin-top: -4px;
+  padding: 0;
+  background: none;
+  border: 0;
+  white-space: nowrap;
 }
 
 .table-page.immersive .felt {
@@ -1678,6 +1773,84 @@ input[type='range']::-moz-range-thumb {
   width: calc(var(--card-w, 26px) * var(--own-cards, 1));
   height: calc(var(--card-h, 38px) * var(--own-cards, 1));
   font-size: calc(var(--card-font, 11px) * var(--own-cards, 1));
+}
+/* However small a crowded table shrinks its seats (useTableLayout.ts's --fit-scale), the cards that matter stay
+   readable on screen (2D):
+   - your own seat isn't shrunk with the table (--own-scale is 1) wherever that fits, and your hand is then never
+     under 46×65 — only on the most cramped screens (a phone held sideways, a full table) is it scaled like the rest;
+   - a hand shown down is drawn the board's cards' size (--board-card-w/h) over the room its seat keeps for its
+     cards (.seat-cards-zoom isn't measured, so the layout is just what it'd be with small cards). */
+.felt:not(.felt-3d) .seat.seat-viewer {
+  transform: scale(calc(var(--mobile-shrink, 1) * var(--own-scale, 1)));
+}
+.felt:not(.felt-3d) .seat-viewer .seat-cards .card,
+.felt:not(.felt-3d) .seat-viewer .seat-cards .card-flip-wrap {
+  width: max(calc(var(--card-w, 26px) * var(--own-cards, 1)), calc(46px / var(--mobile-shrink, 1)));
+  height: max(calc(var(--card-h, 38px) * var(--own-cards, 1)), calc(65px / var(--mobile-shrink, 1)));
+  font-size: max(calc(var(--card-font, 11px) * var(--own-cards, 1)), calc(18px / var(--mobile-shrink, 1)));
+}
+.seat-cards.seat-cards--shown {
+  position: relative;
+  width: calc(var(--card-w, 26px) * 2 + 3px);
+  height: var(--card-h, 38px);
+}
+.seat-cards-zoom {
+  --seat-undo: calc(var(--mobile-shrink, 1) * var(--fit-scale, 1));
+  --zx: -50%;
+  --zy: -50%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(var(--zx), var(--zy));
+  z-index: 6;
+  display: flex;
+  gap: calc(3px / var(--seat-undo));
+}
+/* Grown toward the middle of the table, so it stays on screen: a seat down the left side lines it up with its own
+   left edge, one down the right with its right edge, one along the top edge grows it downward. */
+.seat-cards--shown[data-align='left'] .seat-cards-zoom {
+  left: 0;
+  --zx: 0;
+}
+.seat-cards--shown[data-align='right'] .seat-cards-zoom {
+  left: auto;
+  right: 0;
+  --zx: 0;
+}
+.seat-cards--shown[data-near-top] .seat-cards-zoom {
+  top: 0;
+  --zy: 0;
+}
+.seat-cards.seat-cards--shown.seat-cards-above-video {
+  position: absolute;
+}
+/* Above a camera box: grown upward from its bottom edge, off the video. */
+.seat-cards-above-video .seat-cards-zoom,
+.seat-cards--shown[data-near-top].seat-cards-above-video .seat-cards-zoom {
+  top: auto;
+  bottom: 0;
+  --zy: 0;
+}
+/* A camera box along the felt's top edge: its shown hand goes below it instead (grown downward, off the video). */
+.seat-cards.seat-cards--shown.seat-cards-below-video {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+.seat-cards--shown.seat-cards-above-video.seat-cards-below-video .seat-cards-zoom {
+  top: 0;
+  bottom: auto;
+  z-index: 7;
+}
+.seat-cards-zoom .card,
+.seat-cards-zoom .card-flip-wrap {
+  width: max(var(--card-w, 26px), calc(var(--board-card-w, 38px) / var(--seat-undo)));
+  height: max(var(--card-h, 38px), calc(var(--board-card-h, 54px) / var(--seat-undo)));
+  font-size: max(var(--card-font, 11px), calc(var(--board-card-font, 15px) / var(--seat-undo)));
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.55);
+}
+.seat-cards-zoom .card-flip-wrap .card {
+  width: 100%;
+  height: 100%;
 }
 /* Your own hand matters most: drawn bigger than everyone else's. The
    table layout (useTableLayout.ts) measures it like anything else, so the
@@ -4492,6 +4665,37 @@ button.admin-user-row:hover:not(:disabled) {
     font-size: 11px;
   }
 }
+/* Seated on the 3D table, turned away from your own cards on the felt: your hand, just above your own box (the scene
+   places it), the board strip's size — easily read wherever you're looking. Taps go through it. */
+.own-hand-hud {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 10px;
+  background: rgba(8, 12, 16, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.own-hand-hud:not([style*='transform']) {
+  visibility: hidden;
+}
+.own-hand-hud .card {
+  width: 73px;
+  height: 101px;
+  font-size: 27px;
+}
+@media (max-width: 600px) {
+  .own-hand-hud .card {
+    width: 60px;
+    height: 83px;
+    font-size: 22px;
+  }
+}
 /* The board strip over the 3D table (see TableScene3D.tsx). */
 .board-hud {
   position: absolute;
@@ -4594,6 +4798,30 @@ button.admin-user-row:hover:not(:disabled) {
     opacity: 0;
     transform: translateX(-10px);
   }
+}
+/* A player out of view but in the call: their mute button, small, in its own room at the marker's inner edge (the
+   marker itself lets taps through) — never over their name. */
+.seat-edge-marker:has(.seat-edge-mute) {
+  padding-right: 32px;
+}
+.seat-edge-marker[data-side='right']:has(.seat-edge-mute) {
+  padding-right: 9px;
+  padding-left: 32px;
+}
+.seat-edge-marker .seat-edge-mute {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  pointer-events: auto;
+}
+.seat-edge-marker[data-side='right'] .seat-edge-mute {
+  right: auto;
+  left: 5px;
+}
+.seat-edge-mute .peer-mute-button {
+  width: 22px;
+  height: 22px;
 }
 .seat-edge-marker {
   position: absolute;
@@ -5062,6 +5290,16 @@ button.admin-user-row:hover:not(:disabled) {
 .blind-tag.blind-tag--3d {
   left: 0;
   top: 0;
+  transform: none;
+}
+.bet-chips-slot--tagged {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Riding beside its bet's chips (2D): laid out with them — the slot already scales them. */
+.blind-tag.blind-tag--in-bet {
+  position: static;
   transform: none;
 }
 /* Yours — your blind, your button: bigger, and gently pulsing, so you can't miss them. */
@@ -5611,6 +5849,41 @@ button.fairness-link {
   border-radius: 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
+/* "The 3D table is recommended" (4+ players on the 2D table): a way there, or ✕. */
+.table-notices .view-hint-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(14, 18, 26, 0.94);
+  border: 1px solid rgba(120, 180, 255, 0.55);
+  padding: 8px 10px 8px 14px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.view-hint-banner > span {
+  flex: 1;
+  min-width: 0;
+}
+.view-hint-switch {
+  flex: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--accent);
+  color: #10151c;
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.view-hint-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: var(--muted);
+}
 /* Over the table, every notice needs a solid backing to be read. */
 .table-notices .pending-settings-banner,
 .table-notices .seat-offer-banner {
@@ -5760,19 +6033,25 @@ button.fairness-link {
   color: #9aa3ad;
   border-color: rgba(216, 84, 75, 0.6);
 }
-/* On a player's box: a small round speaker in its top-left corner. */
+/* On a player's box: a small round speaker just off its left side, level with its middle — never over their name. */
 .seat-peer-mute {
   position: absolute;
-  top: -12px;
-  left: -12px;
+  top: 50%;
+  right: 100%;
+  margin-right: 3px;
+  transform: translateY(-50%);
   z-index: 6;
+}
+.seat--compact .peer-mute-button {
+  width: 22px;
+  height: 22px;
 }
 .peer-mute-button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   min-height: 0;
   padding: 0;
   border-radius: 50%;
@@ -5780,6 +6059,10 @@ button.fairness-link {
   background: rgba(14, 18, 26, 0.9);
   color: #f2f4f7;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.peer-mute-button svg {
+  width: 13px;
+  height: 13px;
 }
 .peer-mute-button--off {
   background: rgba(70, 22, 22, 0.94);

@@ -84,8 +84,14 @@ export function Seat({
   emptyTap,
   callControls,
   peerMute,
+  shownCardsBelow = false,
+  shownAlign = 'center',
 }: {
   seat: ProjectedSeat;
+  /** On a camera box along the felt's top edge (2D), a hand shown down goes below the box rather than off the top. */
+  shownCardsBelow?: boolean | undefined;
+  /** Which way a hand shown down grows (2D): toward the middle of the table, so it stays on screen. */
+  shownAlign?: 'left' | 'center' | 'right' | undefined;
   isButton: boolean;
   isActing: boolean;
   isViewer: boolean;
@@ -301,17 +307,32 @@ export function Seat({
               overlays on top instead of taking their own space below. */}
           <div className="seat-video-overlay-top">{nameRow}</div>
           <div className="seat-video-overlay-bottom">
-            {showHoleCardsOnVideo && !isViewer && <div className="seat-cards">{holeCards}</div>}
             {stackRow}
           </div>
         </div>
       )}
-      {/* The viewer's own cards sit just above their camera box rather than over it, so they can still see their own video. */}
-      {showSeatVideo && showHoleCardsOnVideo && isViewer && <div className="seat-cards seat-cards-above-video">{holeCards}</div>}
+      {/* Cards on a camera box sit just above it rather than over it: your own, so you still see your video; a hand
+          shown down, so it's readable at full size without covering the player's face. */}
+      {showSeatVideo && showHoleCardsOnVideo && (
+        <div
+          className={`seat-cards seat-cards-above-video${isViewer ? '' : ` seat-cards--shown${shownCardsBelow ? ' seat-cards-below-video' : ''}`}`}
+          data-align={shownAlign}
+        >
+          {isViewer ? holeCards : <div className="seat-cards-zoom">{holeCards}</div>}
+        </div>
+      )}
       {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} showVideo={false} />}
       {!showSeatVideo && (
         <>
-          {holeCards && <div className="seat-cards">{holeCards}</div>}
+          {holeCards &&
+            (!isViewer && seat.holeCards.length > 0 ? (
+              // A hand shown down: readable, over the room the seat keeps for its cards (see .seat-cards-zoom).
+              <div className="seat-cards seat-cards--shown" data-align={shownAlign} data-near-top={shownCardsBelow || undefined}>
+                <div className="seat-cards-zoom">{holeCards}</div>
+              </div>
+            ) : (
+              <div className="seat-cards">{holeCards}</div>
+            ))}
           <div className="seat-info">
             {nameRow}
             {stackRow}

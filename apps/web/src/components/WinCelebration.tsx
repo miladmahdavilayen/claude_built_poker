@@ -1,10 +1,42 @@
 import type { ProjectedGameEvent } from '@pokerclause/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { formatChips } from '../chips.js';
 import type { SeatPosition } from '../seatLayout.js';
 import { playSoftLossTone, playTrophyFanfare, playWinChimeSound, playWinFanfare } from '../sound.js';
 import { winTierOf, type WinTier } from '../winTiers.js';
 import { TROPHY_CELEBRATION_MS, TrophyCelebration } from './TrophyCelebration.js';
+
+/**
+ * A badge for a seat (a win's amount, "Not this hand"). On the 2D felt it sits just clear of the seat's real box —
+ * above it, or below it for a seat along the top edge — never over its cards. A 3D seat keeps the plain spot by its
+ * position (it moves with the camera).
+ */
+function SeatBadge({ seatId, left, top, className, children }: { seatId: number; left: number; top: number; className: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [spot, setSpot] = useState<{ x: number; y: number; below: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const parent = el?.offsetParent;
+    const seat = document.querySelector<HTMLElement>(`.seat-slot:not(.seat-slot--3d)[data-testid="seat-${String(seatId)}"] > .seat`);
+    if (!el || !parent || !seat) return;
+    const rects = [seat, ...seat.querySelectorAll<HTMLElement>('*')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+    const p = parent.getBoundingClientRect();
+    const box = seat.getBoundingClientRect();
+    const t = Math.min(...rects.map((r) => r.top)) - p.top - parent.clientTop;
+    const b = Math.max(...rects.map((r) => r.bottom)) - p.top - parent.clientTop;
+    const below = t < el.offsetHeight + 8;
+    setSpot({ x: box.left + box.width / 2 - p.left - parent.clientLeft, y: below ? b + 4 : t - 4, below });
+  }, [seatId]);
+  return (
+    <div
+      ref={ref}
+      className={`${className}${spot ? (spot.below ? ' seat-badge--below' : ' seat-badge--above') : ''}`}
+      style={spot ? { left: `${String(spot.x)}px`, top: `${String(spot.y)}px` } : { left: `${String(left)}%`, top: `${String(top)}%` }}
+    >
+      {children}
+    </div>
+  );
+}
 
 const OTHER_WIN_BADGE_MS = 2200;
 const VIEWER_WIN_BANNER_MS = 2400;
@@ -156,9 +188,9 @@ export function WinCelebration({
         const pos = positions.find((p) => p.seatId === b.seatId);
         if (!pos) return null;
         return (
-          <div key={b.id} className="win-badge" style={{ left: `${String(pos.left)}%`, top: `${String(pos.top)}%` }}>
+          <SeatBadge key={b.id} seatId={b.seatId} left={pos.left} top={pos.top} className="win-badge">
             +{formatChips(b.amount)}
-          </div>
+          </SeatBadge>
         );
       })}
       {viewerWin !== null && viewerWin.tier !== 0 && (
@@ -171,9 +203,9 @@ export function WinCelebration({
         </div>
       )}
       {viewerLost && viewerPos && (
-        <div className="viewer-loss-badge" style={{ left: `${String(viewerPos.left)}%`, top: `${String(viewerPos.top)}%` }}>
+        <SeatBadge seatId={viewerPos.seatId} left={viewerPos.left} top={viewerPos.top} className="viewer-loss-badge">
           Not this hand
-        </div>
+        </SeatBadge>
       )}
     </>
   );

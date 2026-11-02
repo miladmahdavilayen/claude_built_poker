@@ -292,6 +292,39 @@ describe('socketServer: live signaling and access control', () => {
     aliceSocket.close();
   });
 
+  it("the owner's test players (camera clips, always check or call) are the admin's alone, on any table", async () => {
+    const admin = await makeAdminUser('Owner');
+    const table = await registry.createTable('Test Players', SETTINGS, null, null);
+    const adminSocket = connect(admin.token);
+    await waitFor(adminSocket, 'connect');
+    adminSocket.emit('join-table', { tableId: table.tableId });
+    await waitFor(adminSocket, 'state');
+    const added = waitForState<{ state: { seats: { seatId: number; isBot: boolean; displayName: string | null; avatarSeed: string | null }[] } }>(adminSocket, (p) =>
+      p.state.seats.some((s) => s.seatId === 2 && s.isBot),
+    );
+    adminSocket.emit('add-bot', { seatId: 2, persona: 'test-cam-ava', buyIn: 100 });
+    const seat = (await added).state.seats.find((s) => s.seatId === 2)!;
+    expect(seat.displayName).toBe('Test Ava');
+    // The page knows which clip is theirs from this.
+    expect(seat.avatarSeed).toBe('bot-test-cam-ava');
+    adminSocket.close();
+
+    // A table's own creator can add the usual computer players to it — but not these.
+    const bob = await makeRegisteredUser('Bob', 500);
+    const practice = await openPractice(bob, 1);
+    const bobSocket = connect(bob.token);
+    await waitFor(bobSocket, 'connect');
+    bobSocket.emit('join-table', { tableId: practice.tableId });
+    await waitFor(bobSocket, 'state');
+    const removed = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) => p.state.seats.some((s) => s.seatId === 1 && s.status === 'empty'));
+    bobSocket.emit('remove-bot', { seatId: 1 });
+    await removed;
+    const denied = waitFor<{ code: string }>(bobSocket, 'error');
+    bobSocket.emit('add-bot', { seatId: 1, persona: 'test-cam-ben', buyIn: 100 });
+    expect((await denied).code).toBe('ADMIN_REQUIRED');
+    bobSocket.close();
+  });
+
   it('start-hand is refused when not seated, and when not enough players are dealt-in yet', async () => {
     const alice = await makeAdminUser('Alice'); // owner-only take-seat — see the "adding a bot..." test above for why
     const eve = await makeUser('Eve');

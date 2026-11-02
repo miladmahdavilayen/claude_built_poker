@@ -36,6 +36,8 @@ export interface TableScene3DProps {
   onDealerDoubleTap?: (() => void) | undefined;
   /** Whether your own cards are down in front of you (your action buttons wait for them). */
   onOwnCards?: ((landed: boolean) => void) | undefined;
+  /** How many community cards are down and face up on the felt — the page holds your action buttons until all are. */
+  onBoardShown?: ((count: number) => void) | undefined;
   /** A pinch/scroll or button asked for the other 3D view (standing for the whole table, seated to sit back down). */
   onRequestMode: (mode: View3dMode) => void;
   /** WebGL wouldn't start: fall back to the 2D table. */
@@ -47,6 +49,8 @@ export interface TableScene3DProps {
   winningCards: ReadonlySet<string>;
   /** The other players' cameras, by seat — each worn as a screen on their head in the scene. */
   seatVideos: ReadonlyMap<number, MediaStream>;
+  /** A player's mute button for this viewer (in the call, talking) — on their marker too when they're out of view. */
+  edgeMute?: ((seatId: number) => React.ReactNode) | undefined;
 }
 
 /**
@@ -75,6 +79,7 @@ export default function TableScene3D({
   onPerf,
   onRequestMode,
   onOwnCards,
+  onBoardShown,
   dealerModel,
   theme,
   onDealerDoubleTap,
@@ -83,6 +88,7 @@ export default function TableScene3D({
   potAnimatorRef,
   winningCards,
   seatVideos,
+  edgeMute,
 }: TableScene3DProps): React.JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
@@ -91,6 +97,8 @@ export default function TableScene3D({
   const sceneGen = useRef(0);
   const [potShown, setPotShown] = useState(0);
   const [lookAway, setLookAway] = useState(false);
+  // Seated, turned away from your own cards on the felt: they're shown to you here instead (see below).
+  const [ownCardsInView, setOwnCardsInView] = useState(true);
   const [boardShown, setBoardShown] = useState(0);
   // Each player's latest action (and a counter, so the same action twice still flashes) — for the edge markers.
   const [lastActs, setLastActs] = useState<Map<number, { text: string; kind: ActionKind; n: number }>>(new Map());
@@ -112,8 +120,8 @@ export default function TableScene3D({
   const lastEventsRef = useRef<readonly ProjectedGameEvent[] | null>(null);
   const dealtRef = useRef<Set<number> | null>(null);
   // The callbacks can change every render; the scene keeps the latest without being rebuilt.
-  const cbRef = useRef({ onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onDealerDoubleTap });
-  cbRef.current = { onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onDealerDoubleTap };
+  const cbRef = useRef({ onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onBoardShown, onDealerDoubleTap });
+  cbRef.current = { onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onBoardShown, onDealerDoubleTap };
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
@@ -142,8 +150,12 @@ export default function TableScene3D({
         },
         onPotShown: setPotShown,
         onLookAway: setLookAway,
-        onBoardShown: setBoardShown,
+        onBoardShown: (count) => {
+          setBoardShown(count);
+          cbRef.current.onBoardShown?.(count);
+        },
         onOwnCards: (landed) => cbRef.current.onOwnCards?.(landed),
+        onOwnCardsInView: setOwnCardsInView,
         onDealerDoubleTap: () => cbRef.current.onDealerDoubleTap?.(),
         onRequestMode: (m) => cbRef.current.onRequestMode(m),
       }, theme);
@@ -258,9 +270,12 @@ export default function TableScene3D({
       )}
       {mode === 'seated' && state.viewerSeatId !== null && (
         <>
-          <div className="table3d-look-hint" aria-hidden="true">
-            Drag to look around · double-tap to center
-          </div>
+          {/* Not under your hand when that's shown (you've found how to look round by then). */}
+          {ownCardsInView && (
+            <div className="table3d-look-hint" aria-hidden="true">
+              Drag to look around · double-tap to center
+            </div>
+          )}
           <button
             type="button"
             className="table3d-whole"
@@ -304,6 +319,7 @@ export default function TableScene3D({
               .filter((s) => s.status !== 'empty' && s.seatId !== state.viewerSeatId && seatIds.includes(s.seatId))
               .map((s) => {
                 const act = lastActs.get(s.seatId);
+                const mute = edgeMute?.(s.seatId);
                 return (
                   <div
                     key={`edge-${String(s.seatId)}`}
@@ -312,6 +328,8 @@ export default function TableScene3D({
                     data-testid={`edge-${String(s.seatId)}`}
                   >
                     <span className="seat-edge-arrow" aria-hidden="true" />
+                    {/* Out of view, still in the call: muting them stays one tap away. */}
+                    {mute && <span className="seat-edge-mute">{mute}</span>}
                     <span className="seat-edge-name">{s.displayName ?? `Seat ${String(s.seatId + 1)}`}</span>
                     <span className="seat-edge-stack">{formatChips(s.stack)}</span>
                     {s.committedThisStreet > 0 && <span className="seat-edge-bet">bet {formatChips(s.committedThisStreet)}</span>}
@@ -323,6 +341,21 @@ export default function TableScene3D({
                   </div>
                 );
               })}
+          {/* Your own hand, face up just above your box, whenever you've turned away from it on the felt (looking at
+              another player, say) — the scene places it and keeps everything else clear of it. */}
+          {mode === 'seated' &&
+            !ownCardsInView &&
+            (() => {
+              const me = state.seats.find((s) => s.seatId === state.viewerSeatId);
+              if (!me || me.status === 'folded' || me.holeCards.length < 2) return null;
+              return (
+                <div ref={overlayRef('ownhand')} className="own-hand-hud" data-testid="own-hand-hud" aria-label="Your hand">
+                  {me.holeCards.map((c, i) => (
+                    <PlayingCard key={`${c}-${String(i)}`} card={c} />
+                  ))}
+                </div>
+              );
+            })()}
           {/* The board for screen readers (and tests): it's drawn in 3D. */}
           <div className="sr-only" data-testid="board-3d">
             Board: {state.board.length > 0 ? state.board.join(' ') : 'none yet'}

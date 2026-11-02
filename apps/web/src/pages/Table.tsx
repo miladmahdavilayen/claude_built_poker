@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext.js';
 import { ActionBar } from '../components/ActionBar.js';
@@ -37,7 +37,8 @@ import { unlockMedia, useMediaBlocked } from '../mediaUnlock.js';
 import { speechSupported, unlockSpeechOnFirstTap, useDealerAnnouncements, useDealerVoiceChoice, type DealerVoiceChoice } from '../dealerVoice.js';
 import { WaitlistPanel } from '../components/WaitlistPanel.js';
 import { WinCelebration } from '../components/WinCelebration.js';
-import { BOT_PERSONAS } from '../botPersonas.js';
+import { BOT_PERSONAS, TEST_BOT_PERSONAS } from '../botPersonas.js';
+import { testCamCallId, useTestBotCameras } from '../testBotCameras.js';
 import { formatChips } from '../chips.js';
 import { isBluffHand } from '../handStrength.js';
 import { blindTags, computePositionLabels } from '../positionLabels.js';
@@ -55,6 +56,7 @@ import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
 import { ErrorBanner } from '../components/ErrorBanner.js';
+import { parseViewChoice, saveViewChoice, withInviterView } from '../table3d/quality.js';
 
 /**
  * Chooses which seats' cameras stay visible once the table has collapsed
@@ -119,7 +121,42 @@ export function TablePage(): React.JSX.Element {
   const tableNotice = useTransient(sock.lastError && sock.lastError.code !== 'INVALID_INVITE_CODE' ? sock.lastError.message : null, sock.lastError);
   const immersive = useImmersiveMode();
   // 3D (and at what quality) or the classic 2D table — the header's View menu.
+  // Came by an invite link: start in the inviter's view (see withInviterView) — before the view is first read.
+  useState(() => {
+    const v = parseViewChoice(searchParams.get('view'));
+    if (v) saveViewChoice(v);
+  });
   const view = useTableView();
+  // The "3D is recommended" notice, once dismissed, stays away at this table for the session.
+  const hintKey = `pokerclause-3d-hint:${String(tableId)}`;
+  const [hide3dHint, setHide3dHint] = useState(() => {
+    try {
+      return sessionStorage.getItem(hintKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismiss3dHint = (): void => {
+    setHide3dHint(true);
+    try {
+      sessionStorage.setItem(hintKey, '1');
+    } catch {
+      // Storage blocked — it's just dismissed for now.
+    }
+  };
+  // …and drop it from the address, so a refresh keeps whatever they've picked since.
+  const viewParam = searchParams.get('view');
+  useEffect(() => {
+    if (viewParam === null) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('view');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [viewParam, setSearchParams]);
   const is3d = view.effective !== '2d';
   // Where the 3D scene put each seat and the pot on screen (% of the felt), for the DOM layers over it.
   const [layout3d, setLayout3d] = useState<{
@@ -139,14 +176,19 @@ export function TablePage(): React.JSX.Element {
   const handIdRef = useRef<string | null>(null);
   handIdRef.current = sock.state?.handId ?? null;
   const onOwnCards = useCallback((landed: boolean) => setOwnCardsDown({ hand: handIdRef.current, landed }), []);
+  // …and, from the flop on, until every community card dealt so far is down and face up on the felt too: never asked
+  // to act on a flop, turn or river you haven't seen land yet.
+  const [boardDown, setBoardDown] = useState<{ hand: string | null; count: number }>({ hand: null, count: 0 });
+  const onBoardShown = useCallback((count: number) => setBoardDown({ hand: handIdRef.current, count }), []);
   const [waitedForCards, setWaitedForCards] = useState(false);
-  const myTurnHand = sock.state?.legalActions ? sock.state.handId : null;
+  // A turn, street by street: the safety wait starts over when the board grows.
+  const myTurnKey = sock.state?.legalActions ? `${String(sock.state.handId)}:${String(sock.state.board.length)}` : null;
   useEffect(() => {
     setWaitedForCards(false);
-    if (!myTurnHand) return;
+    if (!myTurnKey) return;
     const t = setTimeout(() => setWaitedForCards(true), 3000);
     return () => clearTimeout(t);
-  }, [myTurnHand]);
+  }, [myTurnKey]);
   // The dealer's plain-text lines in the chat (a split pot) — made the same way by every viewer, never sent.
   const [dealerChat, setDealerChat] = useState<ChatMessageRecord[]>([]);
   // The house dealer: the table's chosen character, and the owner's picker (double-tap her).
@@ -339,6 +381,8 @@ export function TablePage(): React.JSX.Element {
   // puts a stand-in camera on every occupied seat, bots included — for
   // checking the layout with a full table on camera.
   const fakeCameras = import.meta.env.DEV && searchParams.get('fakeCameras') === '1';
+  // The owner's test players' cameras (their clips — see testBotCameras.ts), by seat.
+  const testCams = useTestBotCameras(sock.state?.seats ?? []);
   const humanCameraSeats: {
     seatId: number;
     displayName: string;
@@ -346,11 +390,13 @@ export function TablePage(): React.JSX.Element {
     isLocal: boolean;
   }[] = [];
   for (const seat of canSeeVideo ? (sock.state?.seats ?? []) : []) {
-    if (seat.status === 'empty' || (seat.isBot && !fakeCameras)) continue;
+    if (seat.status === 'empty' || (seat.isBot && !fakeCameras && !testCams.has(seat.seatId))) continue;
     let stream: MediaStream | null = null;
     let isLocal = false;
     if (fakeCameras) {
       stream = fakeCameraStream();
+    } else if (testCams.has(seat.seatId)) {
+      stream = testCams.get(seat.seatId)!;
     } else if (voice.inCall && seat.seatId === sock.state?.viewerSeatId && voice.localStream) {
       stream = voice.localStream;
       isLocal = true;
@@ -471,11 +517,28 @@ export function TablePage(): React.JSX.Element {
   const hasEmptySeat = state.seats.some((s) => s.status === 'empty');
   const positionLabels = computePositionLabels(state.seats, state.buttonSeat);
   const blinds = blindTags(state.seats, state.buttonSeat, state.phase === 'in-hand');
+  // A seat's SB/BB tag on the 2D felt: at `at` on its own, or (no `at`) inside its bet's chips.
+  const blindTag = (seatId: number, at?: CSSProperties): ReactNode => {
+    const kind = blinds.get(seatId);
+    if (!kind) return null;
+    return (
+      <div
+        className={`blind-tag blind-tag--${kind.toLowerCase()}${seatId === state.viewerSeatId ? ' blind-tag--mine' : ''}${at ? '' : ' blind-tag--in-bet'}`}
+        data-testid={`blind-tag-${String(seatId)}`}
+        style={at}
+      >
+        {kind}
+      </div>
+    );
+  };
   const myWaitlistIndex = state.waitlist.findIndex((w) => w.userId === user.id);
   // Nothing about a hand's structure (dealer button, position labels, hole
   // cards) should show before this table's very first deal — it only
   // becomes true once a hand has actually started at least once.
   const handEverDealt = state.phase !== 'waiting';
+  // A game of 4 or more on the 2D table: the 3D table suits that many better — said once, with a way there.
+  const playerCount = state.seats.filter((s) => s.status !== 'empty').length;
+  const suggest3d = handEverDealt && playerCount > 3 && view.choice === '2d' && !hide3dHint;
   // Only the seat that actually won this way, and only until it reveals or
   // the next hand deals — see ProjectedTableState.revealEligibleSeatId.
   const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
@@ -502,8 +565,17 @@ export function TablePage(): React.JSX.Element {
         .join(', ')
     : null;
 
+  /**
+   * Who a seat is in the call, for its mute button: a person by their user id; a test player on camera (no account)
+   * by its seat — the only computer players with a voice to mute.
+   */
+  const callIdOf = (seat: (typeof state.seats)[number]): string | null =>
+    seat.isBot ? (testCams.has(seat.seatId) ? testCamCallId(seat.seatId) : null) : seat.playerId;
   const voiceStreamForSeat = (seat: (typeof state.seats)[number]): SeatVoiceStream | null => {
     if (fakeCameras && seat.status !== 'empty') return { stream: fakeCameraStream(), isLocal: false };
+    // A test player on camera: like anyone in the call (its own mute button included).
+    const testCam = testCams.get(seat.seatId);
+    if (testCam && seat.isBot) return { stream: testCam, isLocal: false, userId: callIdOf(seat) };
     if (voice.inCall && seat.seatId === state.viewerSeatId && voice.localStream) {
       return { stream: voice.localStream, isLocal: true };
     }
@@ -514,7 +586,10 @@ export function TablePage(): React.JSX.Element {
     return null;
   };
   // Everyone in the call this viewer can hear (sending audio) — the mute buttons' "everyone".
-  const callUserIds = voice.peers.filter((p) => !!p.stream && p.stream.getAudioTracks().length > 0).map((p) => p.userId);
+  const callUserIds = [
+    ...voice.peers.filter((p) => !!p.stream && p.stream.getAudioTracks().length > 0).map((p) => p.userId),
+    ...state.seats.filter((s) => s.isBot && testCams.has(s.seatId)).map((s) => callIdOf(s)!),
+  ];
   /** The button muting a player for this viewer — on their box while they're talking in the call. */
   const peerMuteFor = (userId: string | null | undefined, name: string | null | undefined): React.ReactNode =>
     userId && callUserIds.includes(userId) ? <PeerMuteButton userId={userId} name={name ?? 'player'} everyone={callUserIds} /> : undefined;
@@ -574,7 +649,7 @@ export function TablePage(): React.JSX.Element {
         setAssignError(result.message);
         return;
       }
-      setAssignedLink(`${window.location.origin}/table/${String(tableId)}?assign=${result.token}`);
+      setAssignedLink(withInviterView(`${window.location.origin}/table/${String(tableId)}?assign=${result.token}`));
     });
   };
 
@@ -712,6 +787,19 @@ export function TablePage(): React.JSX.Element {
       players: state.seats.filter((s) => s.status === 'active' || s.status === 'folded' || s.status === 'all-in').length,
     });
 
+  // On a phone's 2D felt the top-left corner belongs to a seat: the fairness line goes under the pot instead (the
+  // layout keeps every seat clear of the board) — the commitment while the hand runs, then the link to check it.
+  const fairnessUnderBoard = !is3d && isCompactScreen;
+  const fairnessLine =
+    state.phase === 'hand-complete' && state.handId ? (
+      <button type="button" className="fairness-link fairness-link--board" onClick={openFairness}>
+        Verify hand fairness
+      </button>
+    ) : state.handCommitment ? (
+      <div className="fairness-commitment fairness-commitment--board" data-testid="fairness-commitment" title={state.handCommitment}>
+        Fairness: {state.handCommitment.slice(0, 12)}&hellip;
+      </div>
+    ) : null;
   /** An empty seat's options for this viewer: sitting down, a computer player, an invite — each only where it's allowed. */
   const emptySeatOptions = (seat: (typeof state.seats)[number]): SeatAction[] => {
     const id = seat.seatId;
@@ -756,6 +844,10 @@ export function TablePage(): React.JSX.Element {
     place: {
       style?: React.CSSProperties;
       ref?: (el: HTMLElement | null) => void;
+      /** Along the felt's top edge (2D): a shown hand grows downward (below a camera box), not off the top. */
+      nearTop?: boolean;
+      /** Down the felt's left or right side (2D): a shown hand grows toward the middle, not off the side. */
+      side?: 'left' | 'center' | 'right';
     },
   ): React.ReactNode => {
     const seat = state.seats.find((s) => s.seatId === seatId);
@@ -785,7 +877,9 @@ export function TablePage(): React.JSX.Element {
           // On the 3D table the others' cameras are screens in the scene itself (seatVideos below); the box keeps only your own.
           showVideo={canSeeVideo && (is3d ? seatId === state.viewerSeatId : !hiddenCameraSeatIds.has(String(seatId)))}
           callControls={seatId === state.viewerSeatId && !sock.isPractice ? <SeatCallControls voice={voice} /> : undefined}
-          peerMute={seatId !== state.viewerSeatId ? peerMuteFor(seat.playerId, seat.displayName) : undefined}
+          peerMute={seatId !== state.viewerSeatId ? peerMuteFor(callIdOf(seat), seat.displayName) : undefined}
+          shownCardsBelow={place.nearTop}
+          shownAlign={place.side}
           // Self-serve seating/bots are admin-only on any table, OR
           // open to a signed-in (non-guest) human on the ONE table
           // they created (sock.canManageTable — see
@@ -994,6 +1088,17 @@ export function TablePage(): React.JSX.Element {
         )}
         {voiceNotice.shown && <ErrorBanner message={voiceNotice.shown} onClose={voiceNotice.dismiss} />}
         {tableNotice.shown && <ErrorBanner message={tableNotice.shown} onClose={tableNotice.dismiss} />}
+        {suggest3d && (
+          <div className="view-hint-banner" role="status" data-testid="suggest-3d">
+            <span>With {playerCount} players, the 3D table is recommended for a better experience.</span>
+            <button type="button" className="view-hint-switch" onClick={() => view.setChoice('seated')}>
+              Switch to 3D
+            </button>
+            <button type="button" className="view-hint-close" aria-label="Dismiss" onClick={dismiss3dHint}>
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       <div
@@ -1003,13 +1108,21 @@ export function TablePage(): React.JSX.Element {
           {
             ...seatSizeVars(positions.length),
             '--fit-scale': String(tableLayout?.scale ?? 1),
+            '--own-scale': String(tableLayout?.ownScale ?? 1),
             '--board-scale': String(tableLayout?.boardScale ?? 1),
             ...(tableLayout?.minFeltHeight ? { minHeight: tableLayout.minFeltHeight } : {}),
           } as React.CSSProperties
         }
       >
         {!is3d && (
-          <BoardAndPot board={state.board} pots={state.pots} liveTotal={livePotTotal(state)} top={tableLayout?.boardTop} winningCards={splitEffects.cards} />
+          <BoardAndPot
+            board={state.board}
+            pots={state.pots}
+            liveTotal={livePotTotal(state)}
+            top={tableLayout?.boardTop}
+            winningCards={splitEffects.cards}
+            footer={fairnessUnderBoard ? fairnessLine : undefined}
+          />
         )}
         {is3d && (
           <Suspense fallback={<div className="table3d-loading">Setting up the table…</div>}>
@@ -1037,6 +1150,7 @@ export function TablePage(): React.JSX.Element {
               onPerf={view.reportFrameTime}
               onRequestMode={view.setChoice}
               onOwnCards={onOwnCards}
+              onBoardShown={onBoardShown}
               dealerModel={dealerModelUrl(dealerCharacters, state.settings.houseDealer)}
               theme={tableTheme(dealerCharacters, state.settings)}
               onDealerDoubleTap={canManageLayout && !sock.isPractice ? () => setDealerPickerOpen(true) : undefined}
@@ -1045,15 +1159,19 @@ export function TablePage(): React.JSX.Element {
               potAnimatorRef={potAnimatorRef}
               winningCards={splitEffects.cards}
               seatVideos={seatVideos3d}
+              edgeMute={(seatId) => {
+                const seat = state.seats.find((x) => x.seatId === seatId);
+                return seat ? peerMuteFor(callIdOf(seat), seat.displayName) : undefined;
+              }}
             />
           </Suspense>
         )}
-        {state.handCommitment && (
+        {!fairnessUnderBoard && state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
             Fairness commitment: {state.handCommitment.slice(0, 12)}&hellip;
           </div>
         )}
-        {state.phase === 'hand-complete' && state.handId && (
+        {!fairnessUnderBoard && state.phase === 'hand-complete' && state.handId && (
           <button type="button" className="fairness-link" onClick={openFairness}>
             Verify hand fairness
           </button>
@@ -1103,23 +1221,20 @@ export function TablePage(): React.JSX.Element {
               <Fragment key={seatId}>
                 {seatSlot(seatId, {
                   style: { left: `${String(left)}%`, top: `${String(top)}%` },
+                  nearTop: top < 25,
+                  side: left < 30 ? 'left' : left > 70 ? 'right' : 'center',
                 })}
-                {blinds.has(seatId) && (
-                  // In front of the seat: just past where its bet goes, toward the middle.
-                  <div
-                    className={`blind-tag blind-tag--${blinds.get(seatId)!.toLowerCase()}${seatId === state.viewerSeatId ? ' blind-tag--mine' : ''}`}
-                    data-testid={`blind-tag-${String(seatId)}`}
-                    style={{
-                      left: `${String(betLeft + (betLeft - left) * 0.4)}%`,
-                      top: `${String(betTop + (betTop - top) * 0.4)}%`,
-                    }}
-                  >
-                    {blinds.get(seatId)}
-                  </div>
-                )}
+                {/* In front of the seat, where its bet goes — a spot the layout keeps clear of the board and every
+                    seat: on its own there, or beside the chips when it has a bet out (measured with them). */}
+                {blinds.has(seatId) &&
+                  !(seat.status !== 'empty' && seat.committedThisStreet > 0) &&
+                  blindTag(seatId, {
+                    left: `${String(betLeft)}%`,
+                    top: `${String(betTop)}%`,
+                  })}
                 {seat.status !== 'empty' && seat.committedThisStreet > 0 && (
                   <div
-                    className="bet-chips-slot"
+                    className={`bet-chips-slot${blinds.has(seatId) ? ' bet-chips-slot--tagged' : ''}`}
                     data-testid={`bet-chips-${String(seatId)}`}
                     style={{
                       left: `${String(betLeft)}%`,
@@ -1127,6 +1242,7 @@ export function TablePage(): React.JSX.Element {
                     }}
                   >
                     <ChipStack amount={seat.committedThisStreet} />
+                    {blinds.has(seatId) && blindTag(seatId)}
                   </div>
                 )}
               </Fragment>
@@ -1134,7 +1250,11 @@ export function TablePage(): React.JSX.Element {
           })}
       </div>
 
-      {state.legalActions && (!is3d || (ownCardsDown.landed && ownCardsDown.hand === state.handId) || waitedForCards) && (
+      {state.legalActions &&
+        (!is3d ||
+          (ownCardsDown.landed && ownCardsDown.hand === state.handId && boardDown.hand === state.handId && boardDown.count >= state.board.length) ||
+          (ownCardsDown.landed && ownCardsDown.hand === state.handId && state.board.length === 0) ||
+          waitedForCards) && (
         <ActionBar
           legalActions={state.legalActions}
           potSize={livePotTotal(state)}
@@ -1341,6 +1461,16 @@ export function TablePage(): React.JSX.Element {
                     {p.label}
                   </option>
                 ))}
+                {/* The owner's test players: theirs alone (the server refuses anyone else). */}
+                {user.role === 'admin' && (
+                  <optgroup label="Test players (owner only)">
+                    {TEST_BOT_PERSONAS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </label>
             <label>

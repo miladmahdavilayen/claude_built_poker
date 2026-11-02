@@ -72,6 +72,9 @@ function subscribe(onChange: () => void): () => void {
   return () => listeners.delete(onChange);
 }
 
+/** Runs `onChange` on every change (a mute, an unmute); returns the unsubscribe. */
+export const onCallAudioChange = subscribe;
+
 /** The current state, re-rendering on every change. */
 export function useCallAudio(): CallAudioState {
   return useSyncExternalStore(

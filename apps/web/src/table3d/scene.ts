@@ -71,6 +71,8 @@ export interface SceneCallbacks {
   onLookAway?: (away: boolean) => void;
   /** Whether the viewer's own cards have reached them this hand (their action buttons wait for it). */
   onOwnCards?: (landed: boolean) => void;
+  /** Seated: whether your own two cards on the felt are on screen — when they aren't, the page shows them (TableScene3D). */
+  onOwnCardsInView?: (inView: boolean) => void;
   /** How many board cards are down and face up on the table — the screen's board strip follows it. */
   onBoardShown?: (count: number) => void;
   /** The owner double-tapped the house dealer (only passed for someone who may change her). */
@@ -101,6 +103,8 @@ const FLOOR_Y = -1.56;
 type Rect = { x0: number; y0: number; x1: number; y1: number };
 
 const OBSTACLES = '.start-hand-panel > *, .table-corner, .fairness-commitment, .fairness-link, .board-hud, .action-ticker';
+/** Small round buttons a camera screen keeps clear of when it can — but covers rather than not be seen at all. */
+const SOFT_OBSTACLES = '.table3d-recenter, .table3d-whole, .table-menu-button';
 
 function roundedRect(hw: number, hd: number, r: number): THREE.Shape {
   const s = new THREE.Shape();
@@ -195,6 +199,7 @@ export class TableScene {
   private dealerModelUrl: string | null = null;
   private boardShownCount = -1;
   private ownLandedNow: boolean | null = null;
+  private ownInViewNow: boolean | null = null;
 
   constructor(canvas: HTMLCanvasElement, tier: QualityTier, cb: SceneCallbacks, theme: TableTheme = 'classic') {
     this.canvas = canvas;
@@ -1371,6 +1376,11 @@ export class TableScene {
       this.ownLandedNow = mine;
       this.cb.onOwnCards?.(mine);
     }
+    const inView = this.ownCardsOnScreen();
+    if (inView !== this.ownInViewNow) {
+      this.ownInViewNow = inView;
+      this.cb.onOwnCardsInView?.(inView);
+    }
     const shown = this.cards.boardShown();
     if (shown !== this.boardShownCount) {
       this.boardShownCount = shown;
@@ -1384,7 +1394,7 @@ export class TableScene {
     // button) come and go with the game: twice a second, see whether they moved.
     if (now - this.lastObstacleCheck > 500) {
       this.lastObstacleCheck = now;
-      const key = this.obstacleRects()
+      const key = [...this.obstacleRects(), ...this.obstacleRects(SOFT_OBSTACLES)]
         .map((r) => `${r.x0.toFixed(0)},${r.y0.toFixed(0)},${r.x1.toFixed(0)},${r.y1.toFixed(0)}`)
         .join('|');
       if (key !== this.obstacleKey) {
@@ -1399,13 +1409,14 @@ export class TableScene {
   private obstacleKey = '';
 
   /** DOM controls laid over the felt that the seat boxes keep clear of, in this view's px. */
-  private obstacleRects(): { x0: number; y0: number; x1: number; y1: number }[] {
+  private obstacleRects(selector = OBSTACLES): { x0: number; y0: number; x1: number; y1: number }[] {
     const wrap = this.canvas.parentElement;
     const felt = wrap?.parentElement;
     if (!wrap || !felt) return [];
     const origin = wrap.getBoundingClientRect();
     const out: { x0: number; y0: number; x1: number; y1: number }[] = [];
-    for (const el of felt.querySelectorAll<HTMLElement>(OBSTACLES)) {
+    // The whole page's: the menu button sits outside the felt, over it.
+    for (const el of document.querySelectorAll<HTMLElement>(selector)) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
       out.push({ x0: r.left - origin.left, y0: r.top - origin.top, x1: r.right - origin.left, y1: r.bottom - origin.top });
@@ -1447,7 +1458,7 @@ export class TableScene {
     const ref = this.rig.camera.position.length();
     const vp = this.viewportScale();
     const eyes = this.eyes;
-    const seats: { id: number; x: number; y: number; w: number; h: number; s: number; el: HTMLElement; fixed: boolean }[] = [];
+    const seats: { id: number; x: number; y: number; w: number; h: number; s: number; el: HTMLElement; fixed: boolean; empty?: boolean }[] = [];
     /** Players whose camera screen faces you: their nameplate waits for the screen's size. */
     const faceSeats: { id: number; el: HTMLElement; w: number; h: number; s: number; x: number; y: number }[] = [];
     const hidden: HTMLElement[] = [];
@@ -1476,7 +1487,7 @@ export class TableScene {
         }
         // An empty seat's "Sit here" stays big enough to tap, however far away.
         const s = (eyes ? Math.max(0.85, Math.min(1.05, 2.6 / pr.depth)) : Math.max(0.66, Math.min(1.1, (ref / pr.depth) * 0.86))) * vp;
-        seats.push({ id: p.seatId, x: pr.x, y: pr.y, w: o.w * s, h: o.h * s, s, el: o.el, fixed: false });
+        seats.push({ id: p.seatId, x: pr.x, y: pr.y, w: o.w * s, h: o.h * s, s, el: o.el, fixed: false, empty: true });
         continue;
       }
       // Their face — modelled, or their camera as a screen in the scene (see players3d.ts's
@@ -1512,6 +1523,15 @@ export class TableScene {
       y1: Math.max(...corners.map((c) => c.y)),
     };
     const controls = this.obstacleRects();
+    // Your own hand, when you've turned away from it on the felt: just above your own box, kept clear by everything.
+    const ownHand = this.overlays.get('ownhand');
+    const ownBox = seats.find((a) => a.fixed);
+    if (ownHand && ownBox && ownHand.w > 0) {
+      const x = ownBox.x;
+      const y = ownBox.y - ownBox.h / 2 - 8 - ownHand.h / 2;
+      this.place(ownHand.el, `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`);
+      controls.push({ x0: x - ownHand.w / 2, x1: x + ownHand.w / 2, y0: y - ownHand.h / 2, y1: y + ownHand.h / 2 });
+    }
     const fixed = eyes ? [...controls] : [board, ...controls];
     const margin = 4;
     // The camera screens: each as big as the room around it allows — then each one's nameplate just above it.
@@ -1521,8 +1541,10 @@ export class TableScene {
         ...controls,
         ...(boardVisible && this.cards.keys().some((k) => k.startsWith('board:')) ? [board] : []),
         ...this.feltRects(),
-        ...seats.map((a) => ({ x0: a.x - a.w / 2, y0: a.y - a.h / 2, x1: a.x + a.w / 2, y1: a.y + a.h / 2 })),
+        // Players' nameplates (and your own box) — not an empty seat's "Tap to fill": that steps aside for a camera.
+        ...seats.filter((a) => !a.empty).map((a) => ({ x0: a.x - a.w / 2, y0: a.y - a.h / 2, x1: a.x + a.w / 2, y1: a.y + a.h / 2 })),
       ],
+      this.obstacleRects(SOFT_OBSTACLES),
     );
     for (const f of faceSeats) {
       const r = fitted.get(f.id);
@@ -1680,6 +1702,46 @@ export class TableScene {
     return out;
   }
 
+  /**
+   * Seated, whether your own two cards on the felt are wholly on screen (true otherwise — standing, the whole
+   * table is in view): turned away from them, the page shows them to you instead.
+   */
+  private ownCardsOnScreen(): boolean {
+    if (!this.eyes || this.viewerSeatId === null) return true;
+    const own = this.placementBySeat.get(this.viewerSeatId);
+    if (!own) return true;
+    const c = edgePoint(own.s, TABLE.railWidth + SEAT_SPOTS.cardsIn + OWN_IN);
+    // Both cards side by side along the rail, and their near and far edges.
+    const along = { x: c.nz, z: -c.nx };
+    for (const a of [-1.1, 1.1]) {
+      for (const d of [-0.6, 0.6]) {
+        const p = this.project(c.x + along.x * a * CARD_W - c.nx * d * CARD_H, 0.02, c.z + along.z * a * CARD_W - c.nz * d * CARD_H);
+        if (p.behind || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Whether the house dealer stands on the line from `a` to `b` (the way to a player's face): their body taken as an
+   * upright cylinder about the spot they stand on.
+   */
+  private dealerBetween(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const r = 0.36;
+    const cx = 0;
+    const cz = HOUSE.dealerZ;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len2 = dx * dx + dz * dz;
+    if (len2 < 1e-6) return false;
+    const t = Math.max(0, Math.min(1, ((cx - a.x) * dx + (cz - a.z) * dz) / len2));
+    // Only in between, not at either end (a seat right beside the dealer is next to them, not behind them).
+    if (t < 0.08 || t > 0.92) return false;
+    const px = a.x + dx * t - cx;
+    const pz = a.z + dz * t - cz;
+    return px * px + pz * pz < r * r;
+  }
+
   /** Each camera screen as last laid out: its size (times its own) and its offset on screen from its player, px. */
   private readonly faceFits = new Map<number, { k: number; dx: number; dy: number; inside: boolean }>();
   /** The camera screens' boxes on screen as last laid out (for tests). */
@@ -1690,8 +1752,9 @@ export class TableScene {
    * big as the room around it allows — never over the board, anyone's cards
    * or bet, the pot, the page's controls, a nameplate or another screen, and
    * leaving room for its own nameplate above it. It stays with its player:
-   * seated, exactly over their seat (never sideways, their head always
-   * inside it — only bigger or smaller); standing, over their head
+   * seated, over their seat (their head always well inside it — centred on
+   * them where there's room, slid only as far as the screen's edge makes it,
+   * never off them); standing, over their head
    * where there's room, otherwise in the nearest clear space by their place
    * — beside or below it (screens are drawn over the
    * table, so the empty felt in front of a player is room too). How big at
@@ -1707,7 +1770,7 @@ export class TableScene {
    * eased over a few frames, so a screen glides rather than jumps. Returns
    * each screen's box on screen (px).
    */
-  private fitFaces(faces: readonly { id: number; w: number; h: number }[], blocks: readonly Rect[]): Map<number, Rect & { plateInside: boolean }> {
+  private fitFaces(faces: readonly { id: number; w: number; h: number }[], blocks: readonly Rect[], soft: readonly Rect[] = []): Map<number, Rect & { plateInside: boolean }> {
     const out = new Map<number, Rect & { plateInside: boolean }>();
     const boxes: typeof this.faceBoxes = [];
     this.faceBoxes = boxes;
@@ -1722,6 +1785,13 @@ export class TableScene {
     for (const f of faces) {
       const fr = this.players.faceFrame(f.id, cam.position);
       if (!fr) continue;
+      // The house dealer standing between you (the players either side of them, to each other): their head, not a
+      // screen drawn over the dealer — until you lean in past them.
+      if (this.dealerBetween(cam.position, fr.base)) {
+        this.faceFits.delete(f.id);
+        this.players.fitFace(f.id, fr.base, 1, true, false);
+        continue;
+      }
       const depth = -fr.base.clone().applyMatrix4(cam.matrixWorldInverse).z;
       if (depth < 0.2) continue;
       const p = this.project(fr.base.x, fr.base.y, fr.base.z);
@@ -1733,13 +1803,17 @@ export class TableScene {
     if (n === 0) return out;
     // At most this big — one across from you can take a lot of the screen; several share it.
     const capH = H * (n === 1 ? 0.6 : n === 2 ? 0.46 : n <= 4 ? 0.36 : 0.28);
-    const capW = W * (n === 1 ? 0.86 : Math.min(0.46, 0.92 / n));
+    const capW = W * (n === 1 ? 0.94 : Math.min(0.46, 0.92 / n));
     const hits = (a: Rect, b: Rect): boolean => a.x0 < b.x1 + pad && a.x1 > b.x0 - pad && a.y0 < b.y1 + pad && a.y1 > b.y0 - pad;
     type Pick = { hp: number; at: { x: number; y: number }; inside: boolean };
-    /** The biggest screen for this player that's clear of everything — and of `others` — up to `cap` tall; or null. */
-    const solve = (fr: Frame, others: readonly Rect[], cap: number): Pick | null => {
+    /**
+     * The biggest screen for this player that's clear of everything — and of `others` — up to `cap` tall; or null.
+     * Clear of the small round buttons too when it can be (`soft`), over them rather than not at all.
+     */
+    const solve = (fr: Frame, others: readonly Rect[], cap: number): Pick | null => solveWith(fr, others, cap, true) ?? solveWith(fr, others, cap, false);
+    const solveWith = (fr: Frame, others: readonly Rect[], cap: number, withSoft: boolean): Pick | null => {
       const aspect = fr.w / fr.h;
-      const near = [...blocks, ...others];
+      const near = [...blocks, ...(withSoft ? soft : []), ...others];
       /**
        * The free spot nearest the player for a box this tall, as its middle — or null. Its nameplate goes above
        * it (room left for it), or — `inside` — over its own bottom edge, like a video call's caption.
@@ -1747,15 +1821,15 @@ export class TableScene {
       const spot = (hp: number, inside: boolean): { x: number; y: number } | null => {
         const top = inside ? margin : margin + fr.plateH + 6;
         const wp = hp * aspect;
-        // Seated, exactly over their seat: never sideways, and their head always inside it — only bigger or
-        // smaller, a little up or down. Standing (the whole table in view): sideways too, up to about twice its
-        // width, and down well past them.
-        const reachX = this.eyes ? 0 : wp * 2.2;
+        // Seated, over their seat: their head always well inside it — centred on them where there's room, slid a
+        // little (never off them) where the screen's edge would cut it; only bigger or smaller, a little up or down.
+        // Standing (the whole table in view): sideways too, up to about twice its width, and down well past them.
+        const reachX = this.eyes ? wp * 0.32 : wp * 2.2;
         const downTo = fr.ny + hp * (this.eyes ? 0.4 : 1.3);
         const upTo = fr.ny - hp * (this.eyes ? 0.3 : 0.6);
         const win = { x0: fr.nx - reachX - wp / 2, x1: fr.nx + reachX + wp / 2, y0: Math.min(upTo, top) - hp / 2, y1: downTo + hp / 2 };
         const local = near.filter((b) => b.x1 > win.x0 - pad && b.x0 < win.x1 + pad && b.y1 > win.y0 - pad && b.y0 < win.y1 + pad);
-        const xs = this.eyes ? [fr.nx] : [fr.nx, margin + wp / 2, W - margin - wp / 2, ...local.flatMap((b) => [b.x0 - pad - wp / 2 - 0.5, b.x1 + pad + wp / 2 + 0.5])];
+        const xs = [fr.nx, margin + wp / 2, W - margin - wp / 2, ...local.flatMap((b) => [b.x0 - pad - wp / 2 - 0.5, b.x1 + pad + wp / 2 + 0.5])];
         const ys = [fr.ny, upTo, downTo, top + hp / 2, H - margin - hp / 2, ...local.flatMap((b) => [b.y0 - pad - hp / 2 - 0.5, b.y1 + pad + hp / 2 + 0.5])];
         let best: { x: number; y: number } | null = null;
         let bestD = Infinity;

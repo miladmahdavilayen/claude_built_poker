@@ -8,6 +8,7 @@ import { nit } from './nit.js';
 import { randomLegal } from './randomLegal.js';
 import { shortStacker } from './shortStacker.js';
 import { shoveMonkey } from './shoveMonkey.js';
+import { TEST_CAMERA_BOTS, TEST_CAMERA_BOT_NAMES } from './testCamera.js';
 
 export const ALL_BOT_POLICIES: readonly BotPolicy[] = [
   randomLegal,
@@ -22,6 +23,8 @@ export const ALL_BOT_POLICIES: readonly BotPolicy[] = [
 ];
 
 export {
+  TEST_CAMERA_BOTS,
+  TEST_CAMERA_BOT_NAMES,
   adversarial,
   allanKeating,
   callingStation,

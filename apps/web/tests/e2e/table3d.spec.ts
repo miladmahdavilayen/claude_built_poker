@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { dealOrder, edgePoint, seatPlacements } from '../../src/table3d/seatLayout3d.js';
-import { addBot, adminLogin, createTable, playHandToCompletion, startHand, takeSeat, openTableMenu } from './helpers.js';
+import { addBot, adminLogin, createTable, joinCall, playHandToCompletion, startHand, takeSeat, openTableMenu } from './helpers.js';
 
 // The 3D table (src/table3d/). The suite runs on the 2D table by default
 // (playwright.config.ts); these tests switch to 3D themselves.
@@ -202,4 +202,87 @@ test('seated: your own eyes at your seat — drag to look around, double-tap to 
   }
   await expect(playHand).toBeVisible();
   await expect.poll(async () => (await debug(page))?.stacks.filter((k) => k.startsWith('bet:')) ?? ['?'], { timeout: 5000 }).toEqual([]);
+});
+
+// Seated, turned away from your own cards on the felt (to look at another player, say): your hand is shown to you
+// anyway, face up just above your own box, the board strip's size — and not twice: looking back at the felt, it goes.
+test('seated on a phone: your hand stays in sight wherever you look — shown above your box once the felt cards are out of view', async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await view3d(page, 'seated');
+  await adminLogin(page);
+  await createTable(page, { name: 'Own Hand', smallBlind: 1, bigBlind: 2, maxSeats: 9, isPrivate: false });
+  await addBot(page, 4, 'calling-station', 200);
+  await takeSeat(page, 0, 200);
+  await startHand(page);
+  await expect.poll(async () => (await debug(page))?.cards.filter((c) => c.startsWith('hole:0')).length ?? 0, { timeout: 15_000 }).toBe(2);
+  await page.waitForTimeout(1500);
+  const hud = page.getByTestId('own-hand-hud');
+  // Looking at the felt: the cards are right there — not shown twice.
+  await expect(hud).toHaveCount(0);
+  const canvas = (await page.locator('.table3d-canvas').boundingBox())!;
+  const drag = async (dx: number, dy: number): Promise<void> => {
+    await page.mouse.move(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 12; i++) await page.mouse.move(canvas.x + canvas.width / 2 + (dx * i) / 12, canvas.y + canvas.height / 2 + (dy * i) / 12);
+    await page.mouse.up();
+  };
+  // Turned well away (and looking up across the table): the hand shows, face up, the board strip's size.
+  await drag(canvas.width * 0.8, canvas.height * 0.35);
+  await expect(hud).toBeVisible({ timeout: 10_000 });
+  await expect(hud.locator('.card:not(.card-back)')).toHaveCount(2);
+  const card = (await hud.locator('.card').first().boundingBox())!;
+  expect(Math.round(card.width)).toBe(60);
+  expect(Math.round(card.height)).toBe(83);
+  // Clear of your own box and the action buttons.
+  const h = (await hud.boundingBox())!;
+  for (const sel of ['[data-testid="seat-0"]', '.action-buttons button', '.table-corner']) {
+    for (const el of await page.locator(sel).all()) {
+      if (!(await el.isVisible())) continue;
+      const b = (await el.boundingBox())!;
+      const overlap = h.x < b.x + b.width && h.x + h.width > b.x && h.y < b.y + b.height && h.y + h.height > b.y;
+      expect(overlap, `the hand over ${sel}`).toBe(false);
+    }
+  }
+  // Back to the table: gone again.
+  await page.getByRole('button', { name: /Center view/ }).click();
+  await expect(hud).toHaveCount(0, { timeout: 10_000 });
+  // Your own camera on — your box is taller with it: the hand still sits just above it, clear of it.
+  await joinCall(page, true);
+  await expect(page.locator('[data-testid="seat-0"] .seat-video video')).toHaveCount(1, { timeout: 15_000 });
+  await drag(canvas.width * 0.8, canvas.height * 0.35);
+  await expect(hud).toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(800);
+  const h2 = (await hud.boundingBox())!;
+  const box = (await page.locator('[data-testid="seat-0"]').boundingBox())!;
+  expect(h2.y + h2.height).toBeLessThanOrEqual(box.y + 1);
+  expect(h2.y).toBeGreaterThan(0);
+});
+
+// Seated: your action buttons never come up on a flop, turn or river you haven't seen land — every community card
+// dealt so far is down and face up on the felt (the board strip shows exactly those) before you're asked to act.
+test('seated: your buttons wait for each street to be dealt and seen', async ({ page }) => {
+  test.setTimeout(150_000);
+  await view3d(page, 'seated');
+  await adminLogin(page);
+  await createTable(page, { name: 'Street Timing', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(page, 0, 200);
+  await addBot(page, 3, 'calling-station', 200);
+  await startHand(page);
+  const act = page.getByRole('button', { name: /^(Check|Call)/ }).first();
+  const seen = new Set<number>();
+  for (let i = 0; i < 400 && seen.size < 4; i++) {
+    if (await act.isVisible().catch(() => false)) {
+      // The moment the buttons are up: every card the server has dealt is on the felt.
+      const dealt = ((await page.getByTestId('board-3d').textContent()) ?? '').replace('Board:', '').trim();
+      const n = dealt === 'none yet' ? 0 : dealt.split(' ').length;
+      const shown = await page.locator('[data-testid="board-hud"] .card').count();
+      expect(shown, `buttons up with ${String(n)} dealt`).toBe(n);
+      seen.add(n);
+      await act.click().catch(() => undefined);
+    }
+    await page.waitForTimeout(100);
+  }
+  // It got to act on every street.
+  expect([...seen].sort()).toEqual([0, 3, 4, 5]);
 });

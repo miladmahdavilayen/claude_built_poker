@@ -10,6 +10,7 @@ import { useSeatMenuGesture } from '../components/SeatActionMenu.js';
 import { SwipeToDelete } from '../components/SwipeToDelete.js';
 import { TableSettingsModal } from '../components/TableSettingsModal.js';
 import { ErrorBanner } from '../components/ErrorBanner.js';
+import { withInviterView } from '../table3d/quality.js';
 
 export function LobbyPage(): React.JSX.Element {
   const { user } = useAuth();
@@ -258,9 +259,9 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
   };
 
   if (created) {
-    const link = created.inviteCode
-      ? `${location.origin}/table/${created.tableId}?code=${created.inviteCode}`
-      : `${location.origin}/table/${created.tableId}`;
+    const link = withInviterView(
+      created.inviteCode ? `${location.origin}/table/${created.tableId}?code=${created.inviteCode}` : `${location.origin}/table/${created.tableId}`,
+    );
     return (
       <div className="modal-backdrop" onClick={onClose}>
         <div className="modal" onClick={(e) => e.stopPropagation()}>

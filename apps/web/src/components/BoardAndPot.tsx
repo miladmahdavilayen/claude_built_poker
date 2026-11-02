@@ -9,6 +9,7 @@ export function BoardAndPot({
   liveTotal,
   top,
   winningCards,
+  footer,
 }: {
   board: readonly Card[];
   pots: readonly Pot[];
@@ -18,6 +19,8 @@ export function BoardAndPot({
   top?: number | undefined;
   /** A split pot's winning cards, raised while it's announced. */
   winningCards?: ReadonlySet<string> | undefined;
+  /** A line under the pot (the fairness line, on a phone) — part of the board, so the seats keep clear of it. */
+  footer?: React.ReactNode;
 }): React.JSX.Element {
   const total = liveTotal;
   return (
@@ -37,6 +40,7 @@ export function BoardAndPot({
           {pots.length > 1 && <span className="side-pots"> ({pots.map((p) => formatChips(p.amount)).join(' + ')})</span>}
         </div>
       )}
+      {footer}
     </div>
   );
 }

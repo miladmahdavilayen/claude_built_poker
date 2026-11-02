@@ -294,8 +294,8 @@ for (const [label, viewport] of [
     await expect.poll(async () => (await boxes()).find((b) => b.seatId === 4)?.k ?? 0, { timeout: 60_000 }).toBeGreaterThan(1.6);
     await owner.waitForTimeout(800);
     const face = (await boxes()).find((b) => b.seatId === 4)!;
-    // On their seat: centred over them, their head inside it.
-    expect(Math.abs((face.x0 + face.x1) / 2 - face.headX)).toBeLessThan(2);
+    // On their seat: their head well inside it (centred on them, or slid only as far as the screen's edge makes it).
+    expect(Math.abs((face.x0 + face.x1) / 2 - face.headX)).toBeLessThan((face.x1 - face.x0) * 0.33);
     expect(face.headY).toBeGreaterThan(face.y0);
     expect(face.headY).toBeLessThan(face.y1);
     const r = { left: face.x0, right: face.x1, top: face.y0, bottom: face.y1 } as DOMRect;

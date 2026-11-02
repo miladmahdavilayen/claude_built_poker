@@ -97,6 +97,9 @@ const LEAN = { forward: 0.7, down: 0.14 } as const;
 
 const FLOOR_Y = -1.56;
 /** The page's controls on the felt that seat boxes keep clear of (see Table.tsx). */
+/** A box on screen, px. */
+type Rect = { x0: number; y0: number; x1: number; y1: number };
+
 const OBSTACLES = '.start-hand-panel > *, .table-corner, .fairness-commitment, .fairness-link, .board-hud, .action-ticker';
 
 function roundedRect(hw: number, hd: number, r: number): THREE.Shape {
@@ -1024,6 +1027,8 @@ export class TableScene {
 
   /** Brings the table up to date: first the events (they start the animations), then the state itself (what should be where). */
   apply(snapshot: SceneSnapshot, events: readonly ProjectedGameEvent[] | null): void {
+    // Cards, bets and the pot move: the camera screens are sized around them again.
+    this.layoutDirty = true;
     this.occupied = new Set(snapshot.seats.filter((s) => s.occupied).map((s) => s.seatId));
     this.tintChairs();
     this.players.sync(
@@ -1372,7 +1377,7 @@ export class TableScene {
       this.cb.onBoardShown?.(shown);
     }
     this.button.update(now, this.rig.yaw);
-    this.players.update(now, this.rig.camera.position);
+    this.players.update(now, this.rig.camera.position, this.rig.camera.quaternion);
     this.room.update(now);
     this.renderer.render(this.scene, this.rig.camera);
     // The page's own controls on the felt (the Play Hand panel, the full-screen
@@ -1443,6 +1448,8 @@ export class TableScene {
     const vp = this.viewportScale();
     const eyes = this.eyes;
     const seats: { id: number; x: number; y: number; w: number; h: number; s: number; el: HTMLElement; fixed: boolean }[] = [];
+    /** Players whose camera screen faces you: their nameplate waits for the screen's size. */
+    const faceSeats: { id: number; el: HTMLElement; w: number; h: number; s: number; x: number; y: number }[] = [];
     const hidden: HTMLElement[] = [];
     /** Players out of view right now (seated): where they are, for their markers at the screen's edge. */
     const away: { id: number; at: THREE.Vector3 }[] = [];
@@ -1478,10 +1485,18 @@ export class TableScene {
       if (eyes && !this.onScreen(pr, 60)) {
         hidden.push(o.el);
         away.push({ id: p.seatId, at: head.clone() });
+        // Not a sliver of their screen at the edge either.
+        this.players.hideFace(p.seatId);
         continue;
       }
       // Never so small that their stack can't be read at a glance.
       const s = Math.max(0.8, (eyes ? Math.min(1.05, 2.6 / pr.depth) : Math.min(1, (ref / pr.depth) * 0.8)) * vp);
+      // On camera and facing you: the screen is sized below, as big as the room around it allows, and the
+      // nameplate then goes on top of it.
+      if (this.players.faceFrame(p.seatId, this.rig.camera.position)) {
+        faceSeats.push({ id: p.seatId, el: o.el, w: o.w * s, h: o.h * s, s, x: pr.x, y: pr.y - (o.h * s) / 2 });
+        continue;
+      }
       // Anchored by its bottom edge: the box's centre goes half its height higher.
       seats.push({ id: p.seatId, x: pr.x, y: pr.y - (o.h * s) / 2, w: o.w * s, h: o.h * s, s, el: o.el, fixed: false });
     }
@@ -1496,8 +1511,31 @@ export class TableScene {
       y0: Math.min(...corners.map((c) => c.y)),
       y1: Math.max(...corners.map((c) => c.y)),
     };
-    const fixed = eyes ? this.obstacleRects() : [board, ...this.obstacleRects()];
+    const controls = this.obstacleRects();
+    const fixed = eyes ? [...controls] : [board, ...controls];
     const margin = 4;
+    // The camera screens: each as big as the room around it allows — then each one's nameplate just above it.
+    const fitted = this.fitFaces(
+      faceSeats,
+      [
+        ...controls,
+        ...(boardVisible ? [board] : []),
+        ...this.feltRects(),
+        ...seats.map((a) => ({ x0: a.x - a.w / 2, y0: a.y - a.h / 2, x1: a.x + a.w / 2, y1: a.y + a.h / 2 })),
+      ],
+    );
+    for (const f of faceSeats) {
+      const r = fitted.get(f.id);
+      if (!r) {
+        // No screen for them right now (see fitFaces): their nameplate over their head, like anyone's.
+        seats.push({ id: f.id, x: f.x, y: f.y, w: f.w, h: f.h, s: f.s, el: f.el, fixed: false });
+        continue;
+      }
+      // Above the screen — or, where there was no room above it, over its bottom edge (and it stays put there).
+      const y = r.plateInside ? r.y1 - 6 - f.h / 2 : r.y0 - 6 - f.h / 2;
+      seats.push({ id: f.id, x: (r.x0 + r.x1) / 2, y, w: f.w, h: f.h, s: f.s, el: f.el, fixed: r.plateInside });
+      fixed.push({ x0: r.x0, y0: r.y0, x1: r.x1, y1: r.plateInside ? r.y1 - 12 - f.h : r.y1 });
+    }
     for (let iter = 0; iter < 40; iter++) {
       let moved = false;
       for (let i = 0; i < seats.length; i++) {
@@ -1612,6 +1650,181 @@ export class TableScene {
         this.cb.onLayout?.(layout);
       }
     }
+  }
+
+  /**
+   * What's on the felt that a camera screen must never cover, on screen: each
+   * player's cards and bet, the pot, the house dealer's tray.
+   */
+  private feltRects(): Rect[] {
+    const out: Rect[] = [];
+    const box = (x: number, z: number, hx: number, hz: number): void => {
+      const pts = [-1, 1].flatMap((sx) => [-1, 1].map((sz) => this.project(x + sx * hx, 0.03, z + sz * hz)));
+      if (pts.some((p) => p.behind)) return;
+      out.push({ x0: Math.min(...pts.map((p) => p.x)), x1: Math.max(...pts.map((p) => p.x)), y0: Math.min(...pts.map((p) => p.y)), y1: Math.max(...pts.map((p) => p.y)) });
+    };
+    for (const p of this.placements) {
+      if (!this.occupied.has(p.seatId)) continue;
+      box(p.cards.x, p.cards.z, CARD_W * 1.25, CARD_H * 0.75);
+      box(p.bet.x, p.bet.z, 0.16, 0.16);
+    }
+    box(0, HOUSE.potZ, 0.3, 0.22);
+    box(0, TABLE.halfDepth - TABLE.railWidth - HOUSE.trayDepth / 2, HOUSE.trayWidth / 2, HOUSE.trayDepth / 2);
+    return out;
+  }
+
+  /** Each camera screen as last laid out: its size (times its own) and its offset on screen from its player, px. */
+  private readonly faceFits = new Map<number, { k: number; dx: number; dy: number; inside: boolean }>();
+  /** The camera screens' boxes on screen as last laid out (for tests). */
+  private faceBoxes: { seatId: number; x0: number; y0: number; x1: number; y1: number; k: number }[] = [];
+
+  /**
+   * The players on camera, as you see them from where you are: each screen as
+   * big as the room around it allows — never over the board, anyone's cards
+   * or bet, the pot, the page's controls, a nameplate or another screen, and
+   * leaving room for its own nameplate above it. It stays with its player:
+   * over their head where there's room, otherwise in the nearest clear space
+   * by their place — beside or below it (screens are drawn over the
+   * table, so the empty felt in front of a player is room too). How big at
+   * most depends on how many there are: one player across the table gets a
+   * big share of the screen, several share it — a phone held upright, narrow,
+   * gets narrower ones.
+   *
+   * A screen always faces you (players3d.ts), so its box on screen is exactly
+   * the box worked out here: for each size, the free spots worth trying are
+   * the edges of what's in the way, nearest the player first. Changes are
+   * eased over a few frames, so a screen glides rather than jumps. Returns
+   * each screen's box on screen (px).
+   */
+  private fitFaces(faces: readonly { id: number; w: number; h: number }[], blocks: readonly Rect[]): Map<number, Rect & { plateInside: boolean }> {
+    const out = new Map<number, Rect & { plateInside: boolean }>();
+    const boxes: typeof this.faceBoxes = [];
+    this.faceBoxes = boxes;
+    const cam = this.rig.camera;
+    const W = this.width;
+    const H = this.height;
+    const margin = 6;
+    const pad = 8;
+    const tanHalf = Math.tan(((cam.fov / cam.zoom) * Math.PI) / 360);
+    type Frame = { id: number; base: THREE.Vector3; w: number; h: number; plateW: number; plateH: number; depth: number; nx: number; ny: number; h1: number };
+    const frames: Frame[] = [];
+    for (const f of faces) {
+      const fr = this.players.faceFrame(f.id, cam.position);
+      if (!fr) continue;
+      const depth = -fr.base.clone().applyMatrix4(cam.matrixWorldInverse).z;
+      if (depth < 0.2) continue;
+      const p = this.project(fr.base.x, fr.base.y, fr.base.z);
+      // How tall it stands on screen at its own size: px per world unit at that distance.
+      frames.push({ id: f.id, ...fr, plateW: f.w, plateH: f.h, depth, nx: p.x, ny: p.y, h1: (fr.h * H) / (2 * depth * tanHalf) });
+    }
+    for (const id of [...this.faceFits.keys()]) if (!frames.some((f) => f.id === id)) this.faceFits.delete(id);
+    const n = frames.length;
+    if (n === 0) return out;
+    // At most this big — one across from you can take a lot of the screen; several share it.
+    const capH = H * (n === 1 ? 0.6 : n === 2 ? 0.46 : n <= 4 ? 0.36 : 0.28);
+    const capW = W * (n === 1 ? 0.86 : Math.min(0.46, 0.92 / n));
+    const hits = (a: Rect, b: Rect): boolean => a.x0 < b.x1 + pad && a.x1 > b.x0 - pad && a.y0 < b.y1 + pad && a.y1 > b.y0 - pad;
+    const placed: Rect[] = [];
+    // Farthest first (smallest as they stand): the nearer ones are big anyway, and fit round them.
+    for (const fr of [...frames].sort((a, b) => a.h1 - b.h1)) {
+      const aspect = fr.w / fr.h;
+      const near = [...blocks, ...placed];
+      /**
+       * The free spot nearest the player for a box this tall, as its middle — or null. Its nameplate goes above
+       * it (room left for it), or — `inside` — over its own bottom edge, like a video call's caption.
+       */
+      const spot = (hp: number, inside: boolean): { x: number; y: number } | null => {
+        const top = inside ? margin : margin + fr.plateH + 6;
+        const wp = hp * aspect;
+        // Still by their place: sideways up to about twice its width (round the board or their cards, say); down
+        // well past them, up a little.
+        const reachX = wp * 2.2;
+        const downTo = fr.ny + hp * 1.3;
+        const upTo = fr.ny - hp * 0.6;
+        const win = { x0: fr.nx - reachX - wp / 2, x1: fr.nx + reachX + wp / 2, y0: Math.min(upTo, top) - hp / 2, y1: downTo + hp / 2 };
+        const local = near.filter((b) => b.x1 > win.x0 - pad && b.x0 < win.x1 + pad && b.y1 > win.y0 - pad && b.y0 < win.y1 + pad);
+        const xs = [fr.nx, margin + wp / 2, W - margin - wp / 2, ...local.flatMap((b) => [b.x0 - pad - wp / 2 - 0.5, b.x1 + pad + wp / 2 + 0.5])];
+        const ys = [fr.ny, top + hp / 2, H - margin - hp / 2, ...local.flatMap((b) => [b.y0 - pad - hp / 2 - 0.5, b.y1 + pad + hp / 2 + 0.5])];
+        let best: { x: number; y: number } | null = null;
+        let bestD = Infinity;
+        for (const x of xs) {
+          if (Math.abs(x - fr.nx) > reachX || x - wp / 2 < margin || x + wp / 2 > W - margin) continue;
+          for (const y of ys) {
+            if (y > downTo || y < upTo || y - hp / 2 < top || y + hp / 2 > H - margin) continue;
+            // Sideways costs a little more than down: staying over their own place reads best.
+            const d = (x - fr.nx) * (x - fr.nx) * 1.5 + (y - fr.ny) * (y - fr.ny);
+            if (d >= bestD) continue;
+            const r = { x0: x - wp / 2, x1: x + wp / 2, y0: y - hp / 2, y1: y + hp / 2 };
+            if (local.some((b) => hits(r, b))) continue;
+            // Its nameplate above it has to be clear too (the board strip at the top, say).
+            if (!inside) {
+              const plate = { x0: x - fr.plateW / 2, x1: x + fr.plateW / 2, y0: r.y0 - 6 - fr.plateH, y1: r.y0 - 6 };
+              if (local.some((b) => hits(plate, b))) continue;
+            }
+            best = { x, y };
+            bestD = d;
+          }
+        }
+        return best;
+      };
+      // The biggest that has a spot, nor bigger than its share — with the nameplate above, or (when that's much
+      // bigger) with it over the screen's bottom edge.
+      const maxH = Math.max(fr.h1, Math.min(capH, capW / aspect));
+      const biggest = (inside: boolean): { hp: number; at: { x: number; y: number } } | null => {
+        let lo = fr.h1;
+        let at = spot(lo, inside);
+        if (!at) return null;
+        let hi = maxH;
+        for (let i = 0; i < 12 && hi - lo > 2; i++) {
+          const mid = (lo + hi) / 2;
+          const s2 = spot(mid, inside);
+          if (s2) {
+            lo = mid;
+            at = s2;
+          } else hi = mid;
+        }
+        return { hp: lo, at };
+      };
+      const above = biggest(false);
+      const over = biggest(true);
+      let pick: { hp: number; at: { x: number; y: number }; inside: boolean } | null =
+        above && (!over || over.hp < above.hp * 1.2) ? { ...above, inside: false } : over ? { ...over, inside: true } : null;
+      // No room even as it stands: smaller, rather than over anything.
+      for (let hp = fr.h1 * 0.9; !pick && hp >= fr.h1 * 0.4; hp *= 0.9) {
+        const at = spot(hp, true);
+        if (at) pick = { hp, at, inside: true };
+      }
+      // Nowhere at all without covering something: no screen for now — their head shows, and their nameplate
+      // goes where anyone's does.
+      if (!pick) {
+        this.faceFits.delete(fr.id);
+        this.players.fitFace(fr.id, fr.base, 1, true, false);
+        continue;
+      }
+      const target = { k: pick.hp / fr.h1, dx: pick.at.x - fr.nx, dy: pick.at.y - fr.ny, inside: pick.inside };
+      // Eased toward it: most of the way each frame, so a screen glides into a new size and place.
+      const was = this.faceFits.get(fr.id) ?? target;
+      const e = this.reduceMotion ? 1 : 0.35;
+      const now = { k: was.k + (target.k - was.k) * e, dx: was.dx + (target.dx - was.dx) * e, dy: was.dy + (target.dy - was.dy) * e, inside: target.inside };
+      if (Math.abs(now.k - target.k) > 0.004 || Math.abs(now.dx - target.dx) > 0.5 || Math.abs(now.dy - target.dy) > 0.5) this.layoutDirty = true;
+      else Object.assign(now, target);
+      this.faceFits.set(fr.id, now);
+      // Into the scene: the box's middle, back out at the player's distance; the size, from px to world units there.
+      const cx = fr.nx + now.dx;
+      const cy = fr.ny + now.dy;
+      const vx = ((cx / W) * 2 - 1) * fr.depth * tanHalf * (W / H);
+      const vy = (1 - (cy / H) * 2) * fr.depth * tanHalf;
+      const hp = fr.h1 * now.k;
+      const r = { x0: cx - (hp * aspect) / 2, x1: cx + (hp * aspect) / 2, y0: cy - hp / 2, y1: cy + hp / 2 };
+      const overHead = fr.nx > r.x0 && fr.nx < r.x1 && fr.ny > r.y0 && fr.ny < r.y1;
+      this.players.fitFace(fr.id, new THREE.Vector3(vx, vy, -fr.depth).applyMatrix4(cam.matrixWorld), now.k, overHead);
+      out.set(fr.id, { ...r, plateInside: now.inside });
+      boxes.push({ seatId: fr.id, ...r, k: now.k });
+      placed.push(r);
+      // Its nameplate is in the way of the next ones too.
+      if (!now.inside) placed.push({ x0: (r.x0 + r.x1) / 2 - fr.plateW / 2, x1: (r.x0 + r.x1) / 2 + fr.plateW / 2, y0: r.y0 - 6 - fr.plateH, y1: r.y0 });
+    }
+    return out;
   }
 
   /**
@@ -1732,11 +1945,13 @@ export class TableScene {
     textures: number;
     objects: number;
     faces: { seatId: number; front: boolean; blocked: boolean; inView: boolean; px: number }[];
+    faceBoxes: { seatId: number; x0: number; y0: number; x1: number; y1: number; k: number }[];
   } {
     let objects = 0;
     this.scene.traverse(() => objects++);
     return {
       faces: this.faceViews(),
+      faceBoxes: this.faceBoxes,
       cards: this.cards.keys(),
       stacks: this.chips.stackKeys(),
       cameraYaw: this.rig.yaw,

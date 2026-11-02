@@ -2950,3 +2950,26 @@ about ten.
   instead of 34 MB.
 - The house dealer is untouched: its stand-in body still comes from
   `humanBody.ts`.
+
+## Camera screens as big as the room around them
+
+- **Each player on camera gets the biggest screen there's room for, from where
+  you sit** (`scene.ts`'s `fitFaces`): worked out on screen every time the view
+  moves or the table changes — never over the board, anyone's cards or bet,
+  the pot, the dealer's tray, the page's controls, a nameplate or another
+  screen. It stays with its player: over their head where there's room,
+  otherwise the nearest clear space by their place (beside it, or down over
+  the empty felt in front of them), its nameplate above it — or over its
+  bottom edge when there's no room above. At most: 60% of the screen's height
+  for one player in view, 46% for two, 36% for three or four, 28% beyond;
+  never wider than a fair share of the width (a phone held upright gets
+  narrower ones). Smaller than it stands only when that's the only way to
+  stay clear; with nowhere clear at all (or its player out of view) the
+  screen goes and their head shows.
+- To be sized exactly, a screen faces you square-on and is drawn over the
+  table (not into it), at its player's distance; whether you see it at all
+  still goes by the way they sit (from behind or side-on, their head shows).
+  A screen moved off its player's head leaves the head to be seen.
+- Size and place are eased over a few frames, so a screen glides.
+- **Cards shown over a player's head are bigger**: 64×89 (54×75 on a phone),
+  near the board strip's size; their nameplate is laid out around them.

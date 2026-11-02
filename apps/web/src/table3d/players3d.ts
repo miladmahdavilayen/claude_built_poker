@@ -46,6 +46,10 @@ interface Body {
   avatar: PlayerAvatar;
   /** When the next blink starts (seconds, scene time). */
   nextBlink: number;
+  /** Whether their camera screen is over their head (scene.ts's fitFaces moves it off when there's no room there). */
+  faceOverHead: boolean;
+  /** False when there's nowhere on your screen it could go without covering something: their head shows instead. */
+  faceShown: boolean;
 }
 
 /** A blink: lids down and up again in this long (seconds). */
@@ -125,8 +129,16 @@ class FaceScreen {
     const screenMat = new THREE.MeshBasicMaterial({ map: texture, alphaMap: roundedMask(), alphaTest: 0.5, toneMapped: false });
     const frameGeo = new THREE.PlaneGeometry(width + FRAME * 2, height + FRAME * 2);
     const frameMat = new THREE.MeshBasicMaterial({ color: 0x10151c, alphaMap: roundedMask(), alphaTest: 0.5 });
+    // Drawn over the table, not into it: the scene sizes each screen around everything on the felt
+    // (scene.ts's fitFaces), so a big one can come down over the empty felt in front of its player.
+    for (const m of [screenMat, frameMat]) {
+      m.depthTest = false;
+      m.depthWrite = false;
+    }
     const screen = new THREE.Mesh(screenGeo, screenMat);
     const frame = new THREE.Mesh(frameGeo, frameMat);
+    frame.renderOrder = 10;
+    screen.renderOrder = 11;
     frame.position.z = -0.004;
     screen.name = 'face-screen';
     frame.name = 'face-screen';
@@ -267,7 +279,7 @@ export class SeatedPlayers {
       if (!body) {
         const root = new THREE.Group();
         const avatar = buildPlayerAvatar(root, avatarLook(p.hue, p.seed), { castShadows: this.castShadows, detail: this.detail });
-        body = { root, bones: avatar.bones, disposables: avatar.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false, avatar, nextBlink: (p.seed % 400) / 100 };
+        body = { root, bones: avatar.bones, disposables: avatar.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false, avatar, nextBlink: (p.seed % 400) / 100, faceOverHead: true, faceShown: true };
         this.bodies.set(p.seatId, body);
         this.group.add(root);
       }
@@ -314,17 +326,51 @@ export class SeatedPlayers {
     }
   }
 
+  /** Takes a screen away for now — its player is out of your view (their marker at the screen's edge stands for them). */
+  hideFace(seatId: number): void {
+    const b = this.bodies.get(seatId);
+    if (b?.face) b.faceShown = false;
+  }
+
   /** Whether this seat's player is wearing their camera as a screen. */
   hasFace(seatId: number): boolean {
     return !!this.bodies.get(seatId)?.face;
   }
 
   /**
+   * A screen as the scene sizes it for the viewer (scene.ts's fitFaces): where its middle naturally sits
+   * (world) and its size with the frame — or null when there's no screen to size (no camera, or its player
+   * is turned away from `eye`, so their head shows instead).
+   */
+  faceFrame(seatId: number, eye: THREE.Vector3): { base: THREE.Vector3; w: number; h: number } | null {
+    const b = this.bodies.get(seatId);
+    if (!b?.face || b.own || !this.faceFront(b, eye)) return null;
+    return { base: this.facePos.clone(), w: FACE_SCREEN.width + FRAME * 2, h: FACE_SCREEN.height + FRAME * 2 };
+  }
+
+  /**
+   * Puts a screen's middle at `at` (world), `scale` times its own size — over its player's head, or moved off it
+   * (then their head shows too) — or, `shown` false, takes it away for now (their head shows instead).
+   */
+  fitFace(seatId: number, at: THREE.Vector3, scale: number, overHead: boolean, shown = true): void {
+    const b = this.bodies.get(seatId);
+    if (!b?.face) return;
+    b.faceOverHead = overHead;
+    b.faceShown = shown;
+    const neck = b.bones.get('neck')!;
+    neck.updateWorldMatrix(true, false);
+    const g = b.face.group;
+    g.scale.setScalar(scale);
+    g.position.copy(neck.worldToLocal(at.clone()));
+  }
+
+
+  /**
    * Breathing, blinking, and an occasional look around — small, so it never distracts.
    * A screen turns with its player's head, and shows only from the front:
    * from behind (`eye` is the camera) the head itself is what you see.
    */
-  update(time: number, eye: THREE.Vector3): void {
+  update(time: number, eye: THREE.Vector3, eyeQuat?: THREE.Quaternion): void {
     const t = time / 1000;
     for (const b of this.bodies.values()) {
       const chest = b.bones.get('chest')!;
@@ -342,15 +388,20 @@ export class SeatedPlayers {
       const k = (t - b.nextBlink) / BLINK_S;
       setBlink(b.avatar, k > 0 && k < 1 ? Math.sin(k * Math.PI) : 0);
       if (!b.face) continue;
-      // Upright like a face, however far they lean in, and turned the way they sit. Not with the
-      // modelled head's idle glances: where the real person looks is in their video.
+      // Square-on to you, like a window — so the scene can size it exactly (scene.ts's fitFaces). Whether you
+      // see it at all still goes by the way its player sits: from behind or side-on, their head shows instead.
+      // Not with the modelled head's idle glances: where the real person looks is in their video.
       const g = b.face.group;
       g.parent!.getWorldQuaternion(this.faceQuat).invert();
-      this.upright.setFromEuler(this.yaw.set(0, b.root.rotation.y, 0));
-      g.quaternion.copy(this.faceQuat).multiply(this.upright);
+      if (eyeQuat) g.quaternion.copy(this.faceQuat).multiply(eyeQuat);
+      else {
+        this.upright.setFromEuler(this.yaw.set(0, b.root.rotation.y, 0));
+        g.quaternion.copy(this.faceQuat).multiply(this.upright);
+      }
       const front = this.faceFront(b, eye);
-      g.visible = front;
-      head.visible = !front;
+      g.visible = front && b.faceShown;
+      // A screen moved off its player's head (round the board, say) leaves their head to be seen.
+      head.visible = !g.visible || !b.faceOverHead;
     }
   }
 
@@ -361,13 +412,14 @@ export class SeatedPlayers {
    * the table: to each other they're side-on).
    */
   private faceFront(b: Body, eye: THREE.Vector3): boolean {
-    const g = b.face!.group;
-    g.updateWorldMatrix(true, false);
-    g.getWorldPosition(this.facePos);
-    g.getWorldQuaternion(this.faceQuat);
-    this.faceNormal.set(0, 0, 1).applyQuaternion(this.faceQuat);
+    const neck = b.bones.get('neck')!;
+    neck.updateWorldMatrix(true, false);
+    neck.localToWorld(this.facePos.set(0, FACE_AT.y, FACE_AT.z));
+    const yaw = b.root.rotation.y;
+    this.faceNormal.set(Math.sin(yaw), 0, Math.cos(yaw));
     return this.toCamera.subVectors(eye, this.facePos).normalize().dot(this.faceNormal) > FACE_SIDE_ON;
   }
+
 
   /** For tests: each screen's middle and its left and right edges (world), and whether it shows its face to `eye`. */
   faces(eye: THREE.Vector3): { seatId: number; at: THREE.Vector3; edges: [THREE.Vector3, THREE.Vector3]; front: boolean; object: THREE.Object3D }[] {

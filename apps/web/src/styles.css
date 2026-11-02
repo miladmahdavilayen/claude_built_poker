@@ -4800,10 +4800,19 @@ button.admin-user-row:hover:not(:disabled) {
   justify-content: center;
   margin-bottom: 4px;
 }
+/* A hand shown down over a player's head: near the board strip's own size, so it reads from across the table (the
+   box is laid out around it, so it stays clear of everything else). */
 .seat--compact .seat-compact-cards .card {
-  width: 48px;
-  height: 67px;
-  font-size: 19px;
+  width: 64px;
+  height: 89px;
+  font-size: 25px;
+}
+@media (max-width: 600px) {
+  .seat--compact .seat-compact-cards .card {
+    width: 54px;
+    height: 75px;
+    font-size: 21px;
+  }
 }
 .seat--compact.seat-has-video .seat-compact-cards {
   position: absolute;

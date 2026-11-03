@@ -3073,3 +3073,31 @@ about ten.
   after preflop it never held anything back again. Now the buttons also wait
   until every community card dealt so far is down and face up on the felt
   (what the board strip shows), and the safety wait starts over each street.
+
+## 3D: cameras only through your own eyes
+
+- On the 3D table, a player's camera is drawn only in the seated view, and
+  only once you have a seat: the standing view (the whole table from above)
+  and the table seen before you've sat down show nobody's camera — not as a
+  screen in the scene, not on your own box — while every voice still plays
+  through the seat's own audio. Sitting down (or choosing the seated view)
+  brings the screens back at once. Decided in Table.tsx (`eyes3d`), where the
+  streams are handed to the scene and the boxes.
+
+## Seven table designs
+
+- The 3D table's look is a catalogue (apps/web's tableDesigns.ts), the table's
+  `tableTheme` setting naming one: Classic and VIP Burgundy as before, and
+  five new ones — Emerald Royale (emerald felt, twin gold lines, mahogany, a
+  quilted cognac rail), Midnight Blue (navy felt, a silver line, walnut, black
+  leather, chrome), Black Onyx (matte black felt, a silver line, black
+  lacquer, a quilted white rail), Imperial Purple (royal purple, twin gold
+  lines, black lacquer, a quilted plum rail) and Oak Saloon (sand felt, pale
+  oak, a cognac rail, brass). A design sets the felt and its printed line, the
+  racetrack and apron's wood, the rail's leather, the metal trim (or none),
+  the chairs, the chip rack's lining, the lighting, and which of the two rooms
+  it stands in (the VIP floor's ones are starred). scene.ts builds from the
+  design alone — no `vip` checks — so another design is a new entry, nothing
+  more. The owner picks from "Table and dealer" in the menu (or a double-tap
+  on the dealer), as a gallery with a swatch of each; everyone at the table
+  sees the change, and a guest has no picker.

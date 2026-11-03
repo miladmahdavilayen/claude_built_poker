@@ -1,3 +1,4 @@
+import type { TableTheme } from '@pokerclause/shared';
 import { useEffect, useState } from 'react';
 
 /**
@@ -51,7 +52,7 @@ export function dealerIsVip(chars: readonly DealerCharacter[], setting: string |
 }
 
 /** A table's room: its own setting — or, for a table that never chose one, the VIP room if its dealer is a VIP character. */
-export function tableTheme(chars: readonly DealerCharacter[], settings: { houseDealer?: string; tableTheme?: 'classic' | 'vip' }): 'classic' | 'vip' {
+export function tableTheme(chars: readonly DealerCharacter[], settings: { houseDealer?: string; tableTheme?: TableTheme }): TableTheme {
   return settings.tableTheme ?? (dealerIsVip(chars, settings.houseDealer) ? 'vip' : 'classic');
 }
 

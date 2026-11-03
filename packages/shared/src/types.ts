@@ -31,13 +31,18 @@ export interface TableSettings extends TableConfig {
    */
   houseDealer?: string;
   /**
-   * The 3D table's room — the classic green-felt room or the VIP high-limit
-   * one — chosen apart from the dealer: any dealer can deal in either. Absent
-   * (a table from before it was a setting): the VIP room if its dealer is a
-   * VIP character, as it used to be.
+   * The 3D table's design (see apps/web's tableDesigns.ts) — the felt, rail,
+   * wood, trim, chairs and the room it stands in — chosen apart from the
+   * dealer: any dealer can deal at any table. Absent (a table from before it
+   * was a setting): the VIP table if its dealer is a VIP character, as it
+   * used to be.
    */
-  tableTheme?: 'classic' | 'vip';
+  tableTheme?: TableTheme;
 }
+
+/** The 3D table's designs, the owner's pick (apps/web's tableDesigns.ts describes each). */
+export const TABLE_THEMES = ['classic', 'vip', 'midnight', 'emerald', 'onyx', 'saloon', 'imperial'] as const;
+export type TableTheme = (typeof TABLE_THEMES)[number];
 
 /** On an open-invite table, a free seat held for the first person on the waitlist until `expiresAt` (epoch ms). */
 export interface SeatOffer {

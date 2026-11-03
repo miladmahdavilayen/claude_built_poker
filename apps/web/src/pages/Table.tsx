@@ -377,6 +377,9 @@ export function TablePage(): React.JSX.Element {
   // players' cameras is for whoever has joined it, plus the owner, who can
   // watch any table's cameras without having to turn on their own.
   const canSeeVideo = voice.inCall || user?.role === 'admin';
+  // On the 3D table, cameras show only through your own eyes at your seat: the standing view, and the table seen
+  // before you've sat down, show no one's camera (yours included) — their voices still play.
+  const eyes3d = is3d && view.effective !== '2d' && view.effective.mode === 'seated' && sock.state?.viewerSeatId !== null;
   // Development only (compiled out of production builds): `?fakeCameras=1`
   // puts a stand-in camera on every occupied seat, bots included — for
   // checking the layout with a full table on camera.
@@ -595,7 +598,7 @@ export function TablePage(): React.JSX.Element {
     userId && callUserIds.includes(userId) ? <PeerMuteButton userId={userId} name={name ?? 'player'} everyone={callUserIds} /> : undefined;
   // The other players' cameras, worn in the 3D scene (see players3d.ts's FaceScreen).
   const seatVideos3d = new Map(
-    canSeeVideo ? humanCameraSeats.filter((s) => !s.isLocal && s.seatId !== state.viewerSeatId).map((s) => [s.seatId, s.stream] as const) : [],
+    canSeeVideo && eyes3d ? humanCameraSeats.filter((s) => !s.isLocal && s.seatId !== state.viewerSeatId).map((s) => [s.seatId, s.stream] as const) : [],
   );
   // Voice participants with no seat at this table (spectators using voice chat) —
   // shown in the compact VoicePanel strip instead, since there's no seat to
@@ -875,7 +878,7 @@ export function TablePage(): React.JSX.Element {
           justRevealed={justRevealedSeats.has(seatId)}
           voice={voiceStreamForSeat(seat)}
           // On the 3D table the others' cameras are screens in the scene itself (seatVideos below); the box keeps only your own.
-          showVideo={canSeeVideo && (is3d ? seatId === state.viewerSeatId : !hiddenCameraSeatIds.has(String(seatId)))}
+          showVideo={canSeeVideo && (is3d ? eyes3d && seatId === state.viewerSeatId : !hiddenCameraSeatIds.has(String(seatId)))}
           callControls={seatId === state.viewerSeatId && !sock.isPractice ? <SeatCallControls voice={voice} /> : undefined}
           peerMute={seatId !== state.viewerSeatId ? peerMuteFor(callIdOf(seat), seat.displayName) : undefined}
           shownCardsBelow={place.nearTop}
@@ -1033,7 +1036,7 @@ export function TablePage(): React.JSX.Element {
                   setDealerPickerOpen(true);
                 }}
               >
-                Dealer and room
+                Table and dealer
               </button>
             )}
             {immersive.nativeFullscreenSupported && (

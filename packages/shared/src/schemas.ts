@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MAX_BALANCE_CENTS } from './money.js';
+import { TABLE_THEMES } from './types.js';
 import { MAX_SIGNATURE_DATA_URL_LENGTH } from './waiver.js';
 
 // .strict() everywhere: unknown fields are rejected, per spec.
@@ -180,8 +181,8 @@ export const UpdateTableSettingsSchema = z
       .max(40)
       .regex(/^[a-z0-9-]*$/)
       .optional(),
-    /** The 3D table's room: the classic green-felt room, or the VIP high-limit room — whichever dealer deals. */
-    tableTheme: z.enum(['classic', 'vip']).optional(),
+    /** The 3D table's design (types.ts's TABLE_THEMES) — whichever dealer deals. */
+    tableTheme: z.enum(TABLE_THEMES).optional(),
   })
   .strict();
 export type UpdateTableSettingsIntent = z.infer<typeof UpdateTableSettingsSchema>;

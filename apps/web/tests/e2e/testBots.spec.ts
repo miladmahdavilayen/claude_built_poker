@@ -117,3 +117,51 @@ test('seated on the 3D table, turning to the player beside you shows their camer
     expect(seen, `seat ${String(seatId + 1)}'s camera, turned to`).toBe(true);
   }
 });
+
+// On the 3D table, cameras show only through your own eyes at your seat. Standing (the whole table from above), or
+// at a table you haven't sat down at yet, nobody's camera is drawn — not as a screen in the scene, not on a box —
+// while their voice still plays. Sitting down in the seated view brings the cameras back.
+test('standing, or not yet seated, the 3D table shows no cameras — voices only', async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.addInitScript(() => {
+    localStorage.setItem('pokerclause.tableQuality', 'low');
+    // Standing to begin with — once: the view chosen from the menu below must stick across the later pages.
+    if (!sessionStorage.getItem('view-seeded')) {
+      localStorage.setItem('pokerclause.tableView', 'standing');
+      sessionStorage.setItem('view-seeded', '1');
+    }
+  });
+  await adminLogin(page);
+  await createTable(page, { name: 'No Cams Standing', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(page, 0, 200);
+  await addBot(page, 3, 'test-cam-ava', 200);
+  await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'standing', { timeout: 20_000 });
+  type Box = { seatId: number; k: number };
+  const boxes = (): Promise<Box[]> => page.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => { faceBoxes: Box[] } } }).__scene3d?.debugState().faceBoxes ?? []);
+  // Their voice is playing (the clip's sound, through the seat's own audio)…
+  await expect(page.locator('[data-testid="seat-3"] audio')).toHaveCount(1, { timeout: 15_000 });
+  await page.waitForTimeout(2500);
+  // …but no camera anywhere: no screen in the scene, no video on any box.
+  expect(await boxes()).toEqual([]);
+  await expect(page.locator('.seat-video video')).toHaveCount(0);
+  await expect(page.locator('video.seat-video-el')).toHaveCount(0);
+
+  // Seated: their camera is a screen on their head.
+  await (await openTableMenu(page)).getByLabel(/3D — Seated/).check();
+  await closeTableMenu(page);
+  await expect(page.getByTestId('table-3d')).toHaveAttribute('data-mode', 'seated', { timeout: 20_000 });
+  await expect.poll(async () => (await boxes()).map((b) => b.seatId), { timeout: 15_000 }).toContain(3);
+
+  // Not yet seated at a table (seated view): the whole table from above, and still no cameras.
+  await page.goto('/lobby');
+  await createTable(page, { name: 'No Cams Unseated', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await addBot(page, 3, 'test-cam-ben', 200);
+  await expect(page.getByTestId('table-3d')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-testid="seat-3"] audio')).toHaveCount(1, { timeout: 15_000 });
+  await page.waitForTimeout(2500);
+  expect(await boxes()).toEqual([]);
+  await expect(page.locator('video.seat-video-el')).toHaveCount(0);
+  // Sitting down brings it back.
+  await takeSeat(page, 0, 200);
+  await expect.poll(async () => (await boxes()).map((b) => b.seatId), { timeout: 15_000 }).toContain(3);
+});

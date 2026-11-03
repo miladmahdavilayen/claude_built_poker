@@ -1,11 +1,13 @@
+import type { TableTheme } from '@pokerclause/shared';
 import { useEffect, useState } from 'react';
 import { orderedDealers, type DealerCharacter } from '../table3d/dealers.js';
+import { DESIGN_ORDER, TABLE_DESIGNS } from '../table3d/tableDesigns.js';
 
 /**
- * The owner's choice of house dealer and room for this table — opened by
- * double-tapping her on the 3D table, or from the table menu. The two are
- * apart: any dealer, VIP or not, can deal in either room. Everyone at the
- * table sees the change (the table's `houseDealer` and `tableTheme`
+ * The owner's choice of table design and house dealer for this table —
+ * opened by double-tapping her on the 3D table, or from the table menu. The
+ * two are apart: any dealer, VIP or not, can deal at any table. Everyone at
+ * the table sees the change (the table's `houseDealer` and `tableTheme`
  * settings).
  */
 export function DealerPicker({
@@ -20,9 +22,9 @@ export function DealerPicker({
   /** The table's setting: a character id, or none (the first character deals). */
   current: string | undefined;
   onPick: (id: string) => void;
-  /** The table's room now, and the choice of it. */
-  theme: 'classic' | 'vip';
-  onTheme: (theme: 'classic' | 'vip') => void;
+  /** The table's design now (tableDesigns.ts), and the choice of it. */
+  theme: TableTheme;
+  onTheme: (theme: TableTheme) => void;
   onClose: () => void;
 }): React.JSX.Element {
   // On a phone, the double tap's own trailing click lands wherever the finger was — on the backdrop or a
@@ -52,28 +54,34 @@ export function DealerPicker({
     <div className="modal-backdrop" style={ready ? undefined : { pointerEvents: 'none' }} onClick={onClose}>
       <div className="modal dealer-picker" role="dialog" aria-label="Choose the house dealer" onClick={(e) => e.stopPropagation()}>
         <h3>Table</h3>
-        <div className="dealer-picker-list" role="radiogroup" aria-label="Table room">
-          {(
-            [
-              ['classic', 'Classic room'],
-              ['vip', '★ VIP room'],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={theme === value}
-              className={`dealer-picker-option${theme === value ? ' dealer-picker-option--active' : ''}${value === 'vip' ? ' dealer-picker-option--vip' : ''}`}
-              onClick={() => onTheme(value)}
-            >
-              {label}
-              {theme === value && <span className="dealer-picker-check"> ✓</span>}
-            </button>
-          ))}
+        <div className="dealer-picker-designs" role="radiogroup" aria-label="Table design">
+          {DESIGN_ORDER.map((id) => {
+            const d = TABLE_DESIGNS[id];
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={theme === id}
+                data-testid={`table-design-${id}`}
+                className={`dealer-picker-design${theme === id ? ' dealer-picker-design--active' : ''}`}
+                onClick={() => onTheme(id)}
+              >
+                <span className="dealer-picker-swatch" aria-hidden="true" style={{ background: d.swatch[0], borderColor: d.swatch[1] }} />
+                <span className="dealer-picker-design-text">
+                  <span className="dealer-picker-design-name">
+                    {d.room === 'vip' && <span aria-hidden="true">★ </span>}
+                    {d.label}
+                    {theme === id && <span className="dealer-picker-check"> ✓</span>}
+                  </span>
+                  <span className="dealer-picker-design-blurb">{d.blurb}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
         <h3>House dealer</h3>
-        <p className="muted">Any dealer can deal in either room. Everyone at this table sees what you pick.</p>
+        <p className="muted">Any dealer can deal at any table. Everyone at this table sees what you pick.</p>
         {vip.length > 0 && (
           <>
             <h4 className="dealer-picker-heading">VIP dealers</h4>

@@ -14,7 +14,8 @@ import { SeatedPlayers } from './players3d.js';
 import { CasinoRoom } from './room3d.js';
 import { TIERS, type QualityTier, type TableTheme, type View3dMode } from './quality.js';
 import { HOUSE, SEAT_SPOTS, TABLE, dealOrder, edgePoint, seatPlacements, type SeatPlacement3d } from './seatLayout3d.js';
-import { RUG, VIP_FELT, blobTexture, ebonyTexture, feltTextures, leatherTexture, planksTexture, quiltedLeatherTexture, roomTexture, vipRoomTexture, woodTexture } from './textures.js';
+import { TABLE_DESIGNS, type TableDesign } from './tableDesigns.js';
+import { RUG, blobTexture, ebonyTexture, feltTextures, leatherTexture, planksTexture, quiltedLeatherTexture, roomTexture, vipRoomTexture, woodTexture } from './textures.js';
 
 // The 3D table — a presentation layer over the game state, nothing more.
 // It reads the same ProjectedTableState and event batches the 2D table
@@ -143,6 +144,8 @@ export class TableScene {
   private readonly rig = new CameraRig();
   private readonly tier: QualityTier;
   private readonly theme: TableTheme;
+  /** The table's look (tableDesigns.ts): what every themed part is built from. */
+  private readonly design: TableDesign;
   private readonly cb: SceneCallbacks;
   private readonly disposables: { dispose: () => void }[] = [];
   private readonly chips: Chips3d;
@@ -205,6 +208,7 @@ export class TableScene {
     this.canvas = canvas;
     this.tier = tier;
     this.theme = theme;
+    this.design = TABLE_DESIGNS[theme];
     this.cb = cb;
     const t = TIERS[tier];
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: t.antialias, powerPreference: 'high-performance' });
@@ -295,7 +299,7 @@ export class TableScene {
    * cards and chrome.
    */
   private buildRoom(tier: QualityTier): void {
-    const vip = this.theme === 'vip';
+    const vip = this.design.room === 'vip';
     const tex = this.track((vip ? vipRoomTexture : roomTexture)(tier === 'high' ? 1024 : 512));
     if (vip) {
       // Seen from inside the sphere the picture is mirrored: flipped back, so the signs read the right way.
@@ -309,7 +313,7 @@ export class TableScene {
     this.scene.add(room);
     this.scene.background = new THREE.Color('#0d0806');
     // The room around: other tables, the bar, people — softened by a warm haze into a background.
-    this.room = new CasinoRoom(tier === 'high', vip);
+    this.room = new CasinoRoom(tier === 'high', vip, this.design.feltCss);
     this.scene.add(this.room.group);
     // The VIP floor is bigger and brighter: less haze, so its chandeliers and slot machines read.
     this.scene.fog = vip ? new THREE.FogExp2('#160b10', 0.03) : new THREE.FogExp2('#1a0f0a', 0.042);
@@ -348,10 +352,10 @@ export class TableScene {
   }
 
   private buildLights(shadowSize: number): void {
-    const vip = this.theme === 'vip';
-    this.scene.add(vip ? new THREE.HemisphereLight('#fff0d8', '#2a1218', 1.05) : new THREE.HemisphereLight('#ffe7c4', '#24160e', 0.85));
+    const light = this.design.light;
+    this.scene.add(new THREE.HemisphereLight(light.sky, light.ground, light.intensity));
     // Warm overhead casino light, the one that casts shadows.
-    const spot = new THREE.SpotLight('#ffd7a3', 62, 0, 1.0, 0.6, 2);
+    const spot = new THREE.SpotLight(light.spot, 62, 0, 1.0, 0.6, 2);
     spot.position.set(0, 5.1, 0.2);
     spot.target.position.set(0, 0, 0);
     spot.castShadow = shadowSize > 0;
@@ -368,27 +372,34 @@ export class TableScene {
     this.scene.add(fill);
   }
 
-  /** Polished gold for the VIP table's trim (without an environment to reflect, on Low, it glows a little instead). */
-  private gold(): THREE.MeshStandardMaterial {
-    this.goldMat ??= this.track(
-      new THREE.MeshStandardMaterial({ color: '#d2a344', metalness: this.tier === 'low' ? 0.35 : 0.9, roughness: 0.28, emissive: '#4a3008', emissiveIntensity: this.tier === 'low' ? 1 : 0.5 }),
+  /**
+   * The design's polished metal trim — gold, chrome, brass, silver (without an environment to reflect, on Low, it
+   * glows a little instead). Chrome for a design with no trim (the chairs' frames).
+   */
+  private metal(): THREE.MeshStandardMaterial {
+    const trim = this.design.trim ?? { color: '#b9bcc2', emissive: '#26282c' };
+    this.metalMat ??= this.track(
+      new THREE.MeshStandardMaterial({ color: trim.color, metalness: this.tier === 'low' ? 0.35 : 0.9, roughness: 0.28, emissive: trim.emissive, emissiveIntensity: this.tier === 'low' ? 1 : 0.5 }),
     );
-    return this.goldMat;
+    return this.metalMat;
   }
 
-  private goldMat: THREE.MeshStandardMaterial | null = null;
+  private metalMat: THREE.MeshStandardMaterial | null = null;
 
   /**
-   * The table. Classic: green felt, a wooden racetrack, a dark leather rail.
-   * VIP: burgundy felt with a gold printed line, gold trim round the felt and
-   * under the apron, a glossy ebony racetrack and a quilted black leather rail,
-   * on a patterned casino carpet.
+   * The table, built to its design (tableDesigns.ts). Classic: green felt, a
+   * wooden racetrack, a dark leather rail. VIP: burgundy felt with a gold
+   * printed line, gold trim round the felt and under the apron, a glossy ebony
+   * racetrack and a quilted black leather rail, on a patterned casino carpet.
+   * The others: their own felt, wood, leather and trim, in one room or the other.
    */
   private buildTable(texSize: number, shadows: boolean): void {
-    const vip = this.theme === 'vip';
-    const felt = feltTextures(texSize, vip ? VIP_FELT : undefined);
-    const wood = vip ? ebonyTexture(texSize) : woodTexture(texSize);
-    const leather = vip ? quiltedLeatherTexture(texSize) : leatherTexture(texSize);
+    const d = this.design;
+    const vip = d.room === 'vip';
+    const trimmed = d.trim !== null;
+    const felt = feltTextures(texSize, d.felt);
+    const wood = d.wood.kind === 'lacquer' ? ebonyTexture(texSize, d.wood.color, d.wood.grain) : woodTexture(texSize, d.wood.palette);
+    const leather = d.rail.quilted ? quiltedLeatherTexture(texSize, d.rail.color, d.rail.button) : leatherTexture(texSize, d.rail.color);
     this.track(felt.map);
     this.track(felt.normalMap);
     this.track(wood);
@@ -425,12 +436,12 @@ export class TableScene {
     lineShape.holes.push(holePath(TABLE.railWidth + 0.645));
     const lineGeo = this.track(new THREE.ShapeGeometry(lineShape, 32));
     lineGeo.rotateX(-Math.PI / 2);
-    const lineMat = this.track(new THREE.MeshBasicMaterial({ color: vip ? '#e2b65a' : '#e9cf8a', transparent: true, opacity: vip ? 0.62 : 0.28, depthWrite: false }));
+    const lineMat = this.track(new THREE.MeshBasicMaterial({ color: d.line.color, transparent: true, opacity: d.line.opacity, depthWrite: false }));
     const line = new THREE.Mesh(lineGeo, lineMat);
     line.position.y = 0.002;
     this.scene.add(line);
-    if (vip) {
-      // A second, finer gold line just inside the first.
+    if (d.line.double) {
+      // A second, finer line just inside the first.
       const inner = insetRect(TABLE.railWidth + 0.69);
       inner.holes.push(holePath(TABLE.railWidth + 0.7));
       const innerGeo = this.track(new THREE.ShapeGeometry(inner, 32));
@@ -445,17 +456,17 @@ export class TableScene {
     trackShape.holes.push(holePath(feltInset));
     const trackGeo = this.track(new THREE.ExtrudeGeometry(trackShape, { depth: 0.02, bevelEnabled: false, curveSegments: 32 }));
     trackGeo.rotateX(-Math.PI / 2);
-    const woodMat = this.track(new THREE.MeshStandardMaterial({ map: wood, roughness: vip ? 0.16 : 0.35, metalness: vip ? 0.15 : 0.05 }));
+    const woodMat = this.track(new THREE.MeshStandardMaterial({ map: wood, roughness: d.wood.roughness, metalness: d.wood.kind === 'lacquer' ? 0.15 : 0.05 }));
     const trackMesh = new THREE.Mesh(trackGeo, woodMat);
     trackMesh.receiveShadow = shadows;
     this.scene.add(trackMesh);
-    if (vip) {
-      // Gold trim where the racetrack meets the felt.
+    if (trimmed) {
+      // Metal trim where the racetrack meets the felt.
       const trim = insetRect(feltInset - 0.025);
       trim.holes.push(holePath(feltInset));
       const trimGeo = this.track(new THREE.ExtrudeGeometry(trim, { depth: 0.028, bevelEnabled: false, curveSegments: 32 }));
       trimGeo.rotateX(-Math.PI / 2);
-      this.scene.add(new THREE.Mesh(trimGeo, this.gold()));
+      this.scene.add(new THREE.Mesh(trimGeo, this.metal()));
     }
 
     // The padded leather rail: a bevelled extrusion reads as a stuffed cushion.
@@ -466,7 +477,7 @@ export class TableScene {
       new THREE.ExtrudeGeometry(railShape, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.07, bevelSize: bevel, bevelSegments: 6, curveSegments: 40 }),
     );
     railGeo.rotateX(-Math.PI / 2);
-    const leatherMat = this.track(new THREE.MeshStandardMaterial({ map: leather, roughness: vip ? 0.4 : 0.48, metalness: 0.02, color: '#ffffff' }));
+    const leatherMat = this.track(new THREE.MeshStandardMaterial({ map: leather, roughness: d.rail.roughness, metalness: 0.02, color: '#ffffff' }));
     const rail = new THREE.Mesh(railGeo, leatherMat);
     rail.position.y = 0.07;
     rail.castShadow = shadows;
@@ -484,27 +495,27 @@ export class TableScene {
     apron.position.y = -0.015;
     apron.castShadow = shadows;
     this.scene.add(apron);
-    if (vip) {
-      // A gold band along the apron's foot.
+    if (trimmed) {
+      // A metal band along the apron's foot.
       const band = insetRect(0.03);
       band.holes.push(holePath(0.075));
       const bandGeo = this.track(new THREE.ExtrudeGeometry(band, { depth: 0.045, bevelEnabled: false, curveSegments: 32 }));
       bandGeo.rotateX(Math.PI / 2);
-      const b = new THREE.Mesh(bandGeo, this.gold());
+      const b = new THREE.Mesh(bandGeo, this.metal());
       b.position.y = -0.3;
       this.scene.add(b);
     }
-    const legMat = this.track(new THREE.MeshStandardMaterial({ color: vip ? '#0d0a0a' : '#1b120c', roughness: vip ? 0.2 : 0.6 }));
+    const legMat = this.track(new THREE.MeshStandardMaterial({ color: d.legs.color, roughness: d.legs.roughness }));
     const legGeo = this.track(new THREE.CylinderGeometry(0.28, 0.4, -FLOOR_Y - 0.3, 16));
     const collarGeo = this.track(new THREE.CylinderGeometry(0.45, 0.47, 0.08, 20));
     for (const x of [-1.6, 1.6]) {
       const leg = new THREE.Mesh(legGeo, legMat);
       leg.position.set(x, (FLOOR_Y - 0.3) / 2, 0);
       this.scene.add(leg);
-      if (vip) {
-        // Gold collars at the top and foot of each pedestal.
+      if (trimmed) {
+        // Metal collars at the top and foot of each pedestal.
         for (const y of [-0.38, FLOOR_Y + 0.05]) {
-          const collar = new THREE.Mesh(collarGeo, this.gold());
+          const collar = new THREE.Mesh(collarGeo, this.metal());
           collar.position.set(x, y, 0);
           this.scene.add(collar);
         }
@@ -562,7 +573,7 @@ export class TableScene {
    * VIP table, ebony with a gold rim.
    */
   private buildRack(wood: THREE.Material, shadows: boolean): THREE.Group {
-    const vip = this.theme === 'vip';
+    const trimmed = this.design.trim !== null;
     const g = new THREE.Group();
     g.position.set(0, 0, TABLE.halfDepth - TABLE.railWidth - HOUSE.trayDepth / 2 - 0.02);
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number): THREE.Mesh => {
@@ -585,7 +596,7 @@ export class TableScene {
     add(new RoundedBoxGeometry(w, front, endWall, 2, 0.008), wood, 0, front / 2, -d / 2 + endWall / 2);
     for (const sx of [-1, 1]) add(new RoundedBoxGeometry(sideWall, TRAY.wallHeight, d, 2, 0.008), wood, sx * (w / 2 - sideWall / 2), TRAY.wallHeight / 2, 0);
     // Felt-lined channels, each a half-pipe the chips lie in; ridges between them.
-    const liner = this.track(new THREE.MeshStandardMaterial({ color: vip ? '#2a0a10' : '#17171a', roughness: 1, side: THREE.DoubleSide }));
+    const liner = this.track(new THREE.MeshStandardMaterial({ color: this.design.rackLiner, roughness: 1, side: THREE.DoubleSide }));
     const radius = TRAY.channelPitch / 2;
     const chipY = TRAY.floor + TRAY.chipScale * CHIP_RADIUS - TRAY.sink;
     for (let c = 0; c < TRAY.channels; c++) {
@@ -595,9 +606,9 @@ export class TableScene {
       add(pipe, liner, x, chipY, 0).castShadow = false;
       if (c > 0) add(new RoundedBoxGeometry(0.014, TRAY.ridgeHeight, TRAY.innerDepth, 2, 0.006), wood, x - TRAY.channelPitch / 2, TRAY.ridgeHeight / 2, 0);
     }
-    if (vip) {
-      // A gold rim along the walls' tops.
-      const gold = this.gold();
+    if (trimmed) {
+      // A metal rim along the walls' tops.
+      const gold = this.metal();
       add(new THREE.BoxGeometry(w, 0.008, endWall + 0.004), gold, 0, TRAY.wallHeight + 0.004, d / 2 - endWall / 2);
       add(new THREE.BoxGeometry(w, 0.008, endWall + 0.004), gold, 0, front + 0.004, -d / 2 + endWall / 2);
       for (const sx of [-1, 1]) add(new THREE.BoxGeometry(sideWall + 0.004, 0.008, d), gold, sx * (w / 2 - sideWall / 2), TRAY.wallHeight + 0.004, 0);
@@ -653,7 +664,7 @@ export class TableScene {
     if (this.chairKit) return this.chairKit;
     const seatY = FLOOR_Y + 0.95;
     const at = (x: number, y: number, z: number, tilt = 0): THREE.Matrix4 => new THREE.Matrix4().makeRotationX(tilt).premultiply(new THREE.Matrix4().makeTranslation(x, y, z));
-    if (this.theme === 'vip') {
+    if (this.design.chairs.style === 'velvet') {
       const velvet = this.track(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.72 }));
       const arm = this.track(new RoundedBoxGeometry(0.12, 0.16, 0.6, 3, 0.05));
       this.chairKit = {
@@ -662,9 +673,9 @@ export class TableScene {
           [this.track(new RoundedBoxGeometry(0.74, 0.95, 0.16, 3, 0.07)), velvet, true],
           [arm, velvet, true],
           [arm, velvet, true],
-          [this.track(new RoundedBoxGeometry(0.78, 0.05, 0.19, 2, 0.02)), this.gold(), false],
-          [this.track(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 12)), this.gold(), false],
-          [this.track(new THREE.CylinderGeometry(0.32, 0.34, 0.05, 24)), this.gold(), false],
+          [this.track(new RoundedBoxGeometry(0.78, 0.05, 0.19, 2, 0.02)), this.metal(), false],
+          [this.track(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 12)), this.metal(), false],
+          [this.track(new THREE.CylinderGeometry(0.32, 0.34, 0.05, 24)), this.metal(), false],
         ],
         local: [
           at(0, seatY, 0),
@@ -680,7 +691,8 @@ export class TableScene {
       return this.chairKit;
     }
     const leather = this.track(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.42 }));
-    const chrome = this.track(new THREE.MeshStandardMaterial({ color: '#b9bcc2', roughness: 0.25, metalness: 0.9 }));
+    // On the design's trim metal where it has one (brass, chrome), plain chrome otherwise.
+    const chrome = this.design.trim ? this.metal() : this.track(new THREE.MeshStandardMaterial({ color: '#b9bcc2', roughness: 0.25, metalness: 0.9 }));
     this.chairKit = {
       parts: [
         [this.track(new RoundedBoxGeometry(0.66, 0.16, 0.6, 3, 0.07)), leather, true],
@@ -717,10 +729,9 @@ export class TableScene {
   }
 
   private tintChairs(): void {
-    const vip = this.theme === 'vip';
-    const occupied = new THREE.Color(vip ? '#2a1a1e' : '#4a1018');
-    const empty = new THREE.Color(vip ? '#3e2a30' : '#7a1c2c');
-    const hover = new THREE.Color(vip ? '#9a7434' : '#c4485c');
+    const occupied = new THREE.Color(this.design.chairs.occupied);
+    const empty = new THREE.Color(this.design.chairs.empty);
+    const hover = new THREE.Color(this.design.chairs.hover);
     const parts = this.upholstery();
     this.placements.forEach((p, i) => {
       const c = p.seatId === this.hoverSeat && !this.occupied.has(p.seatId) ? hover : this.occupied.has(p.seatId) ? occupied : empty;

@@ -260,7 +260,7 @@ export default function TableScene3D({
   };
 
   return (
-    <div ref={wrapRef} className={`table3d table3d--${mode}`} data-testid="table-3d" data-tier={tier} data-mode={mode}>
+    <div ref={wrapRef} className={`table3d table3d--${mode}`} data-testid="table-3d" data-tier={tier} data-mode={mode} data-theme={theme}>
       <div className="table3d-vignette" aria-hidden="true" />
       {mode === 'seated' && lookAway && (
         <button type="button" className="table3d-recenter" aria-label="Center view" onClick={() => scene?.recenterLook()}>

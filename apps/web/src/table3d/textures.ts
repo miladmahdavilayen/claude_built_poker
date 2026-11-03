@@ -124,20 +124,35 @@ export function feltTextures(size: number, color: FeltColor = CLASSIC_FELT): Fel
   return { map: finish(c, true, 6), normalMap: finish(nc, false, 6) };
 }
 
+/** A polished wood's colours: the base (dark, mid, light bands) and its grain's dark and light lines (r,g,b). */
+export interface WoodPalette {
+  base: readonly [string, string, string];
+  grain: readonly [string, string];
+}
+
+/** Warm brown oak: the classic table's racetrack and apron. */
+export const OAK: WoodPalette = { base: ['#5a2e14', '#6e3a1a', '#4e2610'], grain: ['30,12,4', '140,80,40'] };
+/** Deep red mahogany. */
+export const MAHOGANY: WoodPalette = { base: ['#4a1a10', '#5e2416', '#3c140c'], grain: ['24,6,2', '150,70,40'] };
+/** Dark walnut, a cool brown. */
+export const WALNUT: WoodPalette = { base: ['#3a2418', '#4a3020', '#2e1c12'], grain: ['14,8,4', '120,90,60'] };
+/** Pale, weathered oak — a saloon's. */
+export const PALE_OAK: WoodPalette = { base: ['#9a7046', '#b08454', '#8a6238'], grain: ['70,40,16', '220,190,140'] };
+
 /** Polished wood for the table's edge and apron: long grain lines over a warm base. */
-export function woodTexture(size: number): THREE.CanvasTexture {
+export function woodTexture(size: number, palette: WoodPalette = OAK): THREE.CanvasTexture {
   const rand = seeded(42);
   const n = Math.min(512, size);
   const [c, ctx] = canvas(n, n);
   const grad = ctx.createLinearGradient(0, 0, 0, n);
-  grad.addColorStop(0, '#5a2e14');
-  grad.addColorStop(0.5, '#6e3a1a');
-  grad.addColorStop(1, '#4e2610');
+  grad.addColorStop(0, palette.base[0]);
+  grad.addColorStop(0.5, palette.base[1]);
+  grad.addColorStop(1, palette.base[2]);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, n, n);
   for (let i = 0; i < 140; i++) {
     const y = rand() * n;
-    ctx.strokeStyle = `rgba(${rand() < 0.5 ? '30,12,4' : '140,80,40'},${String(0.08 + rand() * 0.16)})`;
+    ctx.strokeStyle = `rgba(${rand() < 0.5 ? palette.grain[0] : palette.grain[1]},${String(0.08 + rand() * 0.16)})`;
     ctx.lineWidth = 0.6 + rand() * 2.2;
     ctx.beginPath();
     ctx.moveTo(0, y);
@@ -147,12 +162,12 @@ export function woodTexture(size: number): THREE.CanvasTexture {
   return finish(c, true, 2);
 }
 
-/** The rail's padded leather: dark, with a soft pebbled sheen. */
-export function leatherTexture(size: number): THREE.CanvasTexture {
+/** The rail's padded leather: dark (or any colour), with a soft pebbled sheen. */
+export function leatherTexture(size: number, color = '#1b1210'): THREE.CanvasTexture {
   const rand = seeded(7);
   const n = Math.min(256, size);
   const [c, ctx] = canvas(n, n);
-  ctx.fillStyle = '#1b1210';
+  ctx.fillStyle = color;
   ctx.fillRect(0, 0, n, n);
   for (let i = 0; i < 1800; i++) {
     ctx.fillStyle = `rgba(255,235,210,${String(rand() * 0.05)})`;
@@ -163,12 +178,12 @@ export function leatherTexture(size: number): THREE.CanvasTexture {
   return finish(c, true, 8);
 }
 
-/** The VIP rail's quilted leather: black, diamond-tufted, a button at every crossing. */
-export function quiltedLeatherTexture(size: number): THREE.CanvasTexture {
+/** A quilted leather rail: diamond-tufted, a metal button at every crossing — black with brass, or any colours. */
+export function quiltedLeatherTexture(size: number, color = '#141011', button = '#b08a3e'): THREE.CanvasTexture {
   const rand = seeded(11);
   const n = Math.min(256, size);
   const [c, ctx] = canvas(n, n);
-  ctx.fillStyle = '#141011';
+  ctx.fillStyle = color;
   ctx.fillRect(0, 0, n, n);
   // Each diamond's puffed middle catches the light; its seams sink into shadow.
   const cell = n / 2;
@@ -196,7 +211,7 @@ export function quiltedLeatherTexture(size: number): THREE.CanvasTexture {
   // Brass buttons where the seams cross.
   for (let y = 0; y <= n; y += cell / 2) {
     for (let x = (y / (cell / 2)) % 2 ? cell / 2 : 0; x <= n; x += cell) {
-      ctx.fillStyle = '#b08a3e';
+      ctx.fillStyle = button;
       ctx.beginPath();
       ctx.arc(x, y, 2.4, 0, Math.PI * 2);
       ctx.fill();
@@ -209,16 +224,16 @@ export function quiltedLeatherTexture(size: number): THREE.CanvasTexture {
   return finish(c, true, 3);
 }
 
-/** Dark ebony with a fine, glossy grain: the VIP table's racetrack and apron. */
-export function ebonyTexture(size: number): THREE.CanvasTexture {
+/** Dark ebony (or any dark lacquer) with a fine, glossy grain: the VIP table's racetrack and apron. */
+export function ebonyTexture(size: number, color = '#1a0f0b', grain = '120,70,40'): THREE.CanvasTexture {
   const rand = seeded(99);
   const n = Math.min(512, size);
   const [c, ctx] = canvas(n, n);
-  ctx.fillStyle = '#1a0f0b';
+  ctx.fillStyle = color;
   ctx.fillRect(0, 0, n, n);
   for (let i = 0; i < 220; i++) {
     const y = rand() * n;
-    ctx.strokeStyle = `rgba(${rand() < 0.6 ? '0,0,0' : '120,70,40'},${String(0.1 + rand() * 0.2)})`;
+    ctx.strokeStyle = `rgba(${rand() < 0.6 ? '0,0,0' : grain},${String(0.1 + rand() * 0.2)})`;
     ctx.lineWidth = 0.5 + rand() * 1.6;
     ctx.beginPath();
     ctx.moveTo(0, y);

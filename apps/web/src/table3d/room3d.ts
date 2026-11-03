@@ -40,12 +40,13 @@ export class CasinoRoom {
   private readonly movers: Mover[] = [];
   private readonly disposables: { dispose: () => void }[] = [];
 
-  constructor(rich: boolean, vip = false) {
+  /** `feltColor`: the other tables' felt — the same colour as this one's, so the room matches. */
+  constructor(rich: boolean, vip = false, feltColor = vip ? '#5a0f1c' : '#0f5a36') {
     const track = <T extends { dispose: () => void }>(x: T): T => {
       this.disposables.push(x);
       return x;
     };
-    const felt = track(new THREE.MeshLambertMaterial({ color: vip ? '#5a0f1c' : '#0f5a36' }));
+    const felt = track(new THREE.MeshLambertMaterial({ color: feltColor }));
     const wood = track(new THREE.MeshLambertMaterial({ color: '#3a1f12' }));
     const darkWood = track(new THREE.MeshLambertMaterial({ color: '#1e110a' }));
     const glow = track(new THREE.MeshBasicMaterial({ color: '#ffd9a0' }));

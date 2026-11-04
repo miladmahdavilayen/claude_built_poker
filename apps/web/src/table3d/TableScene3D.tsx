@@ -7,6 +7,7 @@ import { ActionTicker, describeTableAction, type ActionKind } from '../component
 import type { SeatPosition } from '../seatLayout.js';
 import type { QualityTier, TableTheme, View3dMode } from './quality.js';
 import { TableScene, type SceneSnapshot, type ScreenLayout } from './scene.js';
+import { CardEye } from '../components/CardEye.js';
 import { PlayingCard } from '../components/PlayingCard.js';
 
 /** What the split-pot announcement drives on the 3D table (see SplitPotAnnouncement.tsx). */
@@ -38,6 +39,10 @@ export interface TableScene3DProps {
   onOwnCards?: ((landed: boolean) => void) | undefined;
   /** How many community cards are down and face up on the felt — the page holds your action buttons until all are. */
   onBoardShown?: ((count: number) => void) | undefined;
+  /** Heads-up: the eye under each of your cards shows it to the table (LiveTable.showCard); undefined when it can't. */
+  onShowCard?: ((index: 0 | 1) => void) | undefined;
+  /** Cards just shown ("seat:index"): yours turn over on the felt again, for you too. */
+  justShown?: ReadonlySet<string> | undefined;
   /** A pinch/scroll or button asked for the other 3D view (standing for the whole table, seated to sit back down). */
   onRequestMode: (mode: View3dMode) => void;
   /** WebGL wouldn't start: fall back to the 2D table. */
@@ -80,6 +85,8 @@ export default function TableScene3D({
   onRequestMode,
   onOwnCards,
   onBoardShown,
+  onShowCard,
+  justShown,
   dealerModel,
   theme,
   onDealerDoubleTap,
@@ -99,6 +106,7 @@ export default function TableScene3D({
   const [lookAway, setLookAway] = useState(false);
   // Seated, turned away from your own cards on the felt: they're shown to you here instead (see below).
   const [ownCardsInView, setOwnCardsInView] = useState(true);
+  const [ownLanded, setOwnLanded] = useState(false);
   const [boardShown, setBoardShown] = useState(0);
   // Each player's latest action (and a counter, so the same action twice still flashes) — for the edge markers.
   const [lastActs, setLastActs] = useState<Map<number, { text: string; kind: ActionKind; n: number }>>(new Map());
@@ -154,7 +162,10 @@ export default function TableScene3D({
           setBoardShown(count);
           cbRef.current.onBoardShown?.(count);
         },
-        onOwnCards: (landed) => cbRef.current.onOwnCards?.(landed),
+        onOwnCards: (landed) => {
+          setOwnLanded(landed);
+          cbRef.current.onOwnCards?.(landed);
+        },
         onOwnCardsInView: setOwnCardsInView,
         onDealerDoubleTap: () => cbRef.current.onDealerDoubleTap?.(),
         onRequestMode: (m) => cbRef.current.onRequestMode(m),
@@ -207,6 +218,14 @@ export default function TableScene3D({
     scene?.setSeatVideos(seatVideos);
   }, [scene, videoKey]);
 
+  // Your own card, shown: it's face up for you already, so it turns over again on the felt — the same flip the others see.
+  const justShownKey = [...(justShown ?? [])].join(',');
+  useEffect(() => {
+    if (!scene || state.viewerSeatId === null) return;
+    for (const i of [0, 1]) if (justShown?.has(`${String(state.viewerSeatId)}:${String(i)}`)) scene.flipOwnCard(i);
+    // Only when a new card is shown.
+  }, [scene, justShownKey]);
+
   const seatIds = useMemo(
     () => state.seats.map((s) => s.seatId).filter((id) => !state.removedSeatIds.includes(id)),
     [state.seats, state.removedSeatIds],
@@ -235,7 +254,8 @@ export default function TableScene3D({
           seatId: s.seatId,
           occupied: s.status !== 'empty',
           inHand: handEverDealt && state.phase !== 'waiting' && (s.status === 'active' || s.status === 'all-in') && (dealt === null || dealt.has(s.seatId)),
-          faces: s.holeCards,
+          // Their own, a hand shown down — or just the card(s) shown mid-hand, the other still face down.
+          faces: s.holeCards.length > 0 ? s.holeCards : [0, 1].map((i) => s.shownCards.find((c) => c.index === i)?.card ?? null),
           bet: s.committedThisStreet,
           hue: avatarHue(s.avatarSeed ?? s.displayName ?? 'x'),
           seed: stableNumber(s.playerId ?? s.displayName ?? String(s.seatId)),
@@ -333,6 +353,15 @@ export default function TableScene3D({
                     <span className="seat-edge-name">{s.displayName ?? `Seat ${String(s.seatId + 1)}`}</span>
                     <span className="seat-edge-stack">{formatChips(s.stack)}</span>
                     {s.committedThisStreet > 0 && <span className="seat-edge-bet">bet {formatChips(s.committedThisStreet)}</span>}
+                    {/* A card they've shown mid-hand, readable even with them out of view. */}
+                    {s.shownCards.length > 0 && (
+                      <span className="seat-edge-cards" data-testid="edge-shown-cards">
+                        {[0, 1].map((i) => {
+                          const c = s.shownCards.find((x) => x.index === i)?.card ?? null;
+                          return <PlayingCard key={`${c ?? 'back'}-${String(i)}`} card={c} faceDown={!c} justRevealed={!!justShown?.has(`${String(s.seatId)}:${String(i)}`)} />;
+                        })}
+                      </span>
+                    )}
                     {act && (
                       <span key={act.n} className={`seat-edge-act action-ticker-line--${act.kind}`}>
                         {act.text}
@@ -351,11 +380,27 @@ export default function TableScene3D({
               return (
                 <div ref={overlayRef('ownhand')} className="own-hand-hud" data-testid="own-hand-hud" aria-label="Your hand">
                   {me.holeCards.map((c, i) => (
-                    <PlayingCard key={`${c}-${String(i)}`} card={c} />
+                    <div key={`${c}-${String(i)}`} className="card-with-eye">
+                      <PlayingCard card={c} justRevealed={!!justShown?.has(`${String(me.seatId)}:${String(i)}`)} />
+                      {onShowCard && <CardEye index={i} shown={me.shownCards.some((s) => s.index === i)} onShow={() => onShowCard(i as 0 | 1)} />}
+                    </div>
                   ))}
                 </div>
               );
             })()}
+          {/* Heads-up: the eye at the bottom of each of your cards on the felt (the scene keeps it there). */}
+          {onShowCard &&
+            ownLanded &&
+            ownCardsInView &&
+            ([0, 1] as const).map((i) => (
+              <div key={i} ref={overlayRef(`eye:${String(i)}`)} className="card-eye-3d">
+                <CardEye
+                  index={i}
+                  shown={!!state.seats.find((s) => s.seatId === state.viewerSeatId)?.shownCards.some((s) => s.index === i)}
+                  onShow={() => onShowCard(i)}
+                />
+              </div>
+            ))}
           {/* The board for screen readers (and tests): it's drawn in 3D. */}
           <div className="sr-only" data-testid="board-3d">
             Board: {state.board.length > 0 ? state.board.join(' ') : 'none yet'}

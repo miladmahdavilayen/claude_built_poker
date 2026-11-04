@@ -50,6 +50,7 @@ import { useTableLayout } from '../useTableLayout.js';
 import { fakeCameraStream } from '../devFakeCamera.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
+import { useJustShownCards } from '../useJustShownCards.js';
 import { useJustRevealedSeats } from '../useJustRevealedSeats.js';
 import { useNoTableSelection } from '../useNoTableSelection.js';
 import { useSocket } from '../useSocket.js';
@@ -463,6 +464,7 @@ export function TablePage(): React.JSX.Element {
   // Same hook-ordering constraint as `positions`/`humanCameraSeats` above —
   // sock.state can be null pre-connect.
   const justRevealedSeats = useJustRevealedSeats(sock.latestEvents, sock.state?.board ?? []);
+  const justShownCards = useJustShownCards(sock.state?.seats ?? [], sock.state?.handId ?? null);
 
   // The owner's per-seat menu: double-tap a player's seat (hold an empty one — a single tap there
   // already offers its options), or right-click either.
@@ -842,6 +844,11 @@ export function TablePage(): React.JSX.Element {
   };
 
   /** A seat's box — placed by % on the 2D table, or anchored in 3D by the scene (`ref`). */
+  /** Heads-up: the eye under a card shows it to the table — yours, while you're still in the hand; undefined otherwise. */
+  const mineInHand = mySeat && (mySeat.status === 'active' || mySeat.status === 'all-in') && mySeat.holeCards.length === 2;
+  const showCard = state.canShowCards && mineInHand && state.handId ? (i: 0 | 1) => sock.showCard(state.handId!, i) : undefined;
+  const shownIndices = (seatId: number): ReadonlySet<number> => new Set([0, 1].filter((i) => justShownCards.has(`${String(seatId)}:${String(i)}`)));
+
   const seatSlot = (
     seatId: number,
     place: {
@@ -876,6 +883,8 @@ export function TablePage(): React.JSX.Element {
           positionLabel={handEverDealt ? positionLabels.get(seatId) : undefined}
           showCards={handEverDealt}
           justRevealed={justRevealedSeats.has(seatId)}
+          justShown={shownIndices(seatId)}
+          onShowCard={!is3d && seatId === state.viewerSeatId ? showCard : undefined}
           voice={voiceStreamForSeat(seat)}
           // On the 3D table the others' cameras are screens in the scene itself (seatVideos below); the box keeps only your own.
           showVideo={canSeeVideo && (is3d ? eyes3d && seatId === state.viewerSeatId : !hiddenCameraSeatIds.has(String(seatId)))}
@@ -1153,6 +1162,8 @@ export function TablePage(): React.JSX.Element {
               onPerf={view.reportFrameTime}
               onRequestMode={view.setChoice}
               onOwnCards={onOwnCards}
+              onShowCard={showCard}
+              justShown={justShownCards}
               onBoardShown={onBoardShown}
               dealerModel={dealerModelUrl(dealerCharacters, state.settings.houseDealer)}
               theme={tableTheme(dealerCharacters, state.settings)}

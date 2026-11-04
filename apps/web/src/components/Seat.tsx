@@ -1,8 +1,10 @@
+import type { Card } from '@pokerclause/engine';
 import type { ProjectedSeat } from '@pokerclause/shared';
 import { useEffect, useRef, useState } from 'react';
 import { TIMINGS } from '../animationTimings.js';
 import { avatarHue } from '../avatarColor.js';
 import { formatChips } from '../chips.js';
+import { CardEye } from './CardEye.js';
 import { PlayingCard } from './PlayingCard.js';
 import { StreamMedia } from './StreamMedia.js';
 
@@ -86,12 +88,18 @@ export function Seat({
   peerMute,
   shownCardsBelow = false,
   shownAlign = 'center',
+  onShowCard,
+  justShown,
 }: {
   seat: ProjectedSeat;
   /** On a camera box along the felt's top edge (2D), a hand shown down goes below the box rather than off the top. */
   shownCardsBelow?: boolean | undefined;
   /** Which way a hand shown down grows (2D): toward the middle of the table, so it stays on screen. */
   shownAlign?: 'left' | 'center' | 'right' | undefined;
+  /** Heads-up, your own seat on the 2D table: the eye under each card shows it to the table (LiveTable.showCard). */
+  onShowCard?: ((index: 0 | 1) => void) | undefined;
+  /** Which of this seat's cards were just shown: they play the flip. */
+  justShown?: ReadonlySet<number> | undefined;
   isButton: boolean;
   isActing: boolean;
   isViewer: boolean;
@@ -188,6 +196,11 @@ export function Seat({
     );
   }
 
+  // A card's face for this viewer: their own, a hand shown down, or one shown mid-hand — else face down.
+  const faceOf = (i: number): Card | null => seat.holeCards[i] ?? seat.shownCards.find((c) => c.index === i)?.card ?? null;
+  const flips = (i: number): boolean => justRevealed || !!justShown?.has(i);
+  const anyFaceUp = seat.holeCards.length > 0 || seat.shownCards.length > 0;
+
   if (compact) {
     const hasCam = !!voice?.stream.getVideoTracks().length && showVideo;
     return (
@@ -203,11 +216,12 @@ export function Seat({
         )}
         {voice && !hasCam && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} showVideo={false} />}
         {/* A hand shown down: the cards, big, over their head — what everyone at the table wants to see. */}
-        {!isViewer && seat.holeCards.length > 0 && (
+        {!isViewer && anyFaceUp && (
           <div className="seat-compact-cards" data-testid="showdown-cards">
-            {seat.holeCards.map((c, i) => (
-              <PlayingCard key={`${c}-${String(i)}`} card={c} justRevealed={justRevealed} winning={!!winningCards?.has(c)} />
-            ))}
+            {[0, 1].map((i) => {
+              const c = faceOf(i);
+              return <PlayingCard key={`${c ?? 'back'}-${String(i)}`} card={c} faceDown={!c} justRevealed={flips(i)} winning={!!c && !!winningCards?.has(c)} />;
+            })}
           </div>
         )}
         {ownMark && (
@@ -232,8 +246,18 @@ export function Seat({
   const inVoiceCall = !!voice;
   const holeCards = showCards && !(isViewer && hideOwnCards) ? (
     <>
-      <PlayingCard card={seat.holeCards[0] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} winning={!!seat.holeCards[0] && !!winningCards?.has(seat.holeCards[0])} />
-      <PlayingCard card={seat.holeCards[1] ?? null} faceDown={seat.holeCards.length === 0} justRevealed={justRevealed} winning={!!seat.holeCards[1] && !!winningCards?.has(seat.holeCards[1])} />
+      {([0, 1] as const).map((i) => {
+        const c = faceOf(i);
+        const card = <PlayingCard key={i} card={c} faceDown={!c} justRevealed={flips(i)} winning={!!c && !!winningCards?.has(c)} />;
+        return onShowCard ? (
+          <div key={i} className="card-with-eye">
+            {card}
+            <CardEye index={i} shown={seat.shownCards.some((s) => s.index === i)} onShow={() => onShowCard(i)} />
+          </div>
+        ) : (
+          card
+        );
+      })}
     </>
   ) : null;
   // The video overlay never shows a face-down card-back placeholder for
@@ -245,7 +269,7 @@ export function Seat({
   // just because a hand is in progress — so this only ever shows real
   // cards, at the moment they actually become real. The non-video
   // `.seat-cards` row below (a seat with no camera on) is untouched.
-  const showHoleCardsOnVideo = holeCards !== null && seat.holeCards.length > 0;
+  const showHoleCardsOnVideo = holeCards !== null && anyFaceUp;
   const nameRow = (
     <div className="seat-name">
       <span
@@ -325,7 +349,7 @@ export function Seat({
       {!showSeatVideo && (
         <>
           {holeCards &&
-            (!isViewer && seat.holeCards.length > 0 ? (
+            (!isViewer && anyFaceUp ? (
               // A hand shown down: readable, over the room the seat keeps for its cards (see .seat-cards-zoom).
               <div className="seat-cards seat-cards--shown" data-align={shownAlign} data-near-top={shownCardsBelow || undefined}>
                 <div className="seat-cards-zoom">{holeCards}</div>

@@ -3101,3 +3101,23 @@ about ten.
   more. The owner picks from "Table and dealer" in the menu (or a double-tap
   on the dealer), as a gallery with a swatch of each; everyone at the table
   sees the change, and a guest has no picker.
+
+## Showing a card, heads-up
+
+- Whenever only two players are left in the hand in progress — dealt heads-up,
+  or once the rest have folded — each has a small eye at the bottom of each of
+  their cards. A tap shows that card to the table, one then maybe the other,
+  any time in the hand, and there's no taking it back (the eye stays lit).
+  `LiveTable.showCard` changes nothing in the game itself — no action, turn or
+  clock. Other viewers' projections carry only the shown card's face
+  (`seat.shownCards`), never its partner; `holeCards` stays empty for them.
+- Kept apart from `revealedSeatIds`: a shown card isn't a showdown, so a
+  fold-winner who showed one still gets the Reveal Hand / Show Bluff button.
+- It turns over for everyone: lifted, with a little overshoot and a gold glow
+  in 2D and the overlays, turned over on the felt in 3D — your own too, though
+  it's face up for you already. That replay doesn't count as your cards not
+  having landed, so your action buttons stay put.
+- 3D: the scene keeps the eye on the card on the felt, just under it where the
+  card's small on screen; turned away, the eyes are on the hand display. The
+  other player sees it over your head and on your edge marker when you're out
+  of view.

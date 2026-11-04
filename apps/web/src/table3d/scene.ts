@@ -953,6 +953,11 @@ export class TableScene {
 
   /** Which character deals (a model file under public/models/dealers), or null for the built-in one. */
   /** The other players' cameras (seat → stream): each worn as a screen on their head (see players3d.ts). */
+  /** Your own card, as you show it: it turns over on the felt (see Cards3d.flipAgain). */
+  flipOwnCard(index: number): void {
+    if (this.viewerSeatId !== null) this.cards.flipAgain(`hole:${String(this.viewerSeatId)}:${String(index)}`);
+  }
+
   setSeatVideos(videos: ReadonlyMap<number, MediaStream>): void {
     this.players.setVideos(videos);
     this.layoutDirty = true;
@@ -1385,6 +1390,7 @@ export class TableScene {
     const mine = this.viewerSeatId !== null && this.cards.ownLanded(this.viewerSeatId);
     if (mine !== this.ownLandedNow) {
       this.ownLandedNow = mine;
+      this.layoutDirty = true;
       this.cb.onOwnCards?.(mine);
     }
     const inView = this.ownCardsOnScreen();
@@ -1542,6 +1548,31 @@ export class TableScene {
       const y = ownBox.y - ownBox.h / 2 - 8 - ownHand.h / 2;
       this.place(ownHand.el, `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`);
       controls.push({ x0: x - ownHand.w / 2, x1: x + ownHand.w / 2, y0: y - ownHand.h / 2, y1: y + ownHand.h / 2 });
+    }
+    // Heads-up: the eye at the bottom of each of your cards — wherever that is on screen right now, clear of your box.
+    for (const i of [0, 1]) {
+      const eye = this.overlays.get(`eye:${String(i)}`);
+      if (!eye) continue;
+      const corners = this.viewerSeatId === null ? null : this.cards.corners(`hole:${String(this.viewerSeatId)}:${String(i)}`);
+      const pts = corners?.map((c) => this.project(c.x, c.y, c.z));
+      if (!pts || pts.some((p) => p.behind)) {
+        this.place(eye.el, null);
+        continue;
+      }
+      const low = [...pts].sort((a, b) => b.y - a.y).slice(0, 2);
+      const cx = pts.reduce((s, p) => s + p.x, 0) / 4;
+      const cy = pts.reduce((s, p) => s + p.y, 0) / 4;
+      const bx = (low[0]!.x + low[1]!.x) / 2;
+      const by = (low[0]!.y + low[1]!.y) / 2;
+      // A little in from the card's bottom edge, on the card itself — just under it where the card's too small
+      // on screen to hold it (standing, the table seen from afar) without covering what it shows.
+      const len = Math.hypot(cx - bx, cy - by) || 1;
+      const inset = len * 2 >= 70 ? 16 : -14;
+      const x = bx + ((cx - bx) / len) * inset;
+      let y = by + ((cy - by) / len) * inset;
+      if (ownBox) y = Math.min(y, ownBox.y - ownBox.h / 2 - eye.h / 2 - 2);
+      if (x < 0 || x > this.width || y < 0 || y > this.height) this.place(eye.el, null);
+      else this.place(eye.el, `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`);
     }
     const fixed = eyes ? [...controls] : [board, ...controls];
     const margin = 4;

@@ -165,3 +165,47 @@ test('standing, or not yet seated, the 3D table shows no cameras — voices only
   await takeSeat(page, 0, 200);
   await expect.poll(async () => (await boxes()).map((b) => b.seatId), { timeout: 15_000 }).toContain(3);
 });
+
+// A camera screen comes down over the felt when no cards are in its way: nothing on the table may draw over it — the
+// felt's printed line once did, being transparent, and three.js draws transparent things after every opaque one.
+test('nothing on the table draws over a camera screen — on every table design', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem('pokerclause.tableQuality', 'low');
+    localStorage.setItem('pokerclause.tableView', 'seated');
+  });
+  await adminLogin(page);
+  await createTable(page, { name: 'Over The Felt', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await takeSeat(page, 0, 200);
+  await addBot(page, 3, 'test-cam-ava', 200);
+  type Mesh = { name: string; renderOrder: number; material?: { transparent: boolean } };
+  type Scene3d = { scene: { traverse: (f: (o: Mesh) => void) => void }; debugState: () => { faceBoxes: unknown[] } };
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __scene3d?: Scene3d }).__scene3d?.debugState().faceBoxes.length ?? 0), { timeout: 20_000 }).toBeGreaterThan(0);
+  const check = (): Promise<{ n: number; allTransparent: boolean; lowest: number; topOther: number }> =>
+    page.evaluate(() => {
+      const screens: Mesh[] = [];
+      let topOther = 0;
+      (window as unknown as { __scene3d: Scene3d }).__scene3d.scene.traverse((o) => {
+        if (o.name === 'face-screen') screens.push(o);
+        else if (o.material?.transparent) topOther = Math.max(topOther, o.renderOrder);
+      });
+      return { n: screens.length, allTransparent: screens.every((s) => s.material?.transparent), lowest: Math.min(...screens.map((s) => s.renderOrder)), topOther };
+    });
+  for (const id of ['classic', 'vip', 'emerald', 'midnight', 'onyx', 'imperial', 'saloon']) {
+    await (await openTableMenu(page)).getByRole('button', { name: 'Table and dealer' }).click();
+    await page.waitForTimeout(500);
+    const picker = page.getByRole('dialog', { name: 'Choose the house dealer' });
+    await picker.getByTestId(`table-design-${id}`).click();
+    await picker.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByTestId('table-3d')).toHaveAttribute('data-theme', id, { timeout: 10_000 });
+    // The new scene's screen is up and sized.
+    await expect.poll(async () => (await check()).n, { timeout: 15_000, message: id }).toBe(2);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __scene3d?: Scene3d }).__scene3d?.debugState().faceBoxes.length ?? 0), { timeout: 15_000, message: id }).toBeGreaterThan(0);
+    const c = await check();
+    expect(c.allTransparent, id).toBe(true);
+    expect(c.lowest, id).toBeGreaterThan(c.topOther);
+    await page.waitForTimeout(1500);
+    if (process.env.DESIGN_SHOTS) await page.screenshot({ path: `${process.env.DESIGN_SHOTS}/${id}.png` });
+  }
+});

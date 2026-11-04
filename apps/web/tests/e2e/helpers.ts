@@ -188,7 +188,8 @@ export async function inviteToSeat(ownerPage: Page, targetPage: Page, seatId: nu
   await ownerPage.getByRole('button', { name: 'Done' }).click();
 
   await targetPage.goto(link);
-  await expect(targetPage.locator(`[data-testid="seat-${String(seatId)}"]`)).toHaveAttribute('data-seat-status', 'active', { timeout: 10_000 });
+  // The link carries the owner's view: on a 3D owner's table, a second software-drawn 3D table is coming up, slow late in the suite.
+  await expect(targetPage.locator(`[data-testid="seat-${String(seatId)}"]`)).toHaveAttribute('data-seat-status', 'active', { timeout: 40_000 });
 }
 
 /**

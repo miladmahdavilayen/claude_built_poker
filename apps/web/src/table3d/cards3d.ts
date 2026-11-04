@@ -47,7 +47,8 @@ interface Card {
   face: string | null;
   /** 1 face up, 0 face down — animated between by `flip`. */
   up: number;
-  flip: { start: number; from: number; to: number } | null;
+  /** `replay`: a card already known and in place, turned over again for show — nothing waits on it. */
+  flip: { start: number; from: number; to: number; replay?: boolean } | null;
   flight: Flight | null;
   /** Hidden until its flight is launched (it's still in the deck). */
   waiting: boolean;
@@ -148,9 +149,32 @@ export class Cards3d {
   ownLanded(seatId: number): boolean {
     for (const i of [0, 1]) {
       const c = this.cards.get(`hole:${String(seatId)}:${String(i)}`);
-      if (!c || c.waiting || c.flight || c.flip) return false;
+      if (!c || c.waiting || c.flight || (c.flip && !c.flip.replay)) return false;
     }
     return true;
+  }
+
+  /** Turns a card lying face up over again (your own, as you show it to the table). */
+  flipAgain(key: string): void {
+    const c = this.cards.get(key);
+    if (!c || c.waiting || c.flight || c.flip || this.reduceMotion) return;
+    c.flip = { start: performance.now(), from: 0, to: 1, replay: true };
+  }
+
+  /** The four corners of a card lying on the felt, in the world — or null if it isn't there. */
+  corners(key: string): { x: number; y: number; z: number }[] | null {
+    const c = this.cards.get(key);
+    if (!c || c.waiting) return null;
+    const s = this.scaleOf(c);
+    const cos = Math.cos(c.yaw);
+    const sin = Math.sin(c.yaw);
+    return [-1, 1].flatMap((sx) =>
+      [-1, 1].map((sz) => {
+        const lx = (sx * CARD_W * s) / 2;
+        const lz = (sz * CARD_H * s) / 2;
+        return { x: c.pos.x + lx * cos + lz * sin, y: c.pos.y, z: c.pos.z - lx * sin + lz * cos };
+      }),
+    );
   }
 
   has(key: string): boolean {

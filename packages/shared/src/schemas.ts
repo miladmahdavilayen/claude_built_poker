@@ -25,6 +25,15 @@ export const RevealHandSchema = z
   .strict();
 export type RevealHandIntent = z.infer<typeof RevealHandSchema>;
 
+/** Heads-up, mid-hand: showing one of your two cards to the table — see LiveTable.showCard. */
+export const ShowCardSchema = z
+  .object({
+    handId: z.string().min(1),
+    cardIndex: z.union([z.literal(0), z.literal(1)]),
+  })
+  .strict();
+export type ShowCardIntent = z.infer<typeof ShowCardSchema>;
+
 export const PreActionSchema = z
   .object({
     handId: z.string().min(1),

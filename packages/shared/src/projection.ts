@@ -30,6 +30,8 @@ export interface ProjectionContext {
    * showdown-reveal — never populated just because a hand ended by fold).
    */
   revealedSeatIds: ReadonlySet<number>;
+  /** Which of its cards each seat has chosen to show mid-hand, heads-up (LiveTable.showCard): only these faces go to other viewers. */
+  shownCards?: ReadonlyMap<number, ReadonlySet<number>>;
   actionDeadline: number | null;
   /** Epoch ms — a new hand can't start before this (the post-hand shuffle break). */
   nextHandAt: number | null;
@@ -73,6 +75,11 @@ const EMPTY_SEAT_META: SeatMeta = {
  * regardless of what's actually stored; only the table owner's own
  * dedicated broadcast (see `adminRoom` in socketServer.ts) passes `true`.
  */
+/** Exactly two players still in the hand in progress — from the deal, or once the rest have folded. */
+export function headsUpInHand(state: TableState): boolean {
+  return state.phase === 'in-hand' && state.seats.filter((s) => (s.status === 'active' || s.status === 'all-in') && s.holeCards.length === 2).length === 2;
+}
+
 export function projectStateForSeat(
   state: TableState,
   ctx: ProjectionContext,
@@ -90,6 +97,12 @@ export function projectStateForSeat(
       avatarSeed: meta.avatarSeed,
       stack: s.stack,
       holeCards: showRealCards ? s.holeCards : [],
+      shownCards: [...(ctx.shownCards?.get(s.seatId) ?? [])]
+        .sort((a, b) => a - b)
+        .flatMap((index) => {
+          const card = s.holeCards[index];
+          return card ? [{ index, card }] : [];
+        }),
       status: s.status,
       committedThisStreet: s.committedThisStreet,
       committedThisHand: s.committedThisHand,
@@ -149,6 +162,7 @@ export function projectStateForSeat(
     actionDeadline: ctx.actionDeadline,
     nextHandAt: ctx.nextHandAt,
     revealEligibleSeatId: ctx.revealEligibleSeatId,
+    canShowCards: headsUpInHand(state),
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
     removedSeatIds: ctx.removedSeatIds ?? [],

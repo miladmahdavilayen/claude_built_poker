@@ -65,6 +65,12 @@ export interface ProjectedSeat {
   stack: number;
   /** Real cards only for the viewer's own seat, or a seat revealed at showdown; [] otherwise. */
   holeCards: readonly Card[];
+  /**
+   * The cards this seat has chosen to show mid-hand, heads-up (see
+   * LiveTable.showCard), each with which of its two it is — public to every
+   * viewer, one card or both, while `holeCards` stays [] for the others.
+   */
+  shownCards: readonly { index: number; card: Card }[];
   status: SeatStatus;
   committedThisStreet: number;
   committedThisHand: number;
@@ -158,6 +164,8 @@ export interface ProjectedTableState {
    * same value (the seat id itself isn't sensitive, unlike hole cards).
    */
   revealEligibleSeatId: number | null;
+  /** Only two players are left in the hand in progress: each may show either of their cards, any time (LiveTable.showCard). */
+  canShowCards: boolean;
   rakePot: number;
   /**
    * Everyone waiting for a seat, in queue order. Visible to all viewers

@@ -137,9 +137,12 @@ class FaceScreen {
     const frameMat = new THREE.MeshBasicMaterial({ color: 0x10151c, alphaMap: roundedMask(), alphaTest: 0.5 });
     // Drawn over the table, not into it: the scene sizes each screen around everything on the felt
     // (scene.ts's fitFaces), so a big one can come down over the empty felt in front of its player.
+    // Transparent, to be drawn last: three.js draws everything opaque before anything transparent, whatever the
+    // renderOrder — the felt's printed line (transparent) would otherwise paint over an opaque screen.
     for (const m of [screenMat, frameMat]) {
       m.depthTest = false;
       m.depthWrite = false;
+      m.transparent = true;
     }
     const screen = new THREE.Mesh(screenGeo, screenMat);
     const frame = new THREE.Mesh(frameGeo, frameMat);

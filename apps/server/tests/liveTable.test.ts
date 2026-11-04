@@ -557,3 +557,83 @@ describe('LiveTable: voluntary post-fold-win reveal', () => {
     if (!second.ok) expect(second.code).toBe('NOT_ELIGIBLE');
   });
 });
+
+describe('LiveTable: showing a card heads-up, mid-hand', () => {
+  let table: LiveTable;
+  let clock = 0;
+
+  beforeEach(() => {
+    clock = Date.now();
+    table = new LiveTable('table-1', 'Test Table', SETTINGS, new MemoryStore(), {
+      onBroadcast: () => undefined,
+      onChipsSettled: async () => Promise.resolve(),
+      now: () => clock,
+    });
+    table.takeSeat(0, 'user-a', meta('Alice'), 100);
+    table.takeSeat(1, 'user-b', meta('Bob'), 100);
+  });
+
+  const handId = (): string => table.projectionFor(0).handId!;
+
+  it('shows the other player and spectators exactly the card chosen, and never its partner — then the second too', () => {
+    table.startNextHand();
+    expect(table.projectionFor(0).canShowCards).toBe(true);
+    expect(table.showCard(0, handId(), 1)).toEqual({ ok: true });
+    const held = table.state.seats[0]!.holeCards;
+    for (const viewer of [1, null]) {
+      const seat = table.projectionFor(viewer).seats[0]!;
+      expect(seat.holeCards).toEqual([]);
+      expect(seat.shownCards).toEqual([{ index: 1, card: held[1] }]);
+      expect(JSON.stringify(table.projectionFor(viewer))).not.toContain(`"${held[0]!}"`);
+    }
+    expect(table.showCard(0, handId(), 0)).toEqual({ ok: true });
+    expect(table.projectionFor(1).seats[0]!.shownCards).toEqual([
+      { index: 0, card: held[0] },
+      { index: 1, card: held[1] },
+    ]);
+  });
+
+  it('changes nothing in the game: same turn, same bets, and the next hand starts clean', () => {
+    table.startNextHand();
+    const before = table.state;
+    table.showCard(0, handId(), 0);
+    expect(table.state).toBe(before);
+    const acting = table.state.betting.actingSeat!;
+    table.applyPlayerAction(acting, { seatId: acting, type: 'fold' });
+    clock += 60_000;
+    table.startNextHand();
+    expect(table.state.phase).toBe('in-hand');
+    expect(table.projectionFor(1).seats[0]!.shownCards).toEqual([]);
+  });
+
+  it('does not cost a fold-winner their Reveal Hand button', () => {
+    table.startNextHand();
+    const loser = table.state.betting.actingSeat!;
+    const winner = loser === 0 ? 1 : 0;
+    table.showCard(winner, handId(), 0);
+    table.applyPlayerAction(loser, { seatId: loser, type: 'fold' });
+    expect(table.revealEligibleSeatId).toBe(winner);
+    expect(table.revealHand(winner, handId())).toEqual({ ok: true });
+  });
+
+  it('is refused with three still in the hand, allowed once one folds — and never for the one who folded, nor once the hand is over', () => {
+    table.takeSeat(2, 'user-c', meta('Cleo'), 100);
+    table.startNextHand();
+    expect(table.projectionFor(0).canShowCards).toBe(false);
+    const first = table.state.betting.actingSeat!;
+    const refused = table.showCard(first, handId(), 0);
+    expect(refused).toMatchObject({ ok: false, code: 'NOT_HEADS_UP' });
+    table.applyPlayerAction(first, { seatId: first, type: 'fold' });
+    expect(table.projectionFor(0).canShowCards).toBe(true);
+    expect(table.showCard(first, handId(), 0)).toMatchObject({ ok: false, code: 'NOT_IN_HAND' });
+    const next = table.state.betting.actingSeat!;
+    expect(table.showCard(next, handId(), 0)).toEqual({ ok: true });
+    table.applyPlayerAction(next, { seatId: next, type: 'fold' });
+    expect(table.showCard(next, handId(), 1)).toMatchObject({ ok: false, code: 'STALE_HAND' });
+  });
+
+  it('refuses a stale hand id', () => {
+    table.startNextHand();
+    expect(table.showCard(0, 'old-hand', 0)).toMatchObject({ ok: false, code: 'STALE_HAND' });
+  });
+});

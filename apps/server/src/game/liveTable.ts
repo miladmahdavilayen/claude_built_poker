@@ -28,6 +28,7 @@ import {
   type UpdateTableSettingsIntent,
   type SeatOffer,
   type WaitlistEntry,
+  headsUpInHand,
 } from '@pokerclause/shared';
 import { ALL_BOT_POLICIES, TEST_CAMERA_BOTS, projectSeatView, type BotPolicy } from '@pokerclause/sim';
 import type { SeatInviteRecord, Store } from '../db/store.js';
@@ -181,6 +182,8 @@ export class LiveTable {
   state: TableState;
   seats: LiveSeat[];
   private revealedSeatIds = new Set<number>();
+  /** The cards each seat has shown mid-hand, heads-up (see showCard). Apart from `revealedSeatIds`: a shown card isn't a showdown, and doesn't cost a fold-win its reveal. */
+  private shownCards = new Map<number, Set<number>>();
   /**
    * The seat that just won a hand purely because everyone else folded (no
    * `showdown-reveal` happened at all this hand — see computeFoldWinSeatId)
@@ -1072,6 +1075,11 @@ export class LiveTable {
       this.handChipAdds.set(toSeatId, added);
     }
     if (this.revealedSeatIds.delete(fromSeatId)) this.revealedSeatIds.add(toSeatId);
+    const shown = this.shownCards.get(fromSeatId);
+    if (shown) {
+      this.shownCards.delete(fromSeatId);
+      this.shownCards.set(toSeatId, shown);
+    }
   }
 
   /**
@@ -1175,6 +1183,7 @@ export class LiveTable {
     this.handLeavers = new Map();
     this.actionLog = [];
     this.revealedSeatIds = new Set();
+    this.shownCards = new Map();
     this.handStartedAt = new Date();
     this.lastActionAt = this.callbacks.now();
     this.nextHandAt = null;
@@ -1753,6 +1762,33 @@ export class LiveTable {
     return { ok: true };
   }
 
+  /**
+   * Heads-up, any time during the hand: a player still in it shows one of
+   * their two cards to the table, by choice — one, then maybe the other.
+   * There's no taking it back. It changes nothing in the game itself: no
+   * action, no clock, no turn; every viewer's projection simply carries that
+   * card's face from now on (`shownCards`). Separate from a showdown and from
+   * revealHand, the fold-winner's button, which still works afterwards.
+   */
+  showCard(seatId: number, handId: string, cardIndex: 0 | 1): { ok: true } | { ok: false; code: string; message: string } {
+    if (this.currentHandId === null || handId !== this.currentHandId || this.state.phase !== 'in-hand') {
+      return { ok: false, code: 'STALE_HAND', message: 'This action refers to a hand that is not currently in progress.' };
+    }
+    if (!headsUpInHand(this.state)) {
+      return { ok: false, code: 'NOT_HEADS_UP', message: 'You can only show a card when two players are left in the hand.' };
+    }
+    const engineSeat = this.state.seats[seatId];
+    if (!engineSeat || (engineSeat.status !== 'active' && engineSeat.status !== 'all-in') || !engineSeat.holeCards[cardIndex]) {
+      return { ok: false, code: 'NOT_IN_HAND', message: 'You are not in this hand.' };
+    }
+    const shown = this.shownCards.get(seatId) ?? new Set<number>();
+    if (shown.has(cardIndex)) return { ok: true };
+    shown.add(cardIndex);
+    this.shownCards.set(seatId, shown);
+    this.broadcastAll([]);
+    return { ok: true };
+  }
+
   /** `viewerIsAdmin` reveals every seat's `ownerNickname` — see projectStateForSeat's own doc comment. Only ever passed `true` for the owner's own dedicated broadcast (adminRoom in socketServer.ts). */
   projectionFor(viewerSeatId: number | null, viewerIsAdmin = false): ProjectedTableState {
     return projectStateForSeat(
@@ -1766,6 +1802,7 @@ export class LiveTable {
         settings: this.settings,
         seatMeta: this.seatMetaMap(),
         revealedSeatIds: this.revealedSeatIds,
+        shownCards: this.shownCards,
         actionDeadline: this.actionDeadline,
         nextHandAt: this.nextHandAt,
         revealEligibleSeatId: this.revealEligibleSeatId,

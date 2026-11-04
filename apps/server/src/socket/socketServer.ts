@@ -14,6 +14,7 @@ import {
   RedeemAssignmentSchema,
   RemoveBotSchema,
   RevealHandSchema,
+  ShowCardSchema,
   RtcSignalSchema,
   SeatTargetSchema,
   TakeSeatSchema,
@@ -1152,6 +1153,19 @@ export function attachSocketServer(
       const result = table.revealHand(seatId, parsed.data.handId);
       if (!result.ok) socket.emit('error', { code: result.code, message: result.message });
       // The successful path's broadcast already happened via LiveTable's onBroadcast -> registry callback above.
+    });
+
+    socket.on('show-card', (raw: unknown): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Not authenticated.');
+      const parsed = ShowCardSchema.safeParse(raw);
+      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed show-card payload.');
+
+      const seatId = table.seatOfUser(data.userId);
+      if (seatId === null) return emitError('NOT_SEATED', 'You are not seated at this table.');
+
+      const result = table.showCard(seatId, parsed.data.handId, parsed.data.cardIndex);
+      if (!result.ok) socket.emit('error', { code: result.code, message: result.message });
     });
 
     socket.on('chat', (raw: unknown): void => {

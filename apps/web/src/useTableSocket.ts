@@ -58,6 +58,8 @@ export interface TableSocketApi {
   submitAction: (handId: string, actionSeq: number, type: 'fold' | 'check' | 'call' | 'bet' | 'raise', amountTo?: number) => void;
   /** Voluntary post-fold-win card reveal — see `ProjectedTableState.revealEligibleSeatId`. */
   revealHand: (handId: string) => void;
+  /** Heads-up, mid-hand: show one of your cards — see `ProjectedTableState.canShowCards`. */
+  showCard: (handId: string, cardIndex: 0 | 1) => void;
   sendChat: (message: string) => void;
   /** Owner-only (admin role) — terminates this table for everyone. */
   terminateTable: () => Promise<void>;
@@ -188,6 +190,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       submitAction: (handId, actionSeq, type, amountTo) =>
         socket?.emit('action', amountTo === undefined ? { handId, actionSeq, type } : { handId, actionSeq, type, amountTo }),
       revealHand: (handId) => socket?.emit('reveal-hand', { handId }),
+      showCard: (handId, cardIndex) => socket?.emit('show-card', { handId, cardIndex }),
       sendChat: (message) => socket?.emit('chat', { message }),
       terminateTable: () => new Promise<void>((resolve) => (socket ? socket.emit('terminate-table', () => resolve()) : resolve())),
       resetTable: () => new Promise<void>((resolve) => (socket ? socket.emit('reset-table', () => resolve()) : resolve())),

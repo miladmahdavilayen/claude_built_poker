@@ -39,7 +39,7 @@ export interface TableScene3DProps {
   onOwnCards?: ((landed: boolean) => void) | undefined;
   /** How many community cards are down and face up on the felt — the page holds your action buttons until all are. */
   onBoardShown?: ((count: number) => void) | undefined;
-  /** Heads-up: the eye under each of your cards shows it to the table (LiveTable.showCard); undefined when it can't. */
+  /** The eye under each of your cards shows it to the table (LiveTable.showCard); undefined when it can't. */
   onShowCard?: ((index: 0 | 1) => void) | undefined;
   /** Cards just shown ("seat:index"): yours turn over on the felt again, for you too. */
   justShown?: ReadonlySet<string> | undefined;
@@ -344,7 +344,7 @@ export default function TableScene3D({
                   <div
                     key={`edge-${String(s.seatId)}`}
                     ref={overlayRef(`edge:${String(s.seatId)}`)}
-                    className={`seat-edge-marker${s.status === 'folded' ? ' seat-edge-marker--folded' : ''}${state.betting.actingSeat === s.seatId ? ' seat-edge-marker--acting' : ''}`}
+                    className={`seat-edge-marker${s.status === 'folded' && s.shownCards.length === 0 ? ' seat-edge-marker--folded' : ''}${state.betting.actingSeat === s.seatId ? ' seat-edge-marker--acting' : ''}`}
                     data-testid={`edge-${String(s.seatId)}`}
                   >
                     <span className="seat-edge-arrow" aria-hidden="true" />
@@ -353,7 +353,7 @@ export default function TableScene3D({
                     <span className="seat-edge-name">{s.displayName ?? `Seat ${String(s.seatId + 1)}`}</span>
                     <span className="seat-edge-stack">{formatChips(s.stack)}</span>
                     {s.committedThisStreet > 0 && <span className="seat-edge-bet">bet {formatChips(s.committedThisStreet)}</span>}
-                    {/* A card they've shown mid-hand, readable even with them out of view. */}
+                    {/* A card they've chosen to show, readable even with them out of view. */}
                     {s.shownCards.length > 0 && (
                       <span className="seat-edge-cards" data-testid="edge-shown-cards">
                         {[0, 1].map((i) => {
@@ -372,11 +372,13 @@ export default function TableScene3D({
               })}
           {/* Your own hand, face up just above your box, whenever you've turned away from it on the felt (looking at
               another player, say) — the scene places it and keeps everything else clear of it. */}
-          {mode === 'seated' &&
-            !ownCardsInView &&
-            (() => {
+          {/* Folded, the hand now over: your cards went to the muck, so it's here you can show them from (any view). */}
+          {(() => {
               const me = state.seats.find((s) => s.seatId === state.viewerSeatId);
-              if (!me || me.status === 'folded' || me.holeCards.length < 2) return null;
+              if (!me || me.holeCards.length < 2) return null;
+              const foldedShowing = me.status === 'folded' && !!onShowCard;
+              const lookedAway = mode === 'seated' && !ownCardsInView && me.status !== 'folded';
+              if (!foldedShowing && !lookedAway) return null;
               return (
                 <div ref={overlayRef('ownhand')} className="own-hand-hud" data-testid="own-hand-hud" aria-label="Your hand">
                   {me.holeCards.map((c, i) => (
@@ -388,7 +390,7 @@ export default function TableScene3D({
                 </div>
               );
             })()}
-          {/* Heads-up: the eye at the bottom of each of your cards on the felt (the scene keeps it there). */}
+          {/* The eye at the bottom of each of your cards on the felt (the scene keeps it there). */}
           {onShowCard &&
             ownLanded &&
             ownCardsInView &&

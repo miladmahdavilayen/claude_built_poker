@@ -1702,6 +1702,14 @@ button.card-eye {
 .seat-folded:not(.seat-viewer) {
   opacity: 0.4;
 }
+/* A folded player showing their cards after the hand: those cards are the point — not dimmed. */
+.seat-folded.seat-showing:not(.seat-viewer),
+.seat-folded.seat-showing:not(.seat-viewer):has(.seat-peer-mute) > * {
+  opacity: 1;
+}
+.seat-viewer.seat-folded > .seat-cards:has(.card-eye) {
+  opacity: 1;
+}
 /* Your own box dims when you fold — but not your call's buttons on it. */
 .seat-viewer.seat-folded > :not(.seat-call) {
   opacity: 0.4;
@@ -6205,7 +6213,7 @@ button.fairness-link {
 .seat-folded:not(.seat-viewer):has(.seat-peer-mute) {
   opacity: 1;
 }
-.seat-folded:not(.seat-viewer):has(.seat-peer-mute) > :not(.seat-peer-mute) {
+.seat-folded:not(.seat-viewer):not(.seat-showing):has(.seat-peer-mute) > :not(.seat-peer-mute) {
   opacity: 0.4;
 }
 .voice-tile {

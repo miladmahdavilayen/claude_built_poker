@@ -3121,3 +3121,12 @@ about ten.
   card's small on screen; turned away, the eyes are on the hand display. The
   other player sees it over your head and on your edge marker when you're out
   of view.
+- Once the hand is complete, until the next one starts, anyone dealt in may show
+  their cards too — folded or not, at any table size, whoever's cards aren't
+  already public: an eye per card, or Reveal Hand for the rest. Not before: a
+  folded card shown during a live hand tells the players still in it what's out
+  of the deck, which changes the hand and invites collusion. Afterwards it can't
+  affect anything; it's table talk ("look what I laid down"). Heads-up is the
+  other case: your own live hand to your only opponent, a bluffing move at your
+  own risk. In 3D a folder's cards are in the muck, so they show them from the
+  hand display above their box. A folder's box isn't dimmed once they're showing.

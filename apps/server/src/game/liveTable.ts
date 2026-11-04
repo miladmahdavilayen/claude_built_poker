@@ -29,6 +29,7 @@ import {
   type SeatOffer,
   type WaitlistEntry,
   headsUpInHand,
+  mayShowCards,
 } from '@pokerclause/shared';
 import { ALL_BOT_POLICIES, TEST_CAMERA_BOTS, projectSeatView, type BotPolicy } from '@pokerclause/sim';
 import type { SeatInviteRecord, Store } from '../db/store.js';
@@ -1763,28 +1764,37 @@ export class LiveTable {
   }
 
   /**
-   * Heads-up, any time during the hand: a player still in it shows one of
-   * their two cards to the table, by choice — one, then maybe the other.
-   * There's no taking it back. It changes nothing in the game itself: no
-   * action, no clock, no turn; every viewer's projection simply carries that
-   * card's face from now on (`shownCards`). Separate from a showdown and from
-   * revealHand, the fold-winner's button, which still works afterwards.
+   * A player shows one of their two cards to the table, by choice — one,
+   * then maybe the other. There's no taking it back. Allowed heads-up at any
+   * time during the hand, and for anyone dealt in — folded or not — once the
+   * hand is complete, until the next one starts (mayShowCards says why not
+   * sooner). It changes nothing in the game itself: no action, no clock, no
+   * turn; every viewer's projection simply carries that card's face from now
+   * on (`shownCards`). Separate from a showdown and from revealHand, the
+   * fold-winner's button, which still works afterwards.
    */
   showCard(seatId: number, handId: string, cardIndex: 0 | 1): { ok: true } | { ok: false; code: string; message: string } {
-    if (this.currentHandId === null || handId !== this.currentHandId || this.state.phase !== 'in-hand') {
+    if (this.currentHandId === null || handId !== this.currentHandId) {
       return { ok: false, code: 'STALE_HAND', message: 'This action refers to a hand that is not currently in progress.' };
     }
-    if (!headsUpInHand(this.state)) {
-      return { ok: false, code: 'NOT_HEADS_UP', message: 'You can only show a card when two players are left in the hand.' };
+    if (this.state.phase === 'in-hand' && !headsUpInHand(this.state)) {
+      return { ok: false, code: 'NOT_HEADS_UP', message: 'During a hand, you can only show a card when two players are left in it.' };
     }
-    const engineSeat = this.state.seats[seatId];
-    if (!engineSeat || (engineSeat.status !== 'active' && engineSeat.status !== 'all-in') || !engineSeat.holeCards[cardIndex]) {
-      return { ok: false, code: 'NOT_IN_HAND', message: 'You are not in this hand.' };
+    if (!mayShowCards(this.state, seatId, this.revealedSeatIds)) {
+      return { ok: false, code: 'NOT_IN_HAND', message: 'You have no cards to show right now.' };
     }
     const shown = this.shownCards.get(seatId) ?? new Set<number>();
     if (shown.has(cardIndex)) return { ok: true };
     shown.add(cardIndex);
     this.shownCards.set(seatId, shown);
+    // After the hand: a little more of the break, for the table to see it (never making anyone wait who wasn't).
+    const remainingMs = this.nextHandAt !== null ? this.nextHandAt - this.callbacks.now() : 0;
+    if (this.state.phase === 'hand-complete' && remainingMs > 0) {
+      const extendedMs = remainingMs + REVEAL_HAND_BREAK_EXTENSION_MS;
+      this.nextHandAt = this.callbacks.now() + extendedMs;
+      this.clearNextHandTimer();
+      this.nextHandTimer = setTimeout(() => this.broadcastAll([]), extendedMs);
+    }
     this.broadcastAll([]);
     return { ok: true };
   }

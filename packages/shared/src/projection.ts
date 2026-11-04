@@ -80,6 +80,19 @@ export function headsUpInHand(state: TableState): boolean {
   return state.phase === 'in-hand' && state.seats.filter((s) => (s.status === 'active' || s.status === 'all-in') && s.holeCards.length === 2).length === 2;
 }
 
+/**
+ * Whether this seat may show its cards right now (LiveTable.showCard), its own choice:
+ * - in the hand, when only two are left: your own live hand, to your only opponent;
+ * - once the hand is complete, anyone dealt in, folded or not, whose cards aren't public already. Not before: a
+ *   folded card shown during the hand would tell the players still in it what's left in the deck.
+ */
+export function mayShowCards(state: TableState, seatId: number | null, revealedSeatIds: ReadonlySet<number>): boolean {
+  const seat = seatId === null ? undefined : state.seats[seatId];
+  if (!seat || seat.holeCards.length !== 2 || revealedSeatIds.has(seat.seatId)) return false;
+  if (state.phase === 'in-hand') return headsUpInHand(state) && (seat.status === 'active' || seat.status === 'all-in');
+  return state.phase === 'hand-complete' && (seat.status === 'active' || seat.status === 'all-in' || seat.status === 'folded');
+}
+
 export function projectStateForSeat(
   state: TableState,
   ctx: ProjectionContext,
@@ -162,7 +175,7 @@ export function projectStateForSeat(
     actionDeadline: ctx.actionDeadline,
     nextHandAt: ctx.nextHandAt,
     revealEligibleSeatId: ctx.revealEligibleSeatId,
-    canShowCards: headsUpInHand(state),
+    canShowCards: mayShowCards(state, viewerSeatId, ctx.revealedSeatIds),
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
     removedSeatIds: ctx.removedSeatIds ?? [],

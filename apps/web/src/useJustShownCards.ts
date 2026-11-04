@@ -5,7 +5,7 @@ import { playHandRevealSound } from './sound.js';
 const FLIP_MS = 900;
 
 /**
- * Cards just shown mid-hand, heads-up (`seat.shownCards`), as "seat:index" —
+ * Cards just shown by choice (`seat.shownCards`), as "seat:index" —
  * for a moment, so they can play their flip — with the reveal's sound for each,
  * once. Cards already shown when the page first sees them just stay shown.
  */

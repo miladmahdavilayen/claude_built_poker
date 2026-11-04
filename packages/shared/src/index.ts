@@ -3,4 +3,4 @@ export * from './events.js';
 export * from './schemas.js';
 export * from './money.js';
 export * from './waiver.js';
-export { headsUpInHand, projectStateForSeat, projectEvent, type ProjectionContext, type SeatMeta } from './projection.js';
+export { headsUpInHand, mayShowCards, projectStateForSeat, projectEvent, type ProjectionContext, type SeatMeta } from './projection.js';

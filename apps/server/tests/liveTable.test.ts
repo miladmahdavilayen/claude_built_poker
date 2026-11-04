@@ -616,7 +616,7 @@ describe('LiveTable: showing a card heads-up, mid-hand', () => {
     expect(table.revealHand(winner, handId())).toEqual({ ok: true });
   });
 
-  it('is refused with three still in the hand, allowed once one folds — and never for the one who folded, nor once the hand is over', () => {
+  it('is refused with three still in the hand, allowed for the two left once one folds — and for the one who folded, only once the hand is complete', () => {
     table.takeSeat(2, 'user-c', meta('Cleo'), 100);
     table.startNextHand();
     expect(table.projectionFor(0).canShowCards).toBe(false);
@@ -624,12 +624,58 @@ describe('LiveTable: showing a card heads-up, mid-hand', () => {
     const refused = table.showCard(first, handId(), 0);
     expect(refused).toMatchObject({ ok: false, code: 'NOT_HEADS_UP' });
     table.applyPlayerAction(first, { seatId: first, type: 'fold' });
-    expect(table.projectionFor(0).canShowCards).toBe(true);
+    // Two left: they may; the one who folded may not — the hand is live, and it'd tell them what's out of the deck.
+    expect(table.projectionFor(first).canShowCards).toBe(false);
     expect(table.showCard(first, handId(), 0)).toMatchObject({ ok: false, code: 'NOT_IN_HAND' });
     const next = table.state.betting.actingSeat!;
+    const last = [0, 1, 2].find((s) => s !== first && s !== next)!;
+    expect(table.projectionFor(next).canShowCards).toBe(true);
     expect(table.showCard(next, handId(), 0)).toEqual({ ok: true });
     table.applyPlayerAction(next, { seatId: next, type: 'fold' });
-    expect(table.showCard(next, handId(), 1)).toMatchObject({ ok: false, code: 'STALE_HAND' });
+    // Hand complete: everyone dealt in, folded or not — each card chosen on its own, its partner still hidden.
+    expect(table.state.phase).toBe('hand-complete');
+    for (const seat of [first, next, last]) expect(table.projectionFor(seat).canShowCards).toBe(true);
+    expect(table.projectionFor(null).canShowCards).toBe(false);
+    const held = table.state.seats[first]!.holeCards;
+    expect(table.showCard(first, handId(), 1)).toEqual({ ok: true });
+    expect(table.projectionFor(last).seats[first]!.shownCards).toEqual([{ index: 1, card: held[1] }]);
+    expect(JSON.stringify(table.projectionFor(last).seats[first])).not.toContain(`"${held[0]!}"`);
+    expect(table.showCard(first, handId(), 0)).toEqual({ ok: true });
+    expect(table.projectionFor(last).seats[first]!.shownCards).toHaveLength(2);
+    // The fold-winner keeps their button too.
+    expect(table.revealEligibleSeatId).toBe(last);
+  });
+
+  it('after a real showdown: nothing for those whose cards are public already, the folder still may', () => {
+    table.takeSeat(2, 'user-c', meta('Cleo'), 100);
+    table.startNextHand();
+    const folder = table.state.betting.actingSeat!;
+    table.applyPlayerAction(folder, { seatId: folder, type: 'fold' });
+    for (let i = 0; i < 40 && table.state.phase === 'in-hand'; i++) {
+      const s = table.state.betting.actingSeat!;
+      const toCall = Math.max(...table.state.seats.map((x) => x.committedThisStreet)) > table.state.seats[s]!.committedThisStreet;
+      table.applyPlayerAction(s, { seatId: s, type: toCall ? 'call' : 'check' });
+    }
+    expect(table.state.phase).toBe('hand-complete');
+    const others = [0, 1, 2].filter((s) => s !== folder);
+    for (const s of others) {
+      expect(table.projectionFor(s).canShowCards).toBe(false);
+      expect(table.showCard(s, handId(), 0)).toMatchObject({ ok: false, code: 'NOT_IN_HAND' });
+    }
+    expect(table.projectionFor(folder).canShowCards).toBe(true);
+    expect(table.showCard(folder, handId(), 0)).toEqual({ ok: true });
+  });
+
+  it('after the hand, a shown card adds a little to a running break — and never restarts one that is over', () => {
+    table.startNextHand();
+    const acting = table.state.betting.actingSeat!;
+    table.applyPlayerAction(acting, { seatId: acting, type: 'fold' });
+    const at = table.projectionFor(0).nextHandAt!;
+    table.showCard(acting, handId(), 0);
+    expect(table.projectionFor(0).nextHandAt).toBe(at + 1500);
+    clock = at + 60_000;
+    table.showCard(acting, handId(), 1);
+    expect(table.projectionFor(0).nextHandAt).toBe(at + 1500);
   });
 
   it('refuses a stale hand id', () => {

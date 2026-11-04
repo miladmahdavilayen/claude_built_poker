@@ -96,7 +96,7 @@ export function Seat({
   shownCardsBelow?: boolean | undefined;
   /** Which way a hand shown down grows (2D): toward the middle of the table, so it stays on screen. */
   shownAlign?: 'left' | 'center' | 'right' | undefined;
-  /** Heads-up, your own seat on the 2D table: the eye under each card shows it to the table (LiveTable.showCard). */
+  /** Your own seat on the 2D table, when you may: the eye under each card shows it to the table (LiveTable.showCard). */
   onShowCard?: ((index: 0 | 1) => void) | undefined;
   /** Which of this seat's cards were just shown: they play the flip. */
   justShown?: ReadonlySet<number> | undefined;
@@ -205,7 +205,7 @@ export function Seat({
     const hasCam = !!voice?.stream.getVideoTracks().length && showVideo;
     return (
       <div
-        className={`seat seat--compact${isActing ? ' seat-acting' : ''}${seat.status === 'folded' ? ' seat-folded' : ''}${isViewer ? ' seat-viewer' : ''}${hasCam ? ' seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
+        className={`seat seat--compact${isActing ? ' seat-acting' : ''}${seat.status === 'folded' ? ' seat-folded' : ''}${seat.shownCards.length > 0 ? ' seat-showing' : ''}${isViewer ? ' seat-viewer' : ''}${hasCam ? ' seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
       >
         {isViewer && callControls}
         {!isViewer && peerMute && <div className="seat-peer-mute">{peerMute}</div>}
@@ -312,7 +312,7 @@ export function Seat({
 
   return (
     <div
-      className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
+      className={`seat ${isActing ? 'seat-acting' : ''} ${seat.status === 'folded' ? 'seat-folded' : ''}${seat.shownCards.length > 0 ? ' seat-showing' : ''} ${isViewer ? 'seat-viewer' : ''} ${showSeatVideo ? 'seat-has-video' : ''}${splitEffect === 'winner' ? ' seat-split-winner' : splitEffect === 'dim' ? ' seat-split-dim' : ''}`}
     >
       {isViewer && callControls}
       {!isViewer && peerMute && <div className="seat-peer-mute">{peerMute}</div>}

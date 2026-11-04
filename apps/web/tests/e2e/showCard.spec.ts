@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { adminLogin, closeTableMenu, createTable, guestSignup, inviteToSeat, openTableMenu, startHand, takeSeat } from './helpers.js';
+import { addBot, adminLogin, closeTableMenu, createTable, guestSignup, inviteToSeat, openTableMenu, playHandToCompletion, startHand, takeSeat } from './helpers.js';
 
 const eye = (page: Page, i: number) => page.getByTestId(`card-eye-${String(i)}`);
 
@@ -130,4 +130,93 @@ test('3D, heads-up: the eye on the felt card shows it; turned away, the eyes are
   await expect(hud).toBeVisible({ timeout: 10_000 });
   await hud.getByTestId('card-eye-1').click();
   await expect(seen.locator('.card-face')).toHaveCount(2, { timeout: 5_000 });
+});
+
+// Once the hand is complete, anyone dealt in may show their cards — folded or not, any table size: one, both, or
+// Reveal Hand. Not before: during the hand, a folded card would tell the players still in it what's out of the deck.
+test('2D: a folder gets the eyes only once the hand is complete, and shows one card, then the rest', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const owner = await (await browser.newContext()).newPage();
+  const a = await (await browser.newContext()).newPage();
+  const b = await (await browser.newContext()).newPage();
+  const pages = [owner, a, b];
+  for (const p of pages) await p.addInitScript(() => localStorage.setItem('pokerclause.tableView', '2d'));
+  await adminLogin(owner);
+  await createTable(owner, { name: 'Folder Shows', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await guestSignup(a, 'Ana');
+  await guestSignup(b, 'Ben');
+  await takeSeat(owner, 0, 200);
+  await inviteToSeat(owner, a, 2, 200);
+  await inviteToSeat(owner, b, 4, 200);
+  await startHand(owner);
+  await expect(owner.locator('[data-testid="seat-0"] .seat-cards .card-face')).toHaveCount(2, { timeout: 15_000 });
+  let folder: Page | null = null;
+  for (let i = 0; i < 100 && !folder; i++) {
+    for (const p of pages) {
+      const fold = p.getByRole('button', { name: 'Fold' });
+      if (await fold.isVisible().catch(() => false)) {
+        await fold.click();
+        folder = p;
+        break;
+      }
+    }
+    if (!folder) await owner.waitForTimeout(100);
+  }
+  const quitter = folder!;
+  const players = pages.filter((p) => p !== quitter);
+  const folderSeat = quitter === owner ? 0 : quitter === a ? 2 : 4;
+  // Hand still live: the folder has no eye and no button, whatever they try.
+  await expect(players[0]!.getByTestId('card-eye-0')).toBeVisible({ timeout: 10_000 });
+  await expect(eye(quitter, 0)).toHaveCount(0);
+  await expect(quitter.locator('.btn-reveal-hand')).toHaveCount(0);
+  await playHandToCompletion(players, 800);
+  // Hand over, a real showdown: the two who showed down have nothing left to show; the folder now can.
+  await expect(eye(quitter, 0)).toBeVisible({ timeout: 10_000 });
+  await expect(eye(quitter, 1)).toBeVisible();
+  await expect(quitter.locator('.btn-reveal-hand')).toHaveText('Reveal Hand');
+  for (const p of players) {
+    await expect(eye(p, 0)).toHaveCount(0);
+    await expect(p.locator('.btn-reveal-hand')).toHaveCount(0);
+  }
+  const seen = players[0]!.locator(`[data-testid="seat-${String(folderSeat)}"] .seat-cards`);
+  await expect(seen.locator('.card-face')).toHaveCount(0);
+  await eye(quitter, 0).click();
+  await expect(seen.locator('.card-face')).toHaveCount(1, { timeout: 5_000 });
+  await expect(eye(quitter, 0)).toBeDisabled();
+  // Readable: their box isn't dimmed any more.
+  await expect(players[0]!.locator(`[data-testid="seat-${String(folderSeat)}"] > .seat`)).toHaveCSS('opacity', '1');
+  // Reveal Hand: the rest in one tap, then it's gone.
+  await quitter.locator('.btn-reveal-hand').click();
+  await expect(seen.locator('.card-face')).toHaveCount(2, { timeout: 5_000 });
+  await expect(quitter.locator('.btn-reveal-hand')).toHaveCount(0);
+  // The next hand starts clean.
+  await startHand(owner);
+  await expect(eye(quitter, 0)).toHaveCount(0, { timeout: 15_000 });
+});
+
+test('3D: a folder shows their cards from the hand display, once the hand is over', async ({ browser }) => {
+  test.setTimeout(150_000);
+  const owner = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  await owner.addInitScript(() => {
+    localStorage.setItem('pokerclause.tableQuality', 'low');
+    localStorage.setItem('pokerclause.tableView', 'seated');
+  });
+  await adminLogin(owner);
+  await createTable(owner, { name: 'Folder Shows 3D', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
+  await addBot(owner, 2, 'calling-station', 200);
+  await addBot(owner, 4, 'calling-station', 200);
+  await takeSeat(owner, 0, 200);
+  await startHand(owner);
+  const hud = owner.getByTestId('own-hand-hud');
+  // Fold when asked; until the hand's over, nothing to show from.
+  const fold = owner.getByRole('button', { name: 'Fold' });
+  await expect(fold).toBeVisible({ timeout: 40_000 });
+  await fold.click();
+  await expect(hud).toHaveCount(0);
+  await expect(owner.getByText('Verify hand fairness')).toBeVisible({ timeout: 90_000 });
+  await expect(hud).toBeVisible({ timeout: 10_000 });
+  await expect(hud.locator('.card-face')).toHaveCount(2);
+  await hud.getByTestId('card-eye-1').click();
+  await expect(hud.getByTestId('card-eye-1')).toBeDisabled({ timeout: 5_000 });
+  await owner.waitForTimeout(1000);
 });

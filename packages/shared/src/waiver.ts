@@ -44,7 +44,7 @@ export const MAX_SIGNATURE_DATA_URL_LENGTH = 380_000;
  * device) under the guest in the admin dashboard. Changing a word means
  * bumping GUEST_TERMS_VERSION.
  */
-export const GUEST_TERMS_VERSION = 1;
+export const GUEST_TERMS_VERSION = 2;
 
 export const GUEST_TERMS_TITLE = 'Guest terms';
 
@@ -53,5 +53,5 @@ export const GUEST_TERMS: readonly string[] = [
   'Chips are play money only: they have no cash value and can’t be bought, sold or cashed out.',
   'The app is provided as is, with no promise it works or stays online. You play at your own risk and won’t bring any claim against the app or its owner over it.',
   'The table’s owner may remove you or close the table at any time.',
-  'A record that you agreed — your name, the date and time, your IP address and device — is kept by the app’s owner.',
+  'A record that you agreed to all above is kept.',
 ];

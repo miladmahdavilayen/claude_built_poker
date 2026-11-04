@@ -1,7 +1,8 @@
 /**
  * The small eye at the bottom of each of your dealt cards when only two
- * players are left in the hand: tap it and that card is shown to the table
- * (LiveTable.showCard). Open and lit once it's been shown.
+ * players are left in the hand, or for anyone once the hand is complete: tap
+ * it and that card is shown to the table (LiveTable.showCard). Open and lit
+ * once it's been shown.
  */
 export function CardEye({ index, shown, onShow }: { index: number; shown: boolean; onShow: () => void }): React.JSX.Element {
   return (

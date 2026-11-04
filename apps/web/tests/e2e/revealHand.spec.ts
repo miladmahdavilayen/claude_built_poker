@@ -27,12 +27,14 @@ test('the fold-win winner can voluntarily reveal their cards, and it extends the
   // right away with no showdown at all — exactly the scenario this
   // feature is for.
   let folded = false;
+  let aliceFolded = false;
   for (let guard = 0; guard < 100 && !folded; guard++) {
     for (const page of [pageA, pageB]) {
       const foldBtn = page.getByRole('button', { name: 'Fold' });
       if (await foldBtn.isVisible().catch(() => false)) {
         await foldBtn.click();
         folded = true;
+        aliceFolded = page === pageA;
         break;
       }
     }
@@ -40,26 +42,13 @@ test('the fold-win winner can voluntarily reveal their cards, and it extends the
   }
   expect(folded).toBe(true);
 
-  // The reveal button appears ONLY on the winner's own page — pageA and
-  // pageB are separate browser contexts, so each locator is checked on
-  // its own page rather than combined with `.or()` (which requires both
-  // locators to share one frame).
-  const revealA = pageA.locator('.btn-reveal-hand');
-  const revealB = pageB.locator('.btn-reveal-hand');
-  let aliceWon = false;
-  for (let guard = 0; guard < 50; guard++) {
-    if (await revealA.isVisible().catch(() => false)) {
-      aliceWon = true;
-      break;
-    }
-    if (await revealB.isVisible().catch(() => false)) break;
-    await pageA.waitForTimeout(100);
-  }
+  // The winner gets the button, as does the player who folded (see showCard.spec.ts for them).
+  const aliceWon = !aliceFolded;
   const winnerPage = aliceWon ? pageA : pageB;
   const otherPage = aliceWon ? pageB : pageA;
   const winnerSeatId = aliceWon ? 0 : 1;
   await expect(winnerPage.locator('.btn-reveal-hand')).toBeVisible({ timeout: 5000 });
-  await expect(otherPage.locator('.btn-reveal-hand')).toHaveCount(0);
+  await expect(otherPage.locator('.btn-reveal-hand')).toHaveText('Reveal Hand');
 
   const revealBtn = winnerPage.locator('.btn-reveal-hand');
   await expect(revealBtn).toHaveText(/^(Reveal Hand|Show Bluff)$/);

@@ -844,9 +844,8 @@ export function TablePage(): React.JSX.Element {
   };
 
   /** A seat's box — placed by % on the 2D table, or anchored in 3D by the scene (`ref`). */
-  /** Heads-up: the eye under a card shows it to the table — yours, while you're still in the hand; undefined otherwise. */
-  const mineInHand = mySeat && (mySeat.status === 'active' || mySeat.status === 'all-in') && mySeat.holeCards.length === 2;
-  const showCard = state.canShowCards && mineInHand && state.handId ? (i: 0 | 1) => sock.showCard(state.handId!, i) : undefined;
+  /** The eye under a card shows it to the table: heads-up in the hand, or anyone dealt in once it's complete; undefined otherwise. */
+  const showCard = state.canShowCards && state.handId ? (i: 0 | 1) => sock.showCard(state.handId!, i) : undefined;
   const shownIndices = (seatId: number): ReadonlySet<number> => new Set([0, 1].filter((i) => justShownCards.has(`${String(seatId)}:${String(i)}`)));
 
   const seatSlot = (
@@ -1280,7 +1279,18 @@ export function TablePage(): React.JSX.Element {
           }}
         />
       )}
-      {!state.legalActions && revealEligible && (
+      {/* Hand over, your cards still unseen — folded or not: the rest of them, in one tap (the eyes do them one by one). */}
+      {!state.legalActions && !revealEligible && state.phase === 'hand-complete' && state.canShowCards && (mySeat?.shownCards.length ?? 0) < 2 && (
+        <RevealHandButton
+          label="Reveal Hand"
+          onReveal={() => {
+            if (!state.handId) return;
+            sock.showCard(state.handId, 0);
+            sock.showCard(state.handId, 1);
+          }}
+        />
+      )}
+      {!state.legalActions && revealEligible && (mySeat?.shownCards.length ?? 0) < 2 && (
         <RevealHandButton
           label={revealLabel}
           onReveal={() => {

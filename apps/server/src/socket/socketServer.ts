@@ -138,6 +138,18 @@ function isPracticeOnly(data: SocketData): boolean {
   return data.userId !== null && !data.isGuest && data.role !== 'admin';
 }
 
+/**
+ * A registered player's chips at a table the owner invited them to are the
+ * table's, not their account's: what the owner assigned goes on the table
+ * and what they leave with stays with that table, for when they come back by
+ * the link (Store.getGuestStack) — exactly like a guest. Their reward balance
+ * neither pays for it nor receives it. Only their own practice tables, and
+ * the owner anywhere, use the account's balance.
+ */
+function usesTableMoney(table: LiveTable, user: { isGuest: boolean; role: string }): boolean {
+  return !table.isPractice && !user.isGuest && user.role !== 'admin';
+}
+
 export function attachSocketServer(
   httpServer: HttpServer,
   deps: { store: Store; corsOrigin: string; adminUserId: string },
@@ -437,8 +449,15 @@ export function attachSocketServer(
    * Pays a seat's chips back into its player's balance (ledgered) — and, for
    * a guest, remembers them as what they left this table with: coming back
    * by the same link, they sit down with exactly that (see sitAmountForGuest).
+   * A registered player at an invited table only has them remembered: nothing
+   * reaches their account (see usesTableMoney).
    */
   async function cashOut(table: LiveTable, userId: string, amount: number): Promise<void> {
+    const leaving = await deps.store.findUserById(userId);
+    if (leaving && usesTableMoney(table, leaving)) {
+      await deps.store.setGuestStack(userId, table.tableId, amount);
+      return;
+    }
     if (amount > 0) {
       await deps.store.adjustUserChips(userId, amount);
       await deps.store.recordLedgerEntries([
@@ -489,25 +508,28 @@ export function attachSocketServer(
   ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
     const user = await deps.store.findUserById(userId);
     if (!user) return { ok: false, code: 'USER_NOT_FOUND', message: 'User not found.' };
+    const tableMoney = usesTableMoney(table, user);
     const shortfall = ownerFunded ? Math.max(0, buyIn - user.chips) : 0;
-    if (!ownerFunded && user.chips < buyIn) return { ok: false, code: 'INSUFFICIENT_CHIPS', message: 'Not enough chips for that buy-in.' };
+    if (!ownerFunded && !tableMoney && user.chips < buyIn) return { ok: false, code: 'INSUFFICIENT_CHIPS', message: 'Not enough chips for that buy-in.' };
     try {
       table.takeSeat(
         seatId,
         user.id,
-        { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed },
+        { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed, tableMoney },
         buyIn,
         ownerNickname,
       );
     } catch (err) {
       return { ok: false, code: 'SEAT_TAKEN', message: err instanceof Error ? err.message : 'Seat unavailable.' };
     }
-    if (shortfall > 0) await grantFromOwner(user.id, shortfall, table.tableId);
-    await deps.store.adjustUserChips(user.id, -buyIn);
-    await deps.store.recordLedgerEntries([
-      { userId: user.id, isHouse: false, amount: -buyIn, reason: 'buy_in', tableId: table.tableId },
-      { userId: null, isHouse: true, amount: buyIn, reason: 'buy_in', tableId: table.tableId },
-    ]);
+    if (!tableMoney) {
+      if (shortfall > 0) await grantFromOwner(user.id, shortfall, table.tableId);
+      await deps.store.adjustUserChips(user.id, -buyIn);
+      await deps.store.recordLedgerEntries([
+        { userId: user.id, isHouse: false, amount: -buyIn, reason: 'buy_in', tableId: table.tableId },
+        { userId: null, isHouse: true, amount: buyIn, reason: 'buy_in', tableId: table.tableId },
+      ]);
+    }
     void socket.join(seatRoom(table.tableId, seatId));
     void socket.leave(spectatorRoom(table.tableId));
     broadcastTable(table);
@@ -617,13 +639,15 @@ export function attachSocketServer(
       if (table.isPractice && !isPracticeOwner && data.role !== 'admin') return emitError('TABLE_NOT_FOUND', 'Table not found.');
       const seatId = data.userId ? table.seatOfUser(data.userId) : null;
       const hasCode = parsed.data.inviteCode !== undefined && parsed.data.inviteCode === table.inviteCode;
-      // An open-invite table's link is an invitation for anyone, a signed-in
-      // player included (their practice-only rule is about public tables).
+      // An invitation is for anyone, a signed-in player included (their
+      // practice-only rule is about the public tables): an open-invite
+      // table's link, or a seat invite — theirs, or still unused.
       const openInvited = table.openSeating && (hasCode || seatId !== null);
-      if (!table.isPractice && isPracticeOnly(data) && !openInvited) {
+      const seatInvited = parsed.data.seatInvite !== undefined && table.seatAssignmentOpenTo(parsed.data.seatInvite, data.userId);
+      if (!table.isPractice && isPracticeOnly(data) && !openInvited && !seatInvited && seatId === null) {
         return emitError('PRACTICE_ONLY', 'Your account plays at your own table against computer players — start one from the lobby.');
       }
-      if (!table.isPractice && table.settings.isPrivate && seatId === null && !hasCode && data.role !== 'admin') {
+      if (!table.isPractice && table.settings.isPrivate && seatId === null && !hasCode && !seatInvited && data.role !== 'admin') {
         // A shareable link is worth guessing at: wrong codes count toward the per-IP lockout.
         const ip = clientIp(socket);
         if (inviteLockout.retryAfterMs(ip) > 0) return emitError('TOO_MANY_ATTEMPTS', 'Too many failed attempts. Try again later.');
@@ -703,26 +727,27 @@ export function attachSocketServer(
         return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
       }
       const { seatId } = parsed.data;
-      // A guest by an open-invite link doesn't choose a buy-in: they sit
-      // with the table's starting chips the first time, and with whatever
-      // they left with after that (see sitAmountForGuest).
-      const openGuest = openSeat && data.isGuest && table.settings.openSeatStack !== undefined;
+      // Anyone by an open-invite link — a guest or a registered player alike
+      // — doesn't choose a buy-in: they sit with the table's starting chips
+      // the first time, and with whatever they left with after that (see
+      // sitAmountForGuest).
+      const invitedPlayer = openSeat && data.role !== 'admin';
+      const openGuest = invitedPlayer && table.settings.openSeatStack !== undefined;
       if (!openGuest) {
         const range = table.checkBuyInRange(parsed.data.buyIn);
         if (!range.ok) return emitError(range.code, range.message);
       }
       const userId = data.userId;
-      const { displayName } = parsed.data;
+      // A registered player's name is their account's: an invited table doesn't change it.
+      const displayName = openSeat && isPracticeOnly(data) ? undefined : parsed.data.displayName;
       void (displayName ? deps.store.updateDisplayName(userId, displayName) : Promise.resolve())
         .then(async () => {
           if (displayName) data.displayName = displayName;
           const buyIn = openGuest ? await sitAmountForGuest(table, userId, table.settings.openSeatStack!) : parsed.data.buyIn;
           if (buyIn === null) return OUT_OF_CHIPS;
-          // A guest's buy-in is play money that vanishes with the session, so
-          // the owner covers whatever they're short; a signed-in player pays
-          // from their own balance (covering them would let them cash the
-          // owner's chips out into it).
-          return performTakeSeat(table, socket, userId, seatId, buyIn, null, openSeat && data.isGuest);
+          // Invited, it's play money the owner provides, guest or registered
+          // alike: it never touches an account's balance (see usesTableMoney).
+          return performTakeSeat(table, socket, userId, seatId, buyIn, null, invitedPlayer);
         })
         .then((result) => {
           if (!result.ok) emitError(result.code, result.message);
@@ -733,11 +758,6 @@ export function attachSocketServer(
     });
 
     socket.on('redeem-seat-assignment', (raw: unknown): void => {
-      // Checked first: a practice-only player's join-table was already
-      // refused, and that's the message they should keep seeing.
-      if (isPracticeOnly(data)) {
-        return emitError('PRACTICE_ONLY', 'Your account plays at your own table against computer players — start one from the lobby.');
-      }
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to join with an invite link.');
       const parsed = RedeemAssignmentSchema.safeParse(raw);
@@ -747,10 +767,10 @@ export function attachSocketServer(
       const redeemed = table.redeemSeatAssignment(parsed.data.token, data.userId);
       if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
       const userId = data.userId;
-      // The owner chose this seat AND this amount — anything the invitee
-      // can't cover from their own balance is covered by the owner, so an
-      // invite always seats them. Coming back by it, they sit with what they
-      // left with instead (see sitAmountForGuest).
+      // The owner chose this seat AND this amount, whoever the invitee is — a
+      // guest or a registered player, whose balance isn't touched either way
+      // (see usesTableMoney). Coming back by it, they sit with what they left
+      // with instead (see sitAmountForGuest).
       void (async () => {
         const buyIn = redeemed.returning ? await sitAmountForGuest(table, userId, redeemed.buyIn) : redeemed.buyIn;
         const result = buyIn === null ? OUT_OF_CHIPS : await performTakeSeat(table, socket, userId, redeemed.seatId, buyIn, redeemed.ownerNickname, true);
@@ -1106,6 +1126,13 @@ export function attachSocketServer(
       void (async () => {
         const user = await deps.store.findUserById(targetUserId);
         if (!user) return emitError('USER_NOT_FOUND', 'That player no longer exists.');
+        // At an invited table, the owner's chips go straight on the table: no account involved.
+        if (usesTableMoney(table, user)) {
+          if (table.seats[seatId]?.userId !== targetUserId) return emitError('SEAT_EMPTY', 'That player is no longer seated.');
+          table.addChips(seatId, cappedAmount);
+          broadcastTable(table);
+          return;
+        }
         // Same as an invite: the owner covers whatever the player can't.
         const shortfall = Math.max(0, cappedAmount - user.chips);
         // Re-checked after the await: the player may have left meanwhile.

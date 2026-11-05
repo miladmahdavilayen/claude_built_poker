@@ -103,6 +103,8 @@ export const JoinTableSchema = z
     tableId: z.string().min(1),
     /** Required for a private table, unless the caller is already seated there. */
     inviteCode: z.string().min(1).optional(),
+    /** A seat invite's token (`?assign=`): it lets its invitee in to redeem it, whoever they are, on any kind of table. */
+    seatInvite: z.string().min(1).max(64).optional(),
   })
   .strict();
 export type JoinTableIntent = z.infer<typeof JoinTableSchema>;

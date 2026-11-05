@@ -666,6 +666,48 @@ describe('LiveTable: showing a card heads-up, mid-hand', () => {
     expect(table.showCard(folder, handId(), 0)).toEqual({ ok: true });
   });
 
+  it('reveals add to the break for three players a hand at most, each once; the rest still show, and it all starts over next hand', () => {
+    table.takeSeat(2, 'user-c', meta('Cleo'), 100);
+    table.takeSeat(3, 'user-d', meta('Dev'), 100);
+    table.startNextHand();
+    for (let i = 0; i < 3; i++) {
+      const s = table.state.betting.actingSeat!;
+      table.applyPlayerAction(s, { seatId: s, type: 'fold' });
+    }
+    expect(table.state.phase).toBe('hand-complete');
+    const winner = table.revealEligibleSeatId!;
+    const folders = [0, 1, 2, 3].filter((s) => s !== winner);
+    const at = table.projectionFor(0).nextHandAt!;
+    const until = (): number => table.projectionFor(0).nextHandAt!;
+
+    // One player's two cards are one reveal.
+    table.showCard(folders[0]!, handId(), 0);
+    expect(until()).toBe(at + 1500);
+    table.showCard(folders[0]!, handId(), 1);
+    expect(until()).toBe(at + 1500);
+    table.showCard(folders[1]!, handId(), 0);
+    expect(until()).toBe(at + 3000);
+    table.showCard(folders[2]!, handId(), 0);
+    expect(until()).toBe(at + 4500);
+
+    // The fourth player's reveal shows, and the next hand doesn't wait for it.
+    expect(table.revealHand(winner, handId())).toEqual({ ok: true });
+    expect(until()).toBe(at + 4500);
+    expect(table.projectionFor(folders[0]!).seats[winner]!.holeCards).toHaveLength(2);
+
+    // A new hand has its own three.
+    clock = at + 60_000;
+    table.startNextHand();
+    for (let i = 0; i < 3; i++) {
+      const s = table.state.betting.actingSeat!;
+      table.applyPlayerAction(s, { seatId: s, type: 'fold' });
+    }
+    const next = until();
+    const anyone = [0, 1, 2, 3].find((s) => s !== table.revealEligibleSeatId)!;
+    table.showCard(anyone, handId(), 0);
+    expect(until()).toBe(next + 1500);
+  });
+
   it('after the hand, a shown card adds a little to a running break — and never restarts one that is over', () => {
     table.startNextHand();
     const acting = table.state.betting.actingSeat!;

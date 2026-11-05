@@ -3130,3 +3130,40 @@ about ten.
   other case: your own live hand to your only opponent, a bluffing move at your
   own risk. In 3D a folder's cards are in the muck, so they show them from the
   hand display above their box. A folder's box isn't dimmed once they're showing.
+
+## The players count
+
+- A small count in the table's corner, on both tables and for everyone watching:
+  players still in the hand / players at the table — 5/5 as it's dealt, 3/5 once
+  two have folded. "At the table" is every occupied seat; "still in" is dealt in
+  and not folded, so someone sitting out or waiting for the next hand counts
+  only in the second number. Between hands it keeps the last hand's count until
+  the next deal. It lives in the corner cluster, which the seats and camera
+  screens already keep clear of, in the column with room to spare.
+
+## An invite treats everyone the same
+
+- A registered player (their account plays only at their own bot tables) opening
+  an owner's invite used to be refused at the door ("Not available"): the
+  practice-only rule knew nothing of seat invites. Had they got in, the buy-in
+  came out of their reward balance and winnings went back into it — and an
+  open-invite link already worked that way, with the player choosing the amount.
+- Now an invitation is for anyone: `join-table` carries the seat invite (a private
+  table's door opens to it too, which it never did, for guests either), and the
+  player sits with what the owner assigned. A registered player's chips there are
+  the table's (`usesTableMoney`, socketServer.ts): buy-in, rebuys, hand results and
+  leaving touch neither their balance nor their ledger; what they leave with waits
+  at that table for them, like a guest's. Their account's name isn't changed there
+  either. Without an invite the practice-only rule stands. The owner, and a
+  player's own bot tables, use the account as before.
+- The seat is the one the owner chose: if it's been taken before the invite's first
+  use, they're told and it isn't used up, rather than being put somewhere else.
+  Coming back by a used invite, any free seat will do if theirs is gone.
+
+## Reveals add to the break three times a hand, at most
+
+- Each reveal used to add 1.5s to the shuffle break, however many there were, now
+  that everyone can show their cards after a hand. Up to three players a hand now
+  add it, each once (one player's two cards are one reveal, shown one by one or
+  with Reveal Hand). Any further reveal still shows, but the next hand doesn't
+  wait longer for it.

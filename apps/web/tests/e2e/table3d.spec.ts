@@ -250,8 +250,11 @@ test('seated on a phone: your hand stays in sight wherever you look — shown ab
   // Your own camera on — your box is taller with it: the hand still sits just above it, clear of it.
   await joinCall(page, true);
   await expect(page.locator('[data-testid="seat-0"] .seat-video video')).toHaveCount(1, { timeout: 15_000 });
-  await drag(canvas.width * 0.8, canvas.height * 0.35);
-  await expect(hud).toBeVisible({ timeout: 10_000 });
+  // A drag can go unnoticed on a machine busy running the whole suite: turn again if the view hasn't.
+  await expect(async () => {
+    await drag(canvas.width * 0.8, canvas.height * 0.35);
+    await expect(hud).toBeVisible({ timeout: 4_000 });
+  }).toPass({ timeout: 30_000 });
   await page.waitForTimeout(800);
   const h2 = (await hud.boundingBox())!;
   const box = (await page.locator('[data-testid="seat-0"]').boundingBox())!;

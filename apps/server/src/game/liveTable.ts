@@ -99,6 +99,8 @@ export interface LiveSeat {
   sittingInNextHand: boolean;
   /** Non-null for a computer player — see `addBot`. Never has a real `userId`. */
   botPolicyName: string | null;
+  /** A registered player seated by an invite: these chips are the table's, nothing to do with their account (see socketServer.ts's usesTableMoney) — so no hand result reaches their account's ledger. */
+  tableMoney: boolean;
   /** Owner-private label given to this seat's invite link at creation time — see createSeatAssignment. Never shown to anyone but the owner (see projection.ts's viewerIsAdmin gate). */
   ownerNickname: string | null;
   /**
@@ -170,6 +172,8 @@ const HAND_BREAK_MS = Number(process.env.HAND_BREAK_MS ?? 5000);
 // Extra riffle time tacked onto the current break whenever a player
 // voluntarily reveals their hand after winning uncalled — see revealHand().
 const REVEAL_HAND_BREAK_EXTENSION_MS = 1500;
+// At most this many reveals a hand add to the break: any more still show, without making the next hand wait longer.
+const MAX_REVEAL_BREAK_EXTENSIONS = 3;
 
 /** Invite tokens are stored and looked up by their SHA-256 — never the token itself. */
 export function hashInviteToken(token: string): string {
@@ -185,6 +189,8 @@ export class LiveTable {
   private revealedSeatIds = new Set<number>();
   /** The cards each seat has shown mid-hand, heads-up (see showCard). Apart from `revealedSeatIds`: a shown card isn't a showdown, and doesn't cost a fold-win its reveal. */
   private shownCards = new Map<number, Set<number>>();
+  /** The seats whose reveal has added to this hand's break, each once (see extendBreakForReveal). */
+  private revealExtensions = new Set<number>();
   /**
    * The seat that just won a hand purely because everyone else folded (no
    * `showdown-reveal` happened at all this hand — see computeFoldWinSeatId)
@@ -349,6 +355,7 @@ export class LiveTable {
       sittingOutRequested: false,
       sittingInNextHand: false,
       botPolicyName: null,
+      tableMoney: false,
       ownerNickname: null,
       pendingChips: 0,
       pendingRemoval: null,
@@ -418,7 +425,7 @@ export class LiveTable {
   takeSeat(
     seatId: number,
     userId: string,
-    meta: { displayName: string; isGuest: boolean; avatarSeed: string; clientSeed: string },
+    meta: { displayName: string; isGuest: boolean; avatarSeed: string; clientSeed: string; tableMoney?: boolean },
     buyIn: number,
     ownerNickname: string | null = null,
   ): void {
@@ -445,6 +452,7 @@ export class LiveTable {
       clientSeed: meta.clientSeed,
       isConnected: true,
       ownerNickname,
+      tableMoney: meta.tableMoney ?? false,
       joinsNextHand: status === 'sitting-out',
     };
     this.removeFromWaitlist(userId);
@@ -502,16 +510,24 @@ export class LiveTable {
     return this.seatAssignments.get(hashInviteToken(token))?.ownerNickname ?? null;
   }
 
+  /** Whether this invite can still seat this person: unused, or already theirs. */
+  seatAssignmentOpenTo(token: string, userId: string | null): boolean {
+    const invite = this.seatAssignments.get(hashInviteToken(token));
+    return !!invite && (invite.guestUserId === null || invite.guestUserId === userId);
+  }
+
   /** The guest an invite belongs to once used — null while unused. */
   seatAssignmentGuest(token: string): string | null {
     return this.seatAssignments.get(hashInviteToken(token))?.guestUserId ?? null;
   }
 
   /**
-   * Seats `userId` by an invite: the first time, it becomes theirs; after
-   * that it seats them again whenever they come back by it. Their own seat
-   * if it's free, otherwise any free seat. Someone else can't use an
-   * invite that's already someone's. The caller (socketServer.ts) still
+   * Seats `userId` by an invite: the first time, at exactly the seat the
+   * owner chose — if that's been taken since, the invite isn't used up and
+   * they're told, rather than put somewhere the owner didn't choose. After
+   * that it seats them again whenever they come back by it: their own seat
+   * if it's free, otherwise any free seat. Someone else can't use an invite
+   * that's already someone's. The caller (socketServer.ts) still
    * does the actual takeSeat + chip-ledger work, exactly like a normal
    * take-seat, sourcing seatId/buyIn/ownerNickname from here instead of
    * the client's own say-so.
@@ -525,11 +541,13 @@ export class LiveTable {
     if (assignment.guestUserId !== null && assignment.guestUserId !== userId) {
       return { ok: false, code: 'INVITE_TAKEN', message: 'This invite link belongs to another player.' };
     }
-    const seatId = this.checkSeatUsable(assignment.seatId).ok
-      ? assignment.seatId
-      : this.state.seats.map((s) => s.seatId).find((id) => this.checkSeatUsable(id).ok);
-    if (seatId === undefined) return { ok: false, code: 'NO_FREE_SEAT', message: 'Every seat is taken right now — you can watch until one opens.' };
     const returning = assignment.guestUserId !== null;
+    const own = this.checkSeatUsable(assignment.seatId).ok;
+    if (!own && !returning) {
+      return { ok: false, code: 'SEAT_TAKEN', message: `Seat ${String(assignment.seatId + 1)}, the one you were invited to, is taken now — ask the table’s owner for a new link.` };
+    }
+    const seatId = own ? assignment.seatId : this.state.seats.map((s) => s.seatId).find((id) => this.checkSeatUsable(id).ok);
+    if (seatId === undefined) return { ok: false, code: 'NO_FREE_SEAT', message: 'Every seat is taken right now — you can watch until one opens.' };
     if (!returning) {
       assignment.guestUserId = userId;
       assignment.redeemedAt = this.nowDate();
@@ -1185,6 +1203,7 @@ export class LiveTable {
     this.actionLog = [];
     this.revealedSeatIds = new Set();
     this.shownCards = new Map();
+    this.revealExtensions = new Set();
     this.handStartedAt = new Date();
     this.lastActionAt = this.callbacks.now();
     this.nextHandAt = null;
@@ -1463,7 +1482,7 @@ export class LiveTable {
     const ledgerEntries: { userId: string; amount: number }[] = [];
     for (const [seatId, w] of winningsBySeat) {
       const userId = userIdBySeat.get(seatId);
-      if (userId) ledgerEntries.push({ userId, amount: w.amount });
+      if (userId && !this.seats[seatId]?.tableMoney) ledgerEntries.push({ userId, amount: w.amount });
     }
     if (ledgerEntries.length > 0) {
       const houseAmount = -ledgerEntries.reduce((s, e) => s + e.amount, 0);
@@ -1749,16 +1768,7 @@ export class LiveTable {
     this.revealedSeatIds.add(seatId);
     const event: GameEvent = { type: 'showdown-reveal', seatId, holeCards: [...engineSeat.holeCards] };
 
-    // Extend whatever's actually left on the current break, never shorten
-    // it (a reveal arriving right as the break was about to elapse still
-    // gets the dealer a full extra 1.5s, not "1.5s minus whatever's left").
-    const now = this.callbacks.now();
-    const remainingMs = this.nextHandAt !== null ? Math.max(0, this.nextHandAt - now) : 0;
-    const extendedMs = remainingMs + REVEAL_HAND_BREAK_EXTENSION_MS;
-    this.nextHandAt = now + extendedMs;
-    this.clearNextHandTimer();
-    this.nextHandTimer = setTimeout(() => this.broadcastAll([]), extendedMs);
-
+    this.extendBreakForReveal(seatId, true);
     this.broadcastAll([event]);
     return { ok: true };
   }
@@ -1788,15 +1798,29 @@ export class LiveTable {
     shown.add(cardIndex);
     this.shownCards.set(seatId, shown);
     // After the hand: a little more of the break, for the table to see it (never making anyone wait who wasn't).
-    const remainingMs = this.nextHandAt !== null ? this.nextHandAt - this.callbacks.now() : 0;
-    if (this.state.phase === 'hand-complete' && remainingMs > 0) {
-      const extendedMs = remainingMs + REVEAL_HAND_BREAK_EXTENSION_MS;
-      this.nextHandAt = this.callbacks.now() + extendedMs;
-      this.clearNextHandTimer();
-      this.nextHandTimer = setTimeout(() => this.broadcastAll([]), extendedMs);
-    }
+    if (this.state.phase === 'hand-complete') this.extendBreakForReveal(seatId, false);
     this.broadcastAll([]);
     return { ok: true };
+  }
+
+  /**
+   * A reveal adds a little to the break, so the table can see it — for up to
+   * MAX_REVEAL_BREAK_EXTENSIONS players a hand, each once (one player's two
+   * cards are one reveal, however they show them). Any more still show, but
+   * the next hand doesn't wait longer for them. It extends what's left of the
+   * break, never shortens it; `evenIfOver`: a break just over counts as nothing
+   * left, for the fold-winner's reveal, rather than being left alone.
+   */
+  private extendBreakForReveal(seatId: number, evenIfOver: boolean): void {
+    if (this.revealExtensions.has(seatId) || this.revealExtensions.size >= MAX_REVEAL_BREAK_EXTENSIONS) return;
+    const now = this.callbacks.now();
+    const remainingMs = this.nextHandAt !== null ? Math.max(0, this.nextHandAt - now) : 0;
+    if (remainingMs === 0 && !evenIfOver) return;
+    this.revealExtensions.add(seatId);
+    const extendedMs = remainingMs + REVEAL_HAND_BREAK_EXTENSION_MS;
+    this.nextHandAt = now + extendedMs;
+    this.clearNextHandTimer();
+    this.nextHandTimer = setTimeout(() => this.broadcastAll([]), extendedMs);
   }
 
   /** `viewerIsAdmin` reveals every seat's `ownerNickname` — see projectStateForSeat's own doc comment. Only ever passed `true` for the owner's own dedicated broadcast (adminRoom in socketServer.ts). */

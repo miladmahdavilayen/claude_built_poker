@@ -4745,7 +4745,7 @@ button.admin-user-row:hover:not(:disabled) {
     top: 200px;
   }
   .table3d-look-hint {
-    bottom: 96px;
+    bottom: 210px;
     font-size: 11px;
   }
 }
@@ -5838,6 +5838,23 @@ button.fairness-link {
   display: flex;
   align-items: flex-end;
   gap: 8px;
+}
+/* Players still in the hand / at the table. Part of the corner, so the seats and camera screens keep clear of it. */
+.table-players-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(8, 12, 16, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f2f4f7;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 /* Two columns, bottom-aligned: the sounds over the chat, and beside them leaving and sitting out. */
 .table-corner-col {

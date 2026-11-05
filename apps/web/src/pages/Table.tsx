@@ -277,6 +277,9 @@ export function TablePage(): React.JSX.Element {
   const [assignedLink, setAssignedLink] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
   const assignToken = searchParams.get('assign');
+  // Kept once the address is cleaned up (below): a reconnect still comes in by the invite.
+  const seatInviteRef = useRef(assignToken);
+  if (assignToken) seatInviteRef.current = assignToken;
   const [redeemedTokens, setRedeemedTokens] = useState<Set<string>>(new Set());
   // A guest's own way back in: the invite link they came by (their seat
   // invite, or the table's open-invite link) keeps working for as long as
@@ -299,7 +302,7 @@ export function TablePage(): React.JSX.Element {
   });
 
   useEffect(() => {
-    if (connected && tableId) sock.joinTable(tableId, inviteCode);
+    if (connected && tableId) sock.joinTable(tableId, inviteCode, seatInviteRef.current ?? undefined);
   }, [connected, tableId, inviteCode]);
 
   // Opening an owner-generated invite link (?assign=<token>) seats the
@@ -543,12 +546,16 @@ export function TablePage(): React.JSX.Element {
   const handEverDealt = state.phase !== 'waiting';
   // A game of 4 or more on the 2D table: the 3D table suits that many better — said once, with a way there.
   const playerCount = state.seats.filter((s) => s.status !== 'empty').length;
+  // Dealt in and not folded (someone sitting out, or waiting for the next hand, is at the table but not in it).
+  const playersIn = state.seats.filter((s) => (s.status === 'active' || s.status === 'all-in') && !s.joiningNextHand).length;
   const suggest3d = handEverDealt && playerCount > 3 && view.choice === '2d' && !hide3dHint;
   // Only the seat that actually won this way, and only until it reveals or
   // the next hand deals — see ProjectedTableState.revealEligibleSeatId.
   const revealEligible = state.viewerSeatId !== null && state.viewerSeatId === state.revealEligibleSeatId;
   const revealLabel = mySeat && isBluffHand(mySeat.holeCards, state.board) ? 'Show Bluff' : 'Reveal Hand';
   const canManage = user.role === 'admin' || sock.canManageTable;
+  // At a table you were invited to, your chips are the table's, not your account's (the server's usesTableMoney).
+  const invitedMoney = !sock.isPractice && user.role !== 'admin';
   // Out of the next hand (sitting out, or about to): the sit-out button then offers to sit back in.
   const sittingOut = !!mySeat && mySeat.sittingOutNextHand;
   // On an open-invite table the queue is for people who came with its link — not the owner, who seats themselves.
@@ -773,6 +780,18 @@ export function TablePage(): React.JSX.Element {
       </div>
       {/* Beside them, a short column of its own (the stack stays no taller): leaving, and sitting out or back in. */}
       <div className="table-corner-col">
+        {/* Still in the hand / everyone at the table: 5/5 as it's dealt, 3/5 once two have folded. */}
+        {playerCount > 0 && (
+          <div className="table-players-count" data-testid="players-count" role="status" aria-label={`${String(playersIn)} of ${String(playerCount)} players still in`} title="Players still in / at the table">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+              <circle cx="12" cy="7.5" r="4.5" />
+              <path d="M3 22c0-5.5 4-9 9-9s9 3.5 9 9Z" />
+            </svg>
+            <span>
+              {playersIn}/{playerCount}
+            </span>
+          </div>
+        )}
         <LeaveTableButton onLeave={() => setLeaveConfirmOpen(true)} />
         {mySeat && <SitOutButton out={sittingOut} onToggle={() => (sittingOut ? sock.sitIn() : sock.sitOut())} />}
       </div>
@@ -957,10 +976,10 @@ export function TablePage(): React.JSX.Element {
                   // Any real account (admin, or a signed-in non-guest human)
                   // always has a lobby to go back to, so their own "Leave
                   // table" stays the simple, immediate action it always was.
-                  // An invited guest — seated, waiting or watching — gets a
-                  // confirm first: see the modal below.
+                  // Anyone invited — a guest or a registered player, seated,
+                  // waiting or watching — gets a confirm first: see the modal below.
                   setMenuOpen(false);
-                  if (!user.isGuest) {
+                  if (!user.isGuest && !invitedMoney) {
                     void sock.leaveTable().then(() => navigate('/lobby'));
                   } else {
                     setLeaveConfirmOpen(true);
@@ -1441,12 +1460,15 @@ export function TablePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => setSeatModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Take seat {seatModal}</h3>
-            <label>
-              Display name
-              <input type="text" maxLength={24} value={seatDisplayName} onChange={(e) => setSeatDisplayName(e.target.value)} />
-            </label>
+            {/* A registered player's name is their account's: an invited table doesn't change it. */}
+            {(user.isGuest || !invitedMoney) && (
+              <label>
+                Display name
+                <input type="text" maxLength={24} value={seatDisplayName} onChange={(e) => setSeatDisplayName(e.target.value)} />
+              </label>
+            )}
             {/* A guest by an open-invite link doesn't choose: the server seats them with the table's starting chips, or what they left with. */}
-            {state.settings.openSeating && state.settings.openSeatStack !== undefined && user.isGuest ? (
+            {state.settings.openSeating && state.settings.openSeatStack !== undefined && invitedMoney ? (
               <p data-testid="open-seat-stack">
                 You&rsquo;ll sit with <strong>{formatChips(state.settings.openSeatStack)}</strong> in starting chips &mdash; or, if you&rsquo;ve played here
                 before, the chips you left with.
@@ -1457,7 +1479,7 @@ export function TablePage(): React.JSX.Element {
                   Buy-in ({formatChips(state.settings.minBuyIn)} &ndash; {formatChips(state.settings.maxBuyIn)})
                   <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={buyIn} onChange={setBuyIn} />
                 </label>
-                <p>Your chips: {formatChips(user.chips)}</p>
+                {!invitedMoney && <p>Your chips: {formatChips(user.chips)}</p>}
               </>
             )}
             <div className="modal-actions">
@@ -1657,7 +1679,12 @@ export function TablePage(): React.JSX.Element {
         <div className="modal-backdrop" onClick={() => setLeaveConfirmOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Leave this table?</h3>
-            {user.isGuest ? (
+            {!user.isGuest && invitedMoney ? (
+              <p>
+                {mySeat ? 'Your seat is freed and your chips here are set aside for this table — they don’t go to your account’s balance. ' : ''}
+                You can come back any time while the table is open, with the same invite link.
+              </p>
+            ) : user.isGuest ? (
               <p>
                 {mySeat ? 'Your seat is freed and your chips are set aside for you. ' : ''}
                 You can come back any time while the table is open, with the same invite link. If you just want a short break, use &ldquo;Sit out next

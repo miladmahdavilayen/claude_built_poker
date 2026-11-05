@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { TableSettings } from '@pokerclause/shared';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 import type { Server } from 'socket.io';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { issueAccessToken } from '../src/auth/session.js';
 import { MemoryStore } from '../src/db/memoryStore.js';
 import type { LiveTable } from '../src/game/liveTable.js';
@@ -639,7 +639,7 @@ describe('socketServer: live signaling and access control', () => {
     bobSocket.close();
   });
 
-  it('a Google player can join no table but their own — not a public one, not through an invite link', async () => {
+  it('a Google player can join no public table — and redeeming an invite takes joining by it (see below)', async () => {
     const admin = await makeAdminUser('Owner');
     const newbie = await makeRegisteredUser('Newbie', 500);
     const table = await registry.createTable('Real Table', SETTINGS, null, null);
@@ -662,7 +662,7 @@ describe('socketServer: live signaling and access control', () => {
     });
     const redeemDenied = waitFor<{ code: string }>(newbieSocket, 'error');
     newbieSocket.emit('redeem-seat-assignment', { token });
-    expect((await redeemDenied).code).toBe('PRACTICE_ONLY');
+    expect((await redeemDenied).code).toBe('AUTH_REQUIRED');
     const takeSeatDenied = waitFor<{ code: string }>(newbieSocket, 'error');
     newbieSocket.emit('take-seat', { tableId: table.tableId, seatId: 0, buyIn: 100 });
     expect((await takeSeatDenied).code).toBe('SELF_SERVE_DISABLED');
@@ -776,7 +776,7 @@ describe('socketServer: live signaling and access control', () => {
     it('anyone with the link — a guest or a signed-in player — picks their own seat; without it, nobody gets in', async () => {
       const table = await registry.createTable('Open Game', { ...OPEN, maxSeats: 3 }, null, 'open-code-1234567');
       const guest = await makeUser('Gus', 0); // a guest with nothing: the owner covers the buy-in
-      const player = await makeRegisteredUser('Pia', 150); // pays from their own balance
+      const player = await makeRegisteredUser('Pia', 150); // their own balance isn't touched: the same as a guest
       const stranger = await makeUser('Stan');
       inviteLockout.reset();
 
@@ -794,9 +794,9 @@ describe('socketServer: live signaling and access control', () => {
 
       const p = await joined(player.token, table.tableId, 'open-code-1234567');
       expect(p.perms.canTakeSeat).toBe(true);
-      expect(await takeSeat(p.sock, table.tableId, 1, 200)).toEqual(expect.objectContaining({ code: 'INSUFFICIENT_CHIPS' }));
-      expect(await takeSeat(p.sock, table.tableId, 1, 150)).toBe('seated');
-      expect((await store.findUserById(player.userId))?.chips).toBe(0);
+      expect(await takeSeat(p.sock, table.tableId, 1, 200)).toBe('seated');
+      expect(table.state.seats[1]?.stack).toBe(200);
+      expect((await store.findUserById(player.userId))?.chips).toBe(150);
 
       g.sock.close();
       p.sock.close();
@@ -935,6 +935,135 @@ describe('socketServer: live signaling and access control', () => {
     adminSocket.close();
     aliceSocket.close();
     bobSocket.close();
+  });
+
+  describe('a registered player invited to a table: treated exactly like a guest', () => {
+    async function setup(settings: Partial<TableSettings> = {}): Promise<{ table: LiveTable; admin: ClientSocket; invite: (seatId: number, buyIn: number) => Promise<string> }> {
+      const table = await registry.createTable('Friends', { ...SETTINGS, ...settings }, null, null);
+      const owner = await makeAdminUser('Owner');
+      const admin = connect(owner.token);
+      await waitFor(admin, 'connect');
+      admin.emit('join-table', { tableId: table.tableId });
+      await waitFor(admin, 'state');
+      const invite = (seatId: number, buyIn: number): Promise<string> =>
+        new Promise((resolve) => {
+          admin.emit('assign-seat', { seatId, buyIn }, (r: { ok: true; token: string }) => resolve(r.token));
+        });
+      return { table, admin, invite };
+    }
+
+    /** Opens the link as the web app does: joins with the invite, then redeems it. */
+    async function comeBy(sock: ClientSocket, tableId: string, token: string): Promise<void> {
+      sock.emit('join-table', { tableId, seatInvite: token });
+      await waitFor(sock, 'state');
+      sock.emit('redeem-seat-assignment', { token });
+    }
+
+    it('sits at exactly the invited seat with exactly the assigned money; their balance and ledger never move — through a rebuy, a hand, leaving, and coming back', async () => {
+      const { table, admin, invite } = await setup({ minBuyIn: 100, maxBuyIn: 200_000 });
+      const pia = await makeRegisteredUser('Pia', 100_000); // $1,000 of rewards
+      const ledgerBefore = await store.ledgerBalanceForUser(pia.userId);
+      const token = await invite(3, 7_500);
+      const sock = connect(pia.token);
+      await waitFor(sock, 'connect');
+      await comeBy(sock, table.tableId, token);
+      await waitForState<{ state: { seats: { seatId: number; playerId: string | null }[] } }>(sock, (p) => p.state.seats[3]?.playerId === pia.userId);
+      expect(table.seatOfUser(pia.userId)).toBe(3);
+      expect(table.state.seats[3]?.stack).toBe(7_500);
+      expect((await store.findUserById(pia.userId))?.chips).toBe(100_000);
+
+      // The owner tops them up: from nobody's balance.
+      admin.emit('admin-rebuy', { seatId: 3, amount: 500 });
+      await waitForState<{ state: { seats: { seatId: number; stack: number }[] } }>(sock, (p) => p.state.seats[3]?.stack === 8_000);
+      expect((await store.findUserById(pia.userId))?.chips).toBe(100_000);
+
+      // A hand's result stays at the table too.
+      const ownerSeat = connect((await makeUser('Gus')).token);
+      await waitFor(ownerSeat, 'connect');
+      const gusToken = await invite(1, 5_000);
+      await comeBy(ownerSeat, table.tableId, gusToken);
+      await waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(sock, (p) => p.state.seats[1]?.status === 'active');
+      table.startNextHand();
+      const acting = table.state.betting.actingSeat!;
+      table.applyPlayerAction(acting, { seatId: acting, type: 'fold' });
+      await vi.waitFor(() => expect(table.state.phase).toBe('hand-complete'));
+      const after = table.state.seats[3]!.stack;
+      expect(after).not.toBe(8_000);
+      expect((await store.findUserById(pia.userId))?.chips).toBe(100_000);
+
+      // Leaving: kept for this table, not paid into the account.
+      await emitWithAck(sock, 'leave-table');
+      expect((await store.findUserById(pia.userId))?.chips).toBe(100_000);
+      expect(await store.getGuestStack(pia.userId, table.tableId)).toBe(after);
+      expect(await store.ledgerBalanceForUser(pia.userId)).toBe(ledgerBefore);
+
+      // Back by the same link: what they left with, not a fresh amount.
+      sock.emit('redeem-seat-assignment', { token });
+      await waitForState<{ state: { seats: { seatId: number; playerId: string | null }[] } }>(sock, (p) => p.state.seats[3]?.playerId === pia.userId);
+      expect(table.state.seats[3]?.stack).toBe(after);
+      expect((await store.findUserById(pia.userId))?.chips).toBe(100_000);
+
+      admin.close();
+      sock.close();
+      ownerSeat.close();
+    });
+
+    it('a private table, for a registered player and a guest alike', async () => {
+      const { table, admin, invite } = await setup({ isPrivate: true });
+      for (const [person, seatId] of [
+        [await makeRegisteredUser('Rae', 500), 2],
+        [await makeUser('Gil'), 3],
+      ] as const) {
+        const token = await invite(seatId, 100);
+        const sock = connect(person.token);
+        await waitFor(sock, 'connect');
+        await comeBy(sock, table.tableId, token);
+        await waitForState<{ state: { seats: { seatId: number; playerId: string | null }[] } }>(sock, (p) => p.state.seats[seatId]?.playerId === person.userId);
+        expect(table.state.seats[seatId]?.stack).toBe(100);
+        sock.close();
+      }
+      admin.close();
+    });
+
+    it('without an invite of their own, a registered player still has no way in', async () => {
+      const { table, admin, invite } = await setup();
+      const token = await invite(2, 100);
+      const taker = await makeUser('Tess');
+      const t = connect(taker.token);
+      await waitFor(t, 'connect');
+      await comeBy(t, table.tableId, token);
+      await waitForState<{ state: { seats: { seatId: number; playerId: string | null }[] } }>(t, (p) => p.state.seats[2]?.playerId === taker.userId);
+      const pia = await makeRegisteredUser('Pia2', 100);
+      const sock = connect(pia.token);
+      await waitFor(sock, 'connect');
+      for (const payload of [{ tableId: table.tableId }, { tableId: table.tableId, seatInvite: token }, { tableId: table.tableId, seatInvite: 'not-a-real-token' }]) {
+        const denied = waitFor<{ code: string }>(sock, 'error');
+        sock.emit('join-table', payload);
+        expect((await denied).code).toBe('PRACTICE_ONLY');
+      }
+      admin.close();
+      t.close();
+      sock.close();
+    });
+
+    it('the invited seat taken before first use: told so, the invite not used up, never put in another seat', async () => {
+      const { table, admin, invite } = await setup();
+      const token = await invite(2, 100);
+      admin.emit('add-bot', { seatId: 2, persona: 'maniac', buyIn: 100 });
+      await waitFor(admin, 'state');
+      const pia = await makeRegisteredUser('Pia3', 100);
+      const sock = connect(pia.token);
+      await waitFor(sock, 'connect');
+      sock.emit('join-table', { tableId: table.tableId, seatInvite: token });
+      await waitFor(sock, 'state');
+      const denied = waitFor<{ code: string }>(sock, 'error');
+      sock.emit('redeem-seat-assignment', { token });
+      expect((await denied).code).toBe('SEAT_TAKEN');
+      expect(table.seatOfUser(pia.userId)).toBeNull();
+      expect(table.seatAssignmentGuest(token)).toBeNull();
+      admin.close();
+      sock.close();
+    });
   });
 
   it("assign-seat's nickname is visible only to the admin, never to the redeemer or a spectator", async () => {

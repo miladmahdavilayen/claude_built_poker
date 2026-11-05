@@ -250,6 +250,11 @@ export class DrizzleStore implements Store {
     return this.db.select().from(schema.guestPlayers).orderBy(desc(schema.guestPlayers.joinedAt));
   }
 
+  async deleteGuestPlayer(id: string): Promise<void> {
+    await this.db.delete(schema.guestPlayers).where(eq(schema.guestPlayers.id, id));
+    await this.db.delete(schema.guestStacks).where(eq(schema.guestStacks.guestId, id));
+  }
+
   async getGuestPlayer(id: string): Promise<GuestPlayerRecord | null> {
     const [row] = await this.db.select().from(schema.guestPlayers).where(eq(schema.guestPlayers.id, id));
     return row ?? null;

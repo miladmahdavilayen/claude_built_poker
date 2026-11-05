@@ -850,6 +850,74 @@ describe('HTTP routes: authorization-sensitive endpoints added for the human-acc
       expect(await store.findUserById(admin.id)).not.toBeNull();
     });
   });
+  describe('deleting guests', () => {
+    async function ownerToken(email: string): Promise<string> {
+      const admin = await store.createAccount(email, 'hash', 'Owner');
+      await store.setUserRole(admin.id, 'admin');
+      return issueAccessToken({ ...admin, role: 'admin' });
+    }
+    async function makeGuest(name: string): Promise<string> {
+      const g = await store.createGuestUser(name);
+      const now = new Date();
+      await store.recordGuestPlayer({ id: g.id, displayName: name, adminNickname: 'Dave from work', inviteKind: 'seat-invite', tableId: 't-1', tableName: 'Friends', joinedAt: now, ipAddress: '1.2.3.4', userAgent: 'phone', termsVersion: 2, termsAcceptedAt: now });
+      await store.setGuestStack(g.id, 't-1', 500);
+      return g.id;
+    }
+
+    it('DELETE /admin/guests/:id: gone from the players, chips at tables gone, the record and agreement kept under deleted users', async () => {
+      const token = await ownerToken('owner-g1@x.com');
+      const id = await makeGuest('Gina');
+      const res = await app.inject({ method: 'DELETE', url: `/admin/guests/${id}`, headers: auth(token) });
+      expect(res.statusCode).toBe(200);
+      expect(await store.getGuestPlayer(id)).toBeNull();
+      expect(await store.findUserById(id)).toBeNull();
+      expect(await store.getGuestStack(id, 't-1')).toBeNull();
+      const guests = await app.inject({ method: 'GET', url: '/admin/guests', headers: auth(token) });
+      expect(guests.json<{ guests: { id: string }[] }>().guests.map((g) => g.id)).not.toContain(id);
+      const list = await app.inject({ method: 'GET', url: '/admin/deleted-users', headers: auth(token) });
+      expect(list.json<{ users: { id: string; isGuest: boolean }[] }>().users.find((u) => u.id === id)?.isGuest).toBe(true);
+      const detail = await app.inject({ method: 'GET', url: `/admin/deleted-users/${id}`, headers: auth(token) });
+      expect(detail.json<{ guest: { termsVersion: number; ipAddress: string } }>().guest).toMatchObject({ termsVersion: 2, ipAddress: '1.2.3.4' });
+      expect((await app.inject({ method: 'DELETE', url: `/admin/guests/${id}`, headers: auth(token) })).statusCode).toBe(404);
+    });
+
+    it('only the owner can', async () => {
+      const id = await makeGuest('Gil');
+      const player = await store.createGoogleAccount({ googleId: 'g-del', email: 'del@gmail.com', displayName: 'P', avatarUrl: null });
+      const asPlayer = issueAccessToken(player);
+      expect((await app.inject({ method: 'DELETE', url: `/admin/guests/${id}`, headers: auth(asPlayer) })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: '/admin/users/bulk-delete', headers: auth(asPlayer), payload: { userIds: [id] } })).statusCode).toBe(403);
+      expect(await store.getGuestPlayer(id)).not.toBeNull();
+    });
+
+    it('bulk delete takes registered players and guests together; anyone seated at a table stays, and is named back', async () => {
+      const token = await ownerToken('owner-g2@x.com');
+      const guestA = await makeGuest('Ann');
+      const guestSeated = await makeGuest('Sam');
+      const reg = await store.createGoogleAccount({ googleId: 'g-mix', email: 'mix@gmail.com', displayName: 'Mix', avatarUrl: null });
+      const regSeated = await store.createGoogleAccount({ googleId: 'g-sit', email: 'sit@gmail.com', displayName: 'Sit', avatarUrl: null });
+      const table = await registry.createTable('Busy', { smallBlind: 1, bigBlind: 2, ante: 0, maxSeats: 4, straddleEnabled: false, minBuyIn: 40, maxBuyIn: 200, actionSeconds: 25, timeBankSeconds: 60, runItTwiceEnabled: false, rakePercent: 0, rakeCap: 0, noFlopNoDrop: true, isPrivate: false, disableChatInHand: false }, null, null);
+      const meta = (displayName: string, isGuest: boolean) => ({ displayName, isGuest, avatarSeed: 'a', clientSeed: 'c' });
+      table.takeSeat(0, guestSeated, meta('Sam', true), 100);
+      table.takeSeat(1, regSeated.id, meta('Sit', false), 100);
+
+      const res = await app.inject({ method: 'POST', url: '/admin/users/bulk-delete', headers: auth(token), payload: { userIds: [guestA, guestSeated, reg.id, regSeated.id] } });
+      const body = res.json<{ deleted: string[]; seated: string[] }>();
+      expect(body.deleted.sort()).toEqual([guestA, reg.id].sort());
+      expect(body.seated.sort()).toEqual([guestSeated, regSeated.id].sort());
+      expect(await store.getGuestPlayer(guestA)).toBeNull();
+      expect(await store.findUserById(reg.id)).toBeNull();
+      expect(await store.getGuestPlayer(guestSeated)).not.toBeNull();
+      expect(table.seatOfUser(guestSeated)).toBe(0);
+
+      // One at a time too: seated, told why.
+      for (const url of [`/admin/guests/${guestSeated}`, `/admin/users/${regSeated.id}`]) {
+        const one = await app.inject({ method: 'DELETE', url, headers: auth(token) });
+        expect(one.statusCode).toBe(409);
+        expect(one.json<{ code: string }>().code).toBe('PLAYER_SEATED');
+      }
+    });
+  });
   describe('admin balance changes', () => {
     async function owner(chips = 500_000): Promise<{ id: string; token: string }> {
       const admin = await store.createAccount('owner@x.com', 'hash', 'Owner');

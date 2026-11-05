@@ -229,6 +229,12 @@ export class MemoryStore implements Store {
     return Promise.resolve([...this.guestPlayers.values()].sort((a, b) => b.joinedAt.getTime() - a.joinedAt.getTime()).map((g) => ({ ...g })));
   }
 
+  async deleteGuestPlayer(id: string): Promise<void> {
+    this.guestPlayers.delete(id);
+    for (const key of [...this.guestStacks.keys()]) if (key.startsWith(`${id}:`)) this.guestStacks.delete(key);
+    return Promise.resolve();
+  }
+
   async getGuestPlayer(id: string): Promise<GuestPlayerRecord | null> {
     const g = this.guestPlayers.get(id);
     return Promise.resolve(g ? { ...g } : null);

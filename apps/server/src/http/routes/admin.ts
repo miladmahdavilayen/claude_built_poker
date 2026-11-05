@@ -9,7 +9,7 @@ import {
   UpdateTableSettingsSchema,
   type UpdateTableSettingsIntent,
 } from '@pokerclause/shared';
-import { archiveAndDeleteUser } from '../../auth/accountDeletion.js';
+import { archiveAndDeleteGuest, archiveAndDeleteUser } from '../../auth/accountDeletion.js';
 import { normalizeEmailKey } from '../../auth/authService.js';
 import { generateSignupKey, hashSignupKey, normalizeSignupKey } from '../../auth/signupKeys.js';
 import type { GuestPlayerRecord, PlayerGameRecord, SignedWaiverSummary, SignupKeyRecord } from '../../db/store.js';
@@ -57,6 +57,8 @@ function guestDto(g: GuestPlayerRecord) {
 function keyDto(k: SignupKeyRecord) {
   return { id: k.id, hint: k.hint, label: k.label, email: k.email, createdAt: k.createdAt.toISOString(), expiresAt: k.expiresAt.toISOString(), usedAt: k.usedAt?.toISOString() ?? null };
 }
+
+const SEATED_REPLY = { code: 'PLAYER_SEATED', message: 'This player is seated at a table — remove them from it first.' };
 
 export function registerAdminRoutes(
   app: FastifyInstance,
@@ -152,18 +154,37 @@ export function registerAdminRoutes(
     const user = await store.findUserById(userId);
     if (!user) return reply.code(404).send({ code: 'USER_NOT_FOUND', message: 'User not found.' });
     if (user.role === 'admin') return reply.code(400).send({ code: 'CANNOT_DELETE_ADMIN', message: 'The admin account cannot be deleted.' });
+    if (registry.seatedTableOf(userId)) return reply.code(409).send(SEATED_REPLY);
     await closePracticeTableOf(userId);
     await archiveAndDeleteUser(store, (await store.findUserById(userId)) ?? user, 'admin');
     return { ok: true };
   });
 
-  /** Multi-select delete from the dashboard — the admin's own account (or any id that turns out not to exist) is silently skipped rather than failing the whole batch, so selecting-all-and-deleting never has to special-case the one row that can't go. */
+  /**
+   * Multi-select delete from the dashboard, registered players and guests
+   * alike. The admin's own account (or any id that turns out not to exist) is
+   * silently skipped rather than failing the whole batch, so selecting-all-and-
+   * deleting never has to special-case the one row that can't go. Anyone
+   * seated at a table is left too, and named back in `seated`: taking them out
+   * from under a game is the owner's call, made at the table.
+   */
   app.post('/admin/users/bulk-delete', { preHandler: requireAdmin }, async (req, reply) => {
     const body = AdminBulkDeleteUsersSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_PAYLOAD', message: 'Invalid payload.' });
     const deleted: string[] = [];
     const skipped: string[] = [];
+    const seated: string[] = [];
     for (const userId of body.data.userIds) {
+      if (registry.seatedTableOf(userId)) {
+        seated.push(userId);
+        continue;
+      }
+      const guest = await store.getGuestPlayer(userId);
+      if (guest) {
+        await archiveAndDeleteGuest(store, guest);
+        deleted.push(userId);
+        continue;
+      }
       const user = await store.findUserById(userId);
       if (!user || user.role === 'admin') {
         skipped.push(userId);
@@ -173,7 +194,7 @@ export function registerAdminRoutes(
       await archiveAndDeleteUser(store, (await store.findUserById(userId)) ?? user, 'admin');
       deleted.push(userId);
     }
-    return { ok: true, deleted, skipped };
+    return { ok: true, deleted, skipped, seated };
   });
 
   /** Moves a balance by `delta` (ledgered against the house), refusing to leave it negative or above MAX_BALANCE_CENTS. */
@@ -322,6 +343,15 @@ export function registerAdminRoutes(
     return { ...guestDto(guest), games: games.map(gameDto) };
   });
 
+  app.delete('/admin/guests/:id', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const guest = await store.getGuestPlayer(id);
+    if (!guest) return reply.code(404).send({ code: 'GUEST_NOT_FOUND', message: 'Guest not found.' });
+    if (registry.seatedTableOf(id)) return reply.code(409).send(SEATED_REPLY);
+    await archiveAndDeleteGuest(store, guest);
+    return { ok: true };
+  });
+
   // --- Deleted accounts: everything about a registered player's account
   // as it was when it was deleted, for the owner only. ---
 
@@ -337,6 +367,7 @@ export function registerAdminRoutes(
         createdAt: d.createdAt.toISOString(),
         deletedAt: d.deletedAt.toISOString(),
         deletedBy: d.deletedBy,
+        isGuest: !!d.snapshot.guest,
       })),
     };
   });
@@ -362,6 +393,8 @@ export function registerAdminRoutes(
       avatarUrl: d.snapshot.avatarUrl,
       waiver: d.snapshot.waiver,
       accessKey: d.snapshot.accessKey,
+      isGuest: !!d.snapshot.guest,
+      guest: d.snapshot.guest ?? null,
       ledger: d.snapshot.ledger,
       signedWaivers: waivers.filter((w) => w.userId === d.id).map(waiverDto),
       games: games.map(gameDto),

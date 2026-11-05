@@ -339,9 +339,9 @@ function PlayersPanel({
     .filter((e) => matchesFilter(e, filter) && matchesSearch(e, q))
     .sort((a, b) => (sort === 'name' ? entryName(a).localeCompare(entryName(b)) : sort === 'oldest' ? entryDate(a) - entryDate(b) : entryDate(b) - entryDate(a)));
 
-  // Only registered, non-admin players can be deleted — "select all" never
-  // includes an id the server would just skip (see CANNOT_DELETE_ADMIN).
-  const selectableIds = shown.flatMap((e) => (e.kind === 'registered' && e.user.role !== 'admin' ? [e.user.id] : []));
+  // Anyone but the admin can be deleted — "select all" takes in whoever's
+  // showing, and never an id the server would just skip (see CANNOT_DELETE_ADMIN).
+  const selectableIds = shown.flatMap((e) => (e.kind === 'guest' ? [e.guest.id] : e.user.role !== 'admin' ? [e.user.id] : []));
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => checkedIds.has(id));
 
   const open = (next: Selected): void => {
@@ -378,9 +378,13 @@ function PlayersPanel({
     setError(null);
     api
       .adminBulkDeleteUsers([...checkedIds], accessToken)
-      .then(() => {
-        if (selected && checkedIds.has(selected.id)) setSelected(null);
-        setCheckedIds(new Set());
+      .then((res) => {
+        if (selected && res.deleted.includes(selected.id)) setSelected(null);
+        // Whoever's seated at a table stays selected, and the owner is told why.
+        setCheckedIds(new Set(res.seated));
+        if (res.seated.length > 0) {
+          setError(`${String(res.seated.length)} ${res.seated.length === 1 ? 'player is' : 'players are'} seated at a table and weren’t deleted — remove them from the table first.`);
+        }
         onChanged();
       })
       .catch((err: unknown) => setError(errorText(err, 'Failed to delete the selected accounts.')))
@@ -424,7 +428,7 @@ function PlayersPanel({
         <div className="admin-list-toolbar">
           <label className="admin-select-all">
             <input type="checkbox" checked={allSelected} onChange={() => setCheckedIds(allSelected ? new Set() : new Set(selectableIds))} />
-            Select all registered
+            Select all
           </label>
           {checkedIds.size > 0 && (
             <button type="button" className="btn-owner-action btn-owner-danger" disabled={bulkBusy} onClick={bulkDelete}>
@@ -450,7 +454,14 @@ function PlayersPanel({
                 onDeleted={() => handleRowDeleted(e.user.id)}
               />
             ) : (
-              <GuestRow key={e.guest.id} guest={e.guest} isActive={selected?.id === e.guest.id} onOpen={() => open({ kind: 'guest', id: e.guest.id })} />
+              <GuestRow
+                key={e.guest.id}
+                guest={e.guest}
+                isActive={selected?.id === e.guest.id}
+                isChecked={checkedIds.has(e.guest.id)}
+                onOpen={() => open({ kind: 'guest', id: e.guest.id })}
+                onToggleChecked={() => toggleChecked(e.guest.id)}
+              />
             ),
           )}
           {users !== null && guests !== null && shown.length === 0 && <p className="profile-hint">No players match.</p>}
@@ -458,7 +469,7 @@ function PlayersPanel({
 
         <div ref={detailRef} className="admin-detail-slot">
           {selected?.kind === 'registered' && <AdminUserDetail key={selected.id} userId={selected.id} onClose={() => setSelected(null)} onChanged={onChanged} />}
-          {selected?.kind === 'guest' && <GuestDetail key={selected.id} guestId={selected.id} accessToken={accessToken} onClose={() => setSelected(null)} />}
+          {selected?.kind === 'guest' && <GuestDetail key={selected.id} guestId={selected.id} accessToken={accessToken} onClose={() => setSelected(null)} onDeleted={() => handleRowDeleted(selected.id)} />}
           {selected === null && shown.length > 0 && <p className="profile-hint admin-detail-placeholder">Choose a player to see everything about them.</p>}
         </div>
       </div>
@@ -588,10 +599,40 @@ function AdminUserRow({
 }
 
 /** One guest: their name, kind of invite, the name the owner gave the invite, and where and when they joined. */
-function GuestRow({ guest, isActive, onOpen }: { guest: AdminGuestDto; isActive: boolean; onOpen: () => void }): React.JSX.Element {
+function GuestRow({
+  guest,
+  isActive,
+  isChecked,
+  onOpen,
+  onToggleChecked,
+}: {
+  guest: AdminGuestDto;
+  isActive: boolean;
+  isChecked: boolean;
+  onOpen: () => void;
+  onToggleChecked: () => void;
+}): React.JSX.Element {
   return (
-    <button type="button" className={`admin-user-row admin-guest-row ${isActive ? 'admin-user-row-active' : ''}`} onClick={onOpen}>
-      <span className="admin-user-row-checkbox" />
+    <div
+      role="button"
+      tabIndex={0}
+      className={`admin-user-row admin-guest-row ${isActive ? 'admin-user-row-active' : ''}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <input
+        type="checkbox"
+        className="admin-user-row-checkbox"
+        aria-label={`Select ${guest.displayName}`}
+        checked={isChecked}
+        onClick={(e) => e.stopPropagation()}
+        onChange={onToggleChecked}
+      />
       <span className="admin-user-row-main">
         <span className="admin-user-row-name">
           {guest.displayName}
@@ -602,7 +643,7 @@ function GuestRow({ guest, isActive, onOpen }: { guest: AdminGuestDto; isActive:
           {guest.tableName ?? 'a table'} · {new Date(guest.joinedAt).toLocaleDateString()}
         </span>
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -982,9 +1023,23 @@ function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClo
 }
 
 /** A guest's page: who they said they were, the invite they came by, their acceptance of the guest terms, and their games. */
-function GuestDetail({ guestId, accessToken, onClose }: { guestId: string; accessToken: string; onClose: () => void }): React.JSX.Element {
+function GuestDetail({ guestId, accessToken, onClose, onDeleted }: { guestId: string; accessToken: string; onClose: () => void; onDeleted: () => void }): React.JSX.Element {
   const [detail, setDetail] = useState<(AdminGuestDto & { games: PlayerGameDto[] }) | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const submitDelete = (): void => {
+    setBusy(true);
+    setError(null);
+    api
+      .adminDeleteGuest(guestId, accessToken)
+      .then(onDeleted)
+      .catch((err: unknown) => {
+        setError(errorText(err, 'Failed to delete this guest.'));
+        setDeleteConfirm(false);
+      })
+      .finally(() => setBusy(false));
+  };
 
   useEffect(() => {
     api
@@ -1036,6 +1091,27 @@ function GuestDetail({ guestId, accessToken, onClose }: { guestId: string; acces
       <DetailSection title="Games played">
         <GamesList games={detail.games} />
       </DetailSection>
+
+      {error && <div className="error-banner">{error}</div>}
+      <div className="profile-danger-zone">
+        {!deleteConfirm ? (
+          <button type="button" className="btn-owner-action btn-owner-danger" onClick={() => setDeleteConfirm(true)}>
+            Delete this guest
+          </button>
+        ) : (
+          <>
+            <p className="profile-hint">Deletes {detail.displayName} from your players. Their record and agreement are kept under Deleted users, for your eyes only; any chips they left at a table are gone.</p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setDeleteConfirm(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button type="button" className="btn-owner-action btn-owner-danger" disabled={busy} onClick={submitDelete}>
+                Confirm delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1207,10 +1283,11 @@ function DeletedUsersPanel({ accessToken, users }: { accessToken: string; users:
               <span className="admin-user-row-main">
                 <span className="admin-user-row-name">
                   {u.displayName} <span className="player-tag player-tag-deleted">Deleted</span>
+                  {u.isGuest && <span className="player-tag player-tag-guest">Guest</span>}
                 </span>
                 <span className="admin-user-row-sub">
                   {u.accessKeyLabel && <span className="admin-given-name">&ldquo;{u.accessKeyLabel}&rdquo;</span>}
-                  {u.email ?? 'no email'} · {new Date(u.deletedAt).toLocaleDateString()}
+                  {u.isGuest ? 'guest' : (u.email ?? 'no email')} · {new Date(u.deletedAt).toLocaleDateString()}
                 </span>
               </span>
               <span className="admin-user-row-chips">{formatChips(u.balance)}</span>
@@ -1273,12 +1350,31 @@ function DeletedUserDetail({ id, accessToken, onClose }: { id: string; accessTok
         items={[
           ['Name you gave them', detail.accessKeyLabel],
           ['Email', detail.email],
-          ['Account', detail.hasGoogle ? 'Google' : 'Password'],
+          ['Account', detail.isGuest ? 'Guest' : detail.hasGoogle ? 'Google' : 'Password'],
           ['Signed up', when(detail.createdAt)],
           ['Last Google sign-in', detail.lastLoginAt ? when(detail.lastLoginAt) : null],
           ['Deleted', when(detail.deletedAt)],
         ]}
       />
+
+      {detail.guest && (
+        <DetailSection title="Agreement" testId="deleted-guest-agreement">
+          <div className="admin-record-card">
+            <span className="admin-key-label">
+              Guest terms <span className="admin-key-hint">v{detail.guest.termsVersion}</span> <span className="admin-key-status admin-key-status-active">Agreed</span>
+            </span>
+            <Fields
+              items={[
+                ['Came by', detail.guest.inviteKind === 'seat-invite' ? 'Your seat invite (a one-person link)' : 'The table’s open-invite link'],
+                ['Table', detail.guest.tableName],
+                ['Agreed on', when(detail.guest.termsAcceptedAt)],
+                ['IP address', detail.guest.ipAddress ?? 'unknown'],
+                ['Device', deviceGist(detail.guest.userAgent)],
+              ]}
+            />
+          </div>
+        </DetailSection>
+      )}
 
       <DetailSection title="Access key">
         {detail.accessKey ? <AccessKeyCard accessKey={detail.accessKey} /> : <p className="profile-hint">Signed up without an access key.</p>}

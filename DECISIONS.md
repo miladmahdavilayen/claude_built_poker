@@ -3167,3 +3167,16 @@ about ten.
   add it, each once (one player's two cards are one reveal, shown one by one or
   with Reveal Hand). Any further reveal still shows, but the next hand doesn't
   wait longer for it.
+
+## Deleting guests from the dashboard
+
+- The owner can delete any player but themselves from the dashboard, guests as well
+  as registered players: tick a few, Select all (of whoever the filter and search
+  are showing), or one from their own page. A guest goes the way an account does:
+  off Players, filed whole under Deleted users, tagged Guest, with the invite they
+  came by and their agreement to the guest terms — the terms promise that record is
+  kept. The chips they left at tables go; their game history stays, found by the
+  same id. A used seat invite still brings them back, on the list again.
+- Anyone seated at a live table is left alone, whoever they are: pulling them out
+  from under a game would break it (and registered players can now be seated by
+  invite too). Bulk delete does the rest and says how many stayed; they stay ticked.

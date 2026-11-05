@@ -336,6 +336,7 @@ export function adminGetGuest(id: string, accessToken: string): Promise<AdminGue
 }
 
 export interface DeletedUserDto {
+  isGuest: boolean;
   id: string;
   displayName: string;
   email: string | null;
@@ -348,6 +349,7 @@ export interface DeletedUserDto {
 }
 
 export interface DeletedUserDetailDto extends DeletedUserDto {
+  guest: Pick<AdminGuestDto, 'adminNickname' | 'inviteKind' | 'tableName' | 'joinedAt' | 'ipAddress' | 'userAgent' | 'termsVersion' | 'termsAcceptedAt'> | null;
   hasGoogle: boolean;
   role: 'player' | 'admin';
   netPlayResult: number;
@@ -385,7 +387,12 @@ export function adminDeleteUser(userId: string, accessToken: string): Promise<{ 
 }
 
 /** The admin's own account (or any id that no longer exists) is silently skipped server-side rather than failing the whole batch — see `skipped` in the response. */
-export function adminBulkDeleteUsers(userIds: string[], accessToken: string): Promise<{ ok: true; deleted: string[]; skipped: string[] }> {
+export function adminDeleteGuest(id: string, accessToken: string): Promise<{ ok: true }> {
+  return deleteJson(`/admin/guests/${encodeURIComponent(id)}`, accessToken);
+}
+
+/** Registered players and guests alike; anyone seated at a table is left, and named in `seated`. */
+export function adminBulkDeleteUsers(userIds: string[], accessToken: string): Promise<{ ok: true; deleted: string[]; skipped: string[]; seated: string[] }> {
   return postJson('/admin/users/bulk-delete', { userIds }, accessToken);
 }
 

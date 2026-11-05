@@ -149,6 +149,10 @@ export class HybridStore implements Store {
     return this.real.listGuestPlayers();
   }
 
+  deleteGuestPlayer(id: string): Promise<void> {
+    return this.real.deleteGuestPlayer(id);
+  }
+
   getGuestPlayer(id: string): Promise<GuestPlayerRecord | null> {
     return this.real.getGuestPlayer(id);
   }

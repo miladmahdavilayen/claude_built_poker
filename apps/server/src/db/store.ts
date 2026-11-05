@@ -69,6 +69,17 @@ export interface DeletedUserSnapshot {
   avatarUrl: string | null;
   waiver: { version: number; initials: string; acceptedAt: string } | null;
   accessKey: { id: string; hint: string; label: string; email: string | null; createdAt: string; usedAt: string | null } | null;
+  /** A deleted guest's record as it stood: the invite they came by, and their agreement to the guest terms. */
+  guest?: {
+    adminNickname: string | null;
+    inviteKind: 'seat-invite' | 'open-link';
+    tableName: string | null;
+    joinedAt: string;
+    ipAddress: string | null;
+    userAgent: string | null;
+    termsVersion: number;
+    termsAcceptedAt: string;
+  };
   /** Their whole ledger history, newest first — its rows in chip_ledger lose their user id with the account. */
   ledger: { id: string; amount: number; reason: LedgerReason; tableId: string | null; handId: string | null; createdAt: string }[];
 }
@@ -358,6 +369,8 @@ export interface Store {
   /** Newest first. */
   listGuestPlayers(): Promise<GuestPlayerRecord[]>;
   getGuestPlayer(id: string): Promise<GuestPlayerRecord | null>;
+  /** Removes a guest's record and the chips they left at tables (see Auth's archiveAndDeleteGuest — filed under deleted users first). */
+  deleteGuestPlayer(id: string): Promise<void>;
   /** The chips a guest left a table with (cents) — what they sit down with when they come back. Null if they never left it. */
   getGuestStack(guestId: string, tableId: string): Promise<number | null>;
   setGuestStack(guestId: string, tableId: string, chips: number): Promise<void>;

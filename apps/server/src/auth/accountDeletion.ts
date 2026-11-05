@@ -1,4 +1,4 @@
-import type { DeletedUserSnapshot, Store, UserRecord } from '../db/store.js';
+import type { DeletedUserSnapshot, GuestPlayerRecord, Store, UserRecord } from '../db/store.js';
 
 /** More than any real account's history — the whole ledger is kept, not a recent page of it. */
 const ALL_LEDGER_ENTRIES = 1_000_000;
@@ -47,4 +47,49 @@ export async function archiveAndDeleteUser(store: Store, user: UserRecord, delet
     snapshot,
   });
   await store.deleteUser(user.id);
+  // Any chips kept for them at tables they were invited to (see socketServer.ts's usesTableMoney).
+  await store.deleteGuestPlayer(user.id);
+}
+
+/**
+ * Deletes a guest the same way: out of the owner's Players, filed whole under
+ * Deleted users — the invite they came by and their agreement to the guest
+ * terms included, which the terms promise is kept. Their game history stays,
+ * found by the same id; the chips they left at tables are gone. A used seat
+ * invite still brings them back, as a guest on the list again.
+ */
+export async function archiveAndDeleteGuest(store: Store, guest: GuestPlayerRecord): Promise<void> {
+  const live = await store.findUserById(guest.id);
+  await store.archiveDeletedUser({
+    id: guest.id,
+    email: null,
+    googleId: null,
+    displayName: guest.displayName,
+    accessKeyLabel: guest.adminNickname,
+    role: 'player',
+    balance: 0,
+    netPlayResult: 0,
+    createdAt: guest.joinedAt,
+    lastLoginAt: null,
+    deletedAt: new Date(),
+    deletedBy: 'admin',
+    snapshot: {
+      avatarUrl: null,
+      waiver: null,
+      accessKey: null,
+      guest: {
+        adminNickname: guest.adminNickname,
+        inviteKind: guest.inviteKind,
+        tableName: guest.tableName,
+        joinedAt: guest.joinedAt.toISOString(),
+        ipAddress: guest.ipAddress,
+        userAgent: guest.userAgent,
+        termsVersion: guest.termsVersion,
+        termsAcceptedAt: guest.termsAcceptedAt.toISOString(),
+      },
+      ledger: [],
+    },
+  });
+  await store.deleteGuestPlayer(guest.id);
+  if (live) await store.deleteUser(guest.id);
 }

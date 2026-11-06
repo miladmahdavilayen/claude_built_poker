@@ -1609,6 +1609,60 @@ input[type='range']::-moz-range-thumb {
   animation: card-flip-glow 0.9s ease-out forwards;
 }
 
+/* The table timer's clock, top left (TableClock.tsx); the fairness line moves down to make room. */
+.table-clock {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left));
+  top: calc(8px + env(safe-area-inset-top));
+  z-index: 7;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(8, 12, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #f2f4f7;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.table-clock--soon {
+  border-color: var(--accent);
+  color: #ffe9b0;
+}
+.table-clock--last {
+  border-color: var(--danger);
+  background: rgba(70, 14, 14, 0.92);
+  color: #ffd2cd;
+}
+.felt:has(.table-clock) .fairness-commitment:not(.fairness-commitment--board) {
+  top: 40px;
+}
+.felt:has(.table-clock) .fairness-link:not(.fairness-link--board) {
+  top: 56px;
+}
+.table-timer-control {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+}
+.table-timer-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.table-timer-set {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.table-timer-set label {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Who you'll be at the table (CharacterPicker.tsx): small pictures with names, as many as fit a row. */
 .character-picker-title {
   margin: 8px 0 4px;

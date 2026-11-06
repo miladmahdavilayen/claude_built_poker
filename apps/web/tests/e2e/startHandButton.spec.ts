@@ -10,8 +10,9 @@ test('no hand deals automatically — seating players only enables "Play Hand", 
   await adminLogin(page);
   await createTable(page, { name: 'Start Hand Table', smallBlind: 1, bigBlind: 2, maxSeats: 6, isPrivate: false });
 
-  // Before anyone is seated: the panel shows a passive "waiting" hint (no button to click).
-  await expect(page.getByText(/Waiting for a seated player to start a hand/)).toBeVisible();
+  // Before anyone is seated: the owner, who starts a new table whether seated or not, has the button — but no game to start.
+  await expect(page.getByRole('button', { name: 'Play Hand' })).toBeDisabled();
+  await expect(page.getByText(/Waiting for at least 2 seated players/)).toBeVisible();
 
   await takeSeat(page, 0, 200);
 

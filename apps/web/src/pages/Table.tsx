@@ -9,6 +9,7 @@ import { ChatPanel } from '../components/ChatPanel.js';
 import { ChipStack } from '../components/ChipStack.js';
 import { DealAnimation } from '../components/DealAnimation.js';
 import { HandBreakPanel } from '../components/HandBreakPanel.js';
+import { TableClock } from '../components/TableClock.js';
 import { MoneyInput } from '../components/MoneyInput.js';
 import { OwnerMenu } from '../components/OwnerMenu.js';
 import { SeatActionMenu, useSeatDoubleTap, useSeatMenuGesture, type SeatAction } from '../components/SeatActionMenu.js';
@@ -414,7 +415,13 @@ export function TablePage(): React.JSX.Element {
   // Everyone hears the table without joining the call; seeing other
   // players' cameras is for whoever has joined it, plus the owner, who can
   // watch any table's cameras without having to turn on their own.
-  const canSeeVideo = voice.inCall || user?.role === 'admin';
+  // An audio-only table (its `audioOnly` setting) has no one's camera at all, the owner's included.
+  const audioOnly = sock.state?.settings.audioOnly === true;
+  const canSeeVideo = !audioOnly && (voice.inCall || user?.role === 'admin');
+  // Turned audio-only with a camera on: it goes off for good measure (and comes back only if they turn it on).
+  useEffect(() => {
+    if (audioOnly && voice.cameraOn) voice.toggleCamera();
+  }, [audioOnly, voice.cameraOn]);
   // On the 3D table, cameras show only through your own eyes at your seat: the standing view, and the table seen
   // before you've sat down, show no one's camera (yours included) — their voices still play.
   const eyes3d = is3d && view.effective !== '2d' && view.effective.mode === 'seated' && sock.state?.viewerSeatId !== null;
@@ -941,7 +948,7 @@ export function TablePage(): React.JSX.Element {
           voice={voiceStreamForSeat(seat)}
           // On the 3D table the others' cameras are screens in the scene itself (seatVideos below); the box keeps only your own.
           showVideo={canSeeVideo && (is3d ? eyes3d && seatId === state.viewerSeatId : !hiddenCameraSeatIds.has(String(seatId)))}
-          callControls={seatId === state.viewerSeatId && !sock.isPractice ? <SeatCallControls voice={voice} /> : undefined}
+          callControls={seatId === state.viewerSeatId && !sock.isPractice ? <SeatCallControls voice={voice} allowVideo={!audioOnly} /> : undefined}
           peerMute={seatId !== state.viewerSeatId ? peerMuteFor(callIdOf(seat), seat.displayName) : undefined}
           shownCardsBelow={place.nearTop}
           shownAlign={place.side}
@@ -1055,7 +1062,7 @@ export function TablePage(): React.JSX.Element {
           {!sock.isPractice && !mySeat && (
             <TableMenuSection title="Call">
               {/* The others not seated are in the strip over the table (below) — here, only your own controls and tile. */}
-              <VoicePanel voice={voice} myName={user.displayName} amSeated={false} unseatedPeers={[]} canSeeVideo={canSeeVideo} />
+              <VoicePanel allowVideo={!audioOnly} voice={voice} myName={user.displayName} amSeated={false} unseatedPeers={[]} canSeeVideo={canSeeVideo} />
             </TableMenuSection>
           )}
           <TableMenuSection title="View">
@@ -1244,6 +1251,7 @@ export function TablePage(): React.JSX.Element {
             />
           </Suspense>
         )}
+        {state.settings.timerEndsAt !== undefined && <TableClock endsAt={state.settings.timerEndsAt} />}
         {!fairnessUnderBoard && state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
             Fairness commitment: {state.handCommitment.slice(0, 12)}&hellip;
@@ -1289,7 +1297,9 @@ export function TablePage(): React.JSX.Element {
           onLog={onSplitLog}
         />
         {state.phase !== 'in-hand' && (
-          <HandBreakPanel nextHandAt={state.nextHandAt} canStartHand={state.canStartHand} amSeated={!!mySeat} onStartHand={() => sock.startHand()} />
+          <HandBreakPanel
+            waitingForOwner={!sock.isPractice && !state.gameStarted && user.role !== 'admin'}
+            nextHandAt={state.nextHandAt} canStartHand={state.canStartHand} amSeated={!!mySeat || (user.role === 'admin' && !sock.isPractice && !state.gameStarted)} onStartHand={() => sock.startHand()} />
         )}
         {!is3d &&
           placedPositions.map(({ seatId, left, top, betLeft, betTop }) => {

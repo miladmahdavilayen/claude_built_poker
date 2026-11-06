@@ -100,6 +100,8 @@ export function registerTableRoutes(app: FastifyInstance, store: Store, registry
       // An open-invite table is always private: only its link gets anyone in.
       isPrivate: input.isPrivate || input.openSeating,
       disableChatInHand: input.disableChatInHand,
+      ...(input.timerMinutes !== undefined ? { timerEndsAt: Date.now() + input.timerMinutes * 60_000 } : {}),
+      ...(input.audioOnly ? { audioOnly: true } : {}),
       ...(input.openSeating ? { openSeating: true, openSeatStack: input.openSeatStack ?? input.maxBuyIn ?? input.maxBuyInBB * input.bigBlind } : {}),
     };
     // A shareable link goes to group chats: its code is 96 random bits, not 32.

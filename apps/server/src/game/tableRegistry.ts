@@ -84,6 +84,11 @@ export class TableRegistry {
     return this.tables.get(tableId) ?? null;
   }
 
+  /** Every table open now. */
+  all(): LiveTable[] {
+    return [...this.tables.values()];
+  }
+
   /** The real (not practice) table this player is seated at, if any. */
   seatedTableOf(userId: string): LiveTable | null {
     return [...this.tables.values()].find((t) => !t.isPractice && t.seatOfUser(userId) !== null) ?? null;

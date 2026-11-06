@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { adminGetTableSettings, adminUpdateTableSettings } from '../api.js';
 import { diffSettings, formFromSettings, TableSettingsFields, type SettingsForm } from './TableSettingsForm.js';
 import { ErrorBanner } from './ErrorBanner.js';
+import { TableTimerControl } from './TableClock.js';
 import { withInviterView } from '../table3d/quality.js';
 
 /**
@@ -31,6 +32,16 @@ export function TableSettingsModal({
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [endsAt, setEndsAt] = useState<number | undefined>(undefined);
+  // A running timer's buttons act at once, like the same ones at the table.
+  const adjustTimer = (timerPatch: { timerAddMinutes: number } | { timerMinutes: number }): void => {
+    adminUpdateTableSettings(tableId, timerPatch, accessToken)
+      .then((r) => {
+        setEndsAt(r.settings.timerEndsAt);
+        onSaved();
+      })
+      .catch((err: unknown) => setMessage({ ok: false, text: err instanceof Error ? err.message : 'Couldn’t change the timer.' }));
+  };
 
   useEffect(() => {
     adminGetTableSettings(tableId, accessToken)
@@ -39,6 +50,7 @@ export function TableSettingsModal({
         setBase(f);
         setForm(f);
         setInHand(r.inHand);
+        setEndsAt(r.settings.timerEndsAt);
         setInviteCode(r.inviteCode);
       })
       .catch((err: unknown) => setMessage({ ok: false, text: err instanceof Error ? err.message : 'Couldn’t load this table’s settings.' }));
@@ -71,6 +83,7 @@ export function TableSettingsModal({
         const f = formFromSettings(r.name, r.settings);
         setBase(f);
         setForm(f);
+        setEndsAt(r.settings.timerEndsAt);
         setInviteCode(r.inviteCode);
         setMessage({ ok: true, text: r.deferred ? 'Saved — blinds/ante/straddle switch over when the hand in progress ends.' : 'Saved.' });
         onSaved();
@@ -107,6 +120,7 @@ export function TableSettingsModal({
         )}
         {inHand && <p className="owner-menu-note">A hand is in progress: blinds, ante and straddle switch over when it ends. Everything else applies right away.</p>}
         {form ? <TableSettingsFields form={form} set={set} /> : !message && <p className="muted">Loading…</p>}
+        {endsAt !== undefined && form?.timerOn && <TableTimerControl endsAt={endsAt} onChange={adjustTimer} />}
         {message && (message.ok ? <div className="owner-menu-ok">{message.text}</div> : <ErrorBanner message={message.text} onClose={() => setMessage(null)} />)}
         <div className="modal-actions">
           <button type="button" onClick={onClose} disabled={busy}>

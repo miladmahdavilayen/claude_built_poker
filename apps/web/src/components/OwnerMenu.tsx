@@ -1,3 +1,4 @@
+import { TableTimerControl } from './TableClock.js';
 import type { ProjectedSeat, ProjectedTableState } from '@pokerclause/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { formatChips } from '../chips.js';
@@ -176,6 +177,16 @@ export function OwnerMenu({
               </>
             }
           />
+          {state.settings.timerEndsAt !== undefined && form.timerOn && (
+            <TableTimerControl
+              endsAt={state.settings.timerEndsAt}
+              onChange={(timerPatch) => {
+                void sock.updateTableSettings(timerPatch).then((r) => {
+                  if (!r.ok) setSaveMessage({ ok: false, text: r.message });
+                });
+              }}
+            />
+          )}
           {inHand && <p className="owner-menu-note">Blinds, ante and straddle switch over when this hand ends. Everything else applies right away.</p>}
           {saveMessage &&
             (saveMessage.ok ? <div className="owner-menu-ok">{saveMessage.text}</div> : <ErrorBanner message={saveMessage.text} onClose={() => setSaveMessage(null)} />)}

@@ -105,7 +105,7 @@ const FLOOR_Y = -1.56;
 /** A box on screen, px. */
 type Rect = { x0: number; y0: number; x1: number; y1: number };
 
-const OBSTACLES = '.start-hand-panel > *, .table-corner, .fairness-commitment, .fairness-link, .board-hud, .action-ticker';
+const OBSTACLES = '.start-hand-panel > *, .table-corner, .table-clock, .fairness-commitment, .fairness-link, .board-hud, .action-ticker';
 /** Small round buttons a camera screen keeps clear of when it can — but covers rather than not be seen at all. */
 const SOFT_OBSTACLES = '.table3d-recenter, .table3d-whole, .table-menu-button';
 

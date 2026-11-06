@@ -881,6 +881,11 @@ export function attachSocketServer(
         callback?.({ ok: false, code: 'INVALID_PAYLOAD', message: 'Invalid table settings.' });
         return;
       }
+      // The timer and the kind of call are the owner's alone, wherever anyone else may manage a table.
+      if (data.role !== 'admin' && (parsed.data.timerMinutes !== undefined || parsed.data.timerAddMinutes !== undefined || parsed.data.audioOnly !== undefined)) {
+        callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can change that.' });
+        return;
+      }
       const result = table.updateSettings(parsed.data);
       if (!result.ok) {
         callback?.(result);
@@ -1068,7 +1073,11 @@ export function attachSocketServer(
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'You must be signed in to start a hand.');
       const seatId = table.seatOfUser(data.userId);
-      if (seatId === null) return emitError('NOT_SEATED', 'You must be seated to start a hand.');
+      const isOwner = data.role === 'admin';
+      // The owner kicks a new or reset table off, seated or not; after that, anyone seated can deal the next hand.
+      if (seatId === null && !(isOwner && !table.isPractice)) return emitError('NOT_SEATED', 'You must be seated to start a hand.');
+      if (!table.isPractice && !table.gameStarted && !isOwner) return emitError('OWNER_STARTS', 'The table’s owner starts the first hand.');
+      if (table.timeIsUp) return emitError('TIME_IS_UP', 'This table’s time is up.');
       // prepareNextOrbit is a harmless no-op before a table's very first
       // hand (fresh seats have nothing to refill/apply) and is required
       // before every hand after the first (time-bank refill, queued
@@ -1295,6 +1304,19 @@ export function attachSocketServer(
       await closeTableWithNotice(tableId, 'The server is restarting for an update. Your chips are back in your balance.', 'server restarted for an update', true);
     }
   }
+
+  // The table timer: every open table's clock, checked here rather than one timer per table, so a table that was just
+  // created, restored after a restart or had its time changed needs nothing more. A hand running when time runs out
+  // finishes, its result is seen, and then the table ends for everyone.
+  const endingTables = new Set<string>();
+  const timerSweep = setInterval(() => {
+    for (const table of registry.all()) {
+      if (table.isPractice || !table.timeIsUp || !table.readyToEnd || endingTables.has(table.tableId)) continue;
+      endingTables.add(table.tableId);
+      void closeTableWithNotice(table.tableId, 'Time’s up — this table has ended.', 'the table’s timer ran out').finally(() => endingTables.delete(table.tableId));
+    }
+  }, 2000);
+  timerSweep.unref();
 
   async function terminateTable(tableId: string): Promise<boolean> {
     if (!registry.get(tableId)) return false;

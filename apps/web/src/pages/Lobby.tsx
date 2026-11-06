@@ -228,6 +228,9 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
   const [maxSeats, setMaxSeats] = useState(6);
   const [isPrivate, setIsPrivate] = useState(false);
   const [openSeating, setOpenSeating] = useState(false);
+  const [timerOn, setTimerOn] = useState(false);
+  const [timerMinutes, setTimerMinutes] = useState<number | ''>(60);
+  const [videoCall, setVideoCall] = useState(true);
   // An open-invite table's starting chips for each new player — the max buy-in until the owner sets it.
   const [openSeatStackOverride, setOpenSeatStackOverride] = useState<number | '' | null>(null);
   const openSeatStack = openSeatStackOverride ?? maxBuyIn;
@@ -251,7 +254,7 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
     }
     api
       .createTable(
-        { name, smallBlind, bigBlind, maxSeats, isPrivate: isPrivate || openSeating, openSeating, minBuyIn, maxBuyIn, ...(openSeating && openSeatStack !== '' ? { openSeatStack } : {}) },
+        { name, smallBlind, bigBlind, maxSeats, isPrivate: isPrivate || openSeating, openSeating, minBuyIn, maxBuyIn, audioOnly: !videoCall, ...(timerOn && timerMinutes !== '' ? { timerMinutes: Math.round(timerMinutes) } : {}), ...(openSeating && openSeatStack !== '' ? { openSeatStack } : {}) },
         accessToken,
       )
       .then((res) => setCreated({ tableId: res.tableId, inviteCode: res.inviteCode, open: openSeating }))
@@ -342,6 +345,20 @@ function CreateTableModal({ onClose, accessToken }: { onClose: () => void; acces
           <input type="checkbox" checked={isPrivate || openSeating} disabled={openSeating} onChange={(e) => setIsPrivate(e.target.checked)} />
           Private (invite-only, hidden from the lobby list)
         </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={videoCall} onChange={(e) => setVideoCall(e.target.checked)} />
+          Video in the table&rsquo;s call (off: audio only)
+        </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={timerOn} onChange={(e) => setTimerOn(e.target.checked)} />
+          Table timer (the table ends when it runs out)
+        </label>
+        {timerOn && (
+          <label>
+            Minutes
+            <input type="number" min={1} max={1440} value={timerMinutes} onChange={(e) => setTimerMinutes(e.target.value === '' ? '' : Number(e.target.value))} />
+          </label>
+        )}
         <div className="modal-actions">
           <button type="button" onClick={onClose}>
             Cancel

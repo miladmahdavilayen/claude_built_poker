@@ -215,6 +215,9 @@ export function createPracticeTable(input: { bots: number; stakes: PracticeStake
 
 /** Amounts are integer cents — see packages/shared/src/money.ts. */
 export interface CreateTableInput {
+  /** The table timer: it ends this many minutes from now. */
+  timerMinutes?: number;
+  audioOnly?: boolean;
   name: string;
   smallBlind: number;
   bigBlind: number;

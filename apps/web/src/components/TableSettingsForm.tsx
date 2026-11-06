@@ -17,6 +17,12 @@ export type SettingsForm = {
   timeBankSeconds: number | '';
   isPrivate: boolean;
   disableChatInHand: boolean;
+  /** Whether the table has a timer; how long to give it when turning it on (a running one moves by TableTimerControl). */
+  timerOn: boolean;
+  timerRunning: boolean;
+  timerMinutes: number | '';
+  /** Full video in the table's call; off, audio only. */
+  videoCall: boolean;
   /** Open-invite tables only; null on any other table. */
   openSeatStack: number | '' | null;
 };
@@ -35,6 +41,10 @@ export function formFromSettings(name: string, s: TableSettings): SettingsForm {
     timeBankSeconds: s.timeBankSeconds,
     isPrivate: s.isPrivate,
     disableChatInHand: s.disableChatInHand,
+    timerOn: s.timerEndsAt !== undefined,
+    timerRunning: s.timerEndsAt !== undefined,
+    timerMinutes: 60,
+    videoCall: !s.audioOnly,
     openSeatStack: s.openSeating ? (s.openSeatStack ?? s.maxBuyIn) : null,
   };
 }
@@ -54,6 +64,11 @@ export function diffSettings(form: SettingsForm, base: SettingsForm): UpdateTabl
   }
   for (const key of ['straddleEnabled', 'isPrivate', 'disableChatInHand'] as const) {
     if (form[key] !== base[key]) out[key] = form[key];
+  }
+  if (form.videoCall !== base.videoCall) out.audioOnly = !form.videoCall;
+  if (form.timerOn !== base.timerOn) {
+    if (form.timerOn && (form.timerMinutes === '' || form.timerMinutes < 1 || form.timerMinutes > 1440)) return 'The timer needs a length, from 1 to 1440 minutes.';
+    out.timerMinutes = form.timerOn ? Math.round(Number(form.timerMinutes)) : null;
   }
   if (form.openSeatStack !== null && form.openSeatStack !== base.openSeatStack) {
     if (form.openSeatStack === '' || form.openSeatStack <= 0) return 'Every amount needs a value.';
@@ -152,6 +167,26 @@ export function TableSettingsFields({
         <input type="checkbox" checked={form.disableChatInHand} onChange={(e) => set('disableChatInHand', e.target.checked)} />
         No chat for players still in a hand
       </label>
+      <label className="checkbox-label">
+        <input type="checkbox" checked={form.videoCall} onChange={(e) => set('videoCall', e.target.checked)} />
+        Video in the table&rsquo;s call (off: audio only)
+      </label>
+      <label className="checkbox-label">
+        <input type="checkbox" checked={form.timerOn} onChange={(e) => set('timerOn', e.target.checked)} />
+        Table timer (the table ends when it runs out)
+      </label>
+      {form.timerOn && !form.timerRunning && (
+        <label>
+          Minutes
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            value={form.timerMinutes}
+            onChange={(e) => set('timerMinutes', e.target.value === '' ? '' : Number(e.target.value))}
+          />
+        </label>
+      )}
     </>
   );
 }

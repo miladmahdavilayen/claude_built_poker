@@ -11,6 +11,10 @@ export interface TableSettings extends TableConfig {
   noFlopNoDrop: boolean;
   isPrivate: boolean;
   disableChatInHand: boolean;
+  /** When the table ends (epoch ms): the owner's optional table timer. Absent: no timer. */
+  timerEndsAt?: number;
+  /** The table's call is audio only: nobody's camera, on or off. Absent or false: full video. */
+  audioOnly?: boolean;
   /**
    * An open-invite table: anyone holding its link (`?code=` — see
    * apps/server's open-invite tables) can pick a free seat themselves, or
@@ -168,6 +172,8 @@ export interface ProjectedTableState {
   revealEligibleSeatId: number | null;
   /** This viewer may show either of their cards right now (LiveTable.showCard): heads-up in the hand, or anyone dealt in once it's complete. */
   canShowCards: boolean;
+  /** A hand has been started since this table was created or reset: until then only the owner can start one. */
+  gameStarted: boolean;
   rakePot: number;
   /**
    * Everyone waiting for a seat, in queue order. Visible to all viewers

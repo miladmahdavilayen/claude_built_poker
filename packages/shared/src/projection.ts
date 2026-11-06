@@ -31,6 +31,8 @@ export interface ProjectionContext {
    * showdown-reveal — never populated just because a hand ended by fold).
    */
   revealedSeatIds: ReadonlySet<number>;
+  /** A hand has been started since the table was created or reset. Absent: taken as yes. */
+  gameStarted?: boolean;
   /** Which of its cards each seat has chosen to show mid-hand, heads-up (LiveTable.showCard): only these faces go to other viewers. */
   shownCards?: ReadonlyMap<number, ReadonlySet<number>>;
   actionDeadline: number | null;
@@ -178,6 +180,7 @@ export function projectStateForSeat(
     nextHandAt: ctx.nextHandAt,
     revealEligibleSeatId: ctx.revealEligibleSeatId,
     canShowCards: mayShowCards(state, viewerSeatId, ctx.revealedSeatIds),
+    gameStarted: ctx.gameStarted ?? true,
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
     removedSeatIds: ctx.removedSeatIds ?? [],

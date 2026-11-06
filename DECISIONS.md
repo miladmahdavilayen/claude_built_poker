@@ -3222,3 +3222,22 @@ about ten.
   on load, as players' do.
 - **Michelle moved** from the house dealers to the characters anyone can pick, cut to
   the same budget. A table that had chosen her as dealer falls to the default, Theo.
+
+## Who starts the game, the table timer, audio-only tables
+
+- **The owner starts a new or reset table.** Until they deal the first hand
+  (`gameStarted`), anyone can sit, watch and use the call, but sees "Waiting for the
+  table's owner", and the server refuses them (`OWNER_STARTS`). The owner can kick it
+  off without being seated. After that, anyone seated can press Play Hand. A player's
+  own practice table isn't affected.
+- **The table timer** is optional per table: a checkbox and minutes when creating
+  a table or in its settings, and in table controls live buttons (−15 to +60, or set
+  outright). Stored as `timerEndsAt`, so it survives a restart. Taking time off leaves
+  at least a minute. Everyone sees a small clock top left, amber under five minutes,
+  red under one. When it runs out: a hand in progress finishes and its result is seen,
+  no new hand can start, then the table ends as if terminated, everyone paid out and
+  told why. One sweep of all tables every two seconds, not a timer per table. The
+  timer and the kind of call are the owner's alone.
+- **Audio only** (`audioOnly`, a checkbox in the same places): no camera offered, none
+  shown, and a camera already on goes off. Calls run browser to browser, so it's held
+  by each player's app rather than the server; voice is unaffected.

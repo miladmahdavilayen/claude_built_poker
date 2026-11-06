@@ -8,7 +8,7 @@ import type { VoiceChatApi } from '../useVoiceChat.js';
  * or the 3D table's look-around drag. Shown even where calling can't work
  * (a browser without it, a plain-http address): a tap says why.
  */
-export function SeatCallControls({ voice }: { voice: VoiceChatApi }): React.JSX.Element {
+export function SeatCallControls({ voice, allowVideo = true }: { voice: VoiceChatApi; allowVideo?: boolean }): React.JSX.Element {
   const stop = (e: React.SyntheticEvent): void => e.stopPropagation();
   return (
     <div className="seat-call" onPointerDown={stop} onPointerUp={stop} onClick={stop} onDoubleClick={stop} onContextMenu={stop}>
@@ -17,9 +17,11 @@ export function SeatCallControls({ voice }: { voice: VoiceChatApi }): React.JSX.
           <button type="button" className="seat-call-btn" aria-label="Join voice" title="Join voice" onClick={() => voice.joinCall(false)}>
             🎤
           </button>
+          {allowVideo && (
           <button type="button" className="seat-call-btn" aria-label="Join with video" title="Join with video" onClick={() => voice.joinCall(true)}>
             🎥
           </button>
+          )}
         </>
       ) : (
         <>
@@ -33,7 +35,7 @@ export function SeatCallControls({ voice }: { voice: VoiceChatApi }): React.JSX.
           >
             {voice.micOn ? '🎤' : '🔇'}
           </button>
-          <button
+          {allowVideo && <button
             type="button"
             className={`seat-call-btn${voice.cameraOn ? '' : ' seat-call-btn--off'}`}
             aria-label={voice.cameraOn ? 'Camera off' : 'Camera on'}
@@ -42,7 +44,7 @@ export function SeatCallControls({ voice }: { voice: VoiceChatApi }): React.JSX.
             onClick={voice.toggleCamera}
           >
             🎥
-          </button>
+          </button>}
           <button type="button" className="seat-call-btn seat-call-btn--leave" aria-label="Leave call" title="Leave the call" onClick={voice.leaveCall}>
             📞
           </button>

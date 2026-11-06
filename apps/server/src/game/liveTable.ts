@@ -189,6 +189,8 @@ export class LiveTable {
   state: TableState;
   seats: LiveSeat[];
   private revealedSeatIds = new Set<number>();
+  /** A hand has been started since the table was created or reset: until then, only the owner can start one. */
+  gameStarted = false;
   /** The cards each seat has shown mid-hand, heads-up (see showCard). Apart from `revealedSeatIds`: a shown card isn't a showdown, and doesn't cost a fold-win its reveal. */
   private shownCards = new Map<number, Set<number>>();
   /** The seats whose reveal has added to this hand's break, each once (see extendBreakForReveal). */
@@ -766,13 +768,28 @@ export class LiveTable {
     // Only its link gets anyone into an open-invite table — it can't go public.
     if (patch.isPrivate === false && this.openSeating) return { ok: false, code: 'INVALID_SETTINGS', message: 'An open-invite table is always private.' };
 
-    const { smallBlind, bigBlind, ante, straddleEnabled, name, ...immediate } = patch;
+    const { smallBlind, bigBlind, ante, straddleEnabled, name, timerMinutes, timerAddMinutes, ...immediate } = patch;
+    if (timerAddMinutes !== undefined && timerMinutes === undefined && this.settings.timerEndsAt === undefined) {
+      return { ok: false, code: 'INVALID_SETTINGS', message: 'This table has no timer to change.' };
+    }
     if (name !== undefined) {
       this.name = name;
       this.book.tableName = name;
     }
     if (immediate.isPrivate === true && !this.inviteCode) this.inviteCode = randomBytes(4).toString('hex');
     this.settings = { ...this.settings, ...immediate };
+    const now = this.callbacks.now();
+    if (timerMinutes === null) {
+      const rest = { ...this.settings };
+      delete rest.timerEndsAt;
+      this.settings = rest;
+    } else if (timerMinutes !== undefined) {
+      this.settings = { ...this.settings, timerEndsAt: now + timerMinutes * 60_000 };
+    }
+    if (timerAddMinutes !== undefined && this.settings.timerEndsAt !== undefined) {
+      // Never into the past: at least a minute left, so taking time off can't end the table by accident.
+      this.settings = { ...this.settings, timerEndsAt: Math.max(this.settings.timerEndsAt + timerAddMinutes * 60_000, now + 60_000) };
+    }
 
     const engineChanges: Partial<TableConfig> = {
       ...(smallBlind !== undefined ? { smallBlind } : {}),
@@ -784,6 +801,16 @@ export class LiveTable {
     if (!deferred) this.settings = { ...this.settings, ...engineChanges };
     this.setEngineConfig(engineChanges);
     return { ok: true, deferred };
+  }
+
+  /** The table timer has run out: the table ends as soon as no hand is running (socketServer.ts's sweep). */
+  get timeIsUp(): boolean {
+    return this.settings.timerEndsAt !== undefined && this.callbacks.now() >= this.settings.timerEndsAt;
+  }
+
+  /** Ready to end now its time is up: no hand running, and the last one's break over, so its result was seen. */
+  get readyToEnd(): boolean {
+    return this.state.phase !== 'in-hand' && (this.nextHandAt === null || this.callbacks.now() >= this.nextHandAt);
   }
 
   /** The settings as they'll be once anything pending applies — what gets persisted. */
@@ -910,6 +937,7 @@ export class LiveTable {
    * — this does NOT remove the table the way close()/dispose() does.
    */
   resetTable(): { userId: string; stack: number }[] {
+    this.gameStarted = false;
     this.clearClock();
     this.clearBotMove();
     this.clearNextHandTimer();
@@ -1225,6 +1253,7 @@ export class LiveTable {
     const handNumber = this.state.handNumber + 1;
     const deck = deriveDeckForHand(serverSeed, clientSeeds, handNumber);
 
+    this.gameStarted = true;
     this.currentHandId = randomUUID();
     this.currentHandRng = { commitment, serverSeed, clientSeeds, nonce: handNumber };
     this.currentHandDeck = deck;
@@ -1868,6 +1897,7 @@ export class LiveTable {
         settings: this.settings,
         seatMeta: this.seatMetaMap(),
         revealedSeatIds: this.revealedSeatIds,
+        gameStarted: this.gameStarted,
         shownCards: this.shownCards,
         actionDeadline: this.actionDeadline,
         nextHandAt: this.nextHandAt,

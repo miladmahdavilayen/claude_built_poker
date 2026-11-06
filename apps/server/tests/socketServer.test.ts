@@ -937,6 +937,121 @@ describe('socketServer: live signaling and access control', () => {
     bobSocket.close();
   });
 
+  describe('who starts the game, the table timer, and audio-only tables', () => {
+    type S = { state: { phase: string; gameStarted: boolean; settings: { timerEndsAt?: number; audioOnly?: boolean } } };
+    async function joined(token: string, tableId: string): Promise<ClientSocket> {
+      const sock = connect(token);
+      await waitFor(sock, 'connect');
+      sock.emit('join-table', { tableId });
+      await waitFor(sock, 'state');
+      return sock;
+    }
+    const ack = (sock: ClientSocket, event: string, payload?: unknown): Promise<{ ok: boolean; code?: string }> =>
+      new Promise((resolve) => sock.emit(event, payload, resolve));
+
+    it('a new table: only the owner can start it, seated or not; after that anyone seated can; a reset starts over', async () => {
+      const table = await registry.createTable('Kickoff', SETTINGS, null, null);
+      const owner = await makeAdminUser('Owner');
+      const guest = await makeUser('Gus');
+      const other = await makeUser('Ola');
+      const adminSock = await joined(owner.token, table.tableId);
+      const g = await joined(guest.token, table.tableId);
+      table.takeSeat(0, guest.userId, { displayName: 'Gus', isGuest: true, avatarSeed: 'a', clientSeed: 'c' }, 100);
+      table.takeSeat(1, other.userId, { displayName: 'Ola', isGuest: true, avatarSeed: 'b', clientSeed: 'd' }, 100);
+
+      const refused = waitFor<{ code: string }>(g, 'error');
+      g.emit('start-hand');
+      expect((await refused).code).toBe('OWNER_STARTS');
+      expect(table.state.phase).not.toBe('in-hand');
+      expect(table.gameStarted).toBe(false);
+
+      // The owner, not even seated.
+      adminSock.emit('start-hand');
+      await waitForState<S>(g, (p) => p.state.phase === 'in-hand');
+      expect(table.gameStarted).toBe(true);
+      expect(table.projectionFor(0).gameStarted).toBe(true);
+
+      // The hand over and the break done, a player can deal the next.
+      const acting = table.state.betting.actingSeat!;
+      table.applyPlayerAction(acting, { seatId: acting, type: 'fold' });
+      await waitForState<S>(g, (p) => p.state.phase === 'hand-complete');
+      g.emit('start-hand');
+      await waitForState<S>(g, (p) => p.state.phase === 'in-hand');
+
+      // A reset: back to the owner.
+      await new Promise<void>((resolve) => adminSock.emit('reset-table', () => resolve()));
+      expect(table.gameStarted).toBe(false);
+      expect(table.projectionFor(null).gameStarted).toBe(false);
+      adminSock.close();
+      g.close();
+    });
+
+    it('the timer: set, moved, never into the past, removed — the owner’s alone', async () => {
+      const table = await registry.createTable('Clock', SETTINGS, null, null);
+      const owner = await makeAdminUser('Owner');
+      const adminSock = await joined(owner.token, table.tableId);
+      const near = (at: number | undefined, minutes: number): void => {
+        expect(at).toBeDefined();
+        expect(Math.abs(at! - Date.now() - minutes * 60_000)).toBeLessThan(5_000);
+      };
+      expect(table.settings.timerEndsAt).toBeUndefined();
+      expect((await ack(adminSock, 'update-table-settings', { timerAddMinutes: 5 })).ok).toBe(false);
+      expect((await ack(adminSock, 'update-table-settings', { timerMinutes: 30 })).ok).toBe(true);
+      near(table.settings.timerEndsAt, 30);
+      await ack(adminSock, 'update-table-settings', { timerAddMinutes: 15 });
+      near(table.settings.timerEndsAt, 45);
+      await ack(adminSock, 'update-table-settings', { timerAddMinutes: -1440 });
+      near(table.settings.timerEndsAt, 1);
+      await ack(adminSock, 'update-table-settings', { timerMinutes: 90 });
+      near(table.settings.timerEndsAt, 90);
+      await ack(adminSock, 'update-table-settings', { timerMinutes: null });
+      expect(table.settings.timerEndsAt).toBeUndefined();
+      expect((await ack(adminSock, 'update-table-settings', { timerMinutes: 0 })).ok).toBe(false);
+      adminSock.close();
+    });
+
+    it('time up: a hand in progress finishes, no new one starts, then the table ends for everyone and pays out', async () => {
+      const table = await registry.createTable('Ending', SETTINGS, null, null);
+      const owner = await makeAdminUser('Owner');
+      const guest = await makeUser('Gus', 0);
+      const other = await makeUser('Ola', 0);
+      const adminSock = await joined(owner.token, table.tableId);
+      table.takeSeat(0, guest.userId, { displayName: 'Gus', isGuest: true, avatarSeed: 'a', clientSeed: 'c' }, 100);
+      table.takeSeat(1, other.userId, { displayName: 'Ola', isGuest: true, avatarSeed: 'b', clientSeed: 'd' }, 100);
+      adminSock.emit('start-hand');
+      await waitForState<S>(adminSock, (p) => p.state.phase === 'in-hand');
+
+      // Time runs out mid-hand: the table's still there a sweep later.
+      table.settings = { ...table.settings, timerEndsAt: Date.now() - 1 };
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(registry.get(table.tableId)).not.toBeNull();
+      expect(table.state.phase).toBe('in-hand');
+
+      const closed = waitFor<{ reason: string }>(adminSock, 'table-closed');
+      const acting = table.state.betting.actingSeat!;
+      table.applyPlayerAction(acting, { seatId: acting, type: 'fold' });
+      await vi.waitFor(() => expect(table.state.phase).toBe('hand-complete'));
+      const refused = waitFor<{ code: string }>(adminSock, 'error');
+      adminSock.emit('start-hand');
+      expect((await refused).code).toBe('TIME_IS_UP');
+      expect((await closed).reason).toContain('Time’s up');
+      expect(registry.get(table.tableId)).toBeNull();
+      adminSock.close();
+    }, 30_000);
+
+    it('audio only: the owner’s setting, seen by everyone at the table', async () => {
+      const table = await registry.createTable('Quiet', SETTINGS, null, null);
+      const owner = await makeAdminUser('Owner');
+      const guest = await makeUser('Gus');
+      const adminSock = await joined(owner.token, table.tableId);
+      const g = await joined(guest.token, table.tableId);
+      adminSock.emit('update-table-settings', { audioOnly: true }, () => undefined);
+      await waitForState<S>(g, (p) => p.state.settings.audioOnly === true);
+      adminSock.close();
+      g.close();
+    });
+  });
+
   describe('a registered player invited to a table: treated exactly like a guest', () => {
     async function setup(settings: Partial<TableSettings> = {}): Promise<{ table: LiveTable; admin: ClientSocket; invite: (seatId: number, buyIn: number) => Promise<string> }> {
       const table = await registry.createTable('Friends', { ...SETTINGS, ...settings }, null, null);

@@ -169,6 +169,10 @@ export const CreateTableSchema = z
     noFlopNoDrop: z.boolean().default(true),
     isPrivate: z.boolean().default(false),
     disableChatInHand: z.boolean().default(false),
+    /** The table timer: the table ends this many minutes from now. Leave out for none. */
+    timerMinutes: z.number().int().min(1).max(1440).optional(),
+    /** The table's call is audio only. */
+    audioOnly: z.boolean().default(false),
     /** An open-invite table: one shareable link, anyone holding it picks their own seat (always private — kept off the lobby). */
     openSeating: z.boolean().default(false),
     /** An open-invite table's starting chips (cents) for each new player — the table's maximum buy-in when not given. */
@@ -197,6 +201,12 @@ export const UpdateTableSettingsSchema = z
     timeBankSeconds: z.number().int().min(0).max(600).optional(),
     isPrivate: z.boolean().optional(),
     disableChatInHand: z.boolean().optional(),
+    /** The table timer: end the table this many minutes from now, or null for no timer. */
+    timerMinutes: z.number().int().min(1).max(1440).nullable().optional(),
+    /** Move a running timer by this many minutes (negative for less). */
+    timerAddMinutes: z.number().int().min(-1440).max(1440).optional(),
+    /** The table's call is audio only. */
+    audioOnly: z.boolean().optional(),
     /** Open-invite tables only: what a guest new to the table sits down with. */
     openSeatStack: z.number().int().positive().max(MAX_BALANCE_CENTS).optional(),
     /** The 3D table's house dealer: a character id (apps/web/public/models/dealers), or '' for the built-in one. */

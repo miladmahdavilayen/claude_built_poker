@@ -47,7 +47,10 @@ export function VoicePanel({
   amSeated,
   unseatedPeers,
   canSeeVideo,
+  allowVideo = true,
 }: {
+  /** False at an audio-only table: no camera offered. */
+  allowVideo?: boolean;
   voice: VoiceChatApi;
   myName: string;
   amSeated: boolean;
@@ -65,9 +68,11 @@ export function VoicePanel({
           <button type="button" onClick={() => voice.joinCall(false)}>
             🎤 Join voice
           </button>
-          <button type="button" onClick={() => voice.joinCall(true)}>
-            🎥 Join with video
-          </button>
+          {allowVideo && (
+            <button type="button" onClick={() => voice.joinCall(true)}>
+              🎥 Join with video
+            </button>
+          )}
           {someoneSending && !audioBlocked && <span className="voice-listening">🔊 Listening to the table</span>}
         </div>
       ) : (
@@ -76,9 +81,11 @@ export function VoicePanel({
             <button type="button" className={voice.micOn ? '' : 'voice-off'} onClick={voice.toggleMic}>
               {voice.micOn ? '🎤 Mute' : '🔇 Unmute'}
             </button>
-            <button type="button" className={voice.cameraOn ? '' : 'voice-off'} onClick={voice.toggleCamera}>
-              {voice.cameraOn ? '🎥 Camera off' : '🎥 Camera on'}
-            </button>
+            {allowVideo && (
+              <button type="button" className={voice.cameraOn ? '' : 'voice-off'} onClick={voice.toggleCamera}>
+                {voice.cameraOn ? '🎥 Camera off' : '🎥 Camera on'}
+              </button>
+            )}
             <button type="button" className="voice-leave" onClick={voice.leaveCall}>
               Leave call
             </button>

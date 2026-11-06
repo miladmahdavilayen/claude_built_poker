@@ -37,6 +37,8 @@ export interface SceneSeat {
   /** The player's looks (avatar hue and a stable number from who they are) — see players3d.ts. */
   hue: number;
   seed: number;
+  /** The character they picked, or null. */
+  character: string | null;
 }
 
 export interface SceneSnapshot {
@@ -1054,7 +1056,7 @@ export class TableScene {
     this.tintChairs();
     this.players.sync(
       this.placementBySeat,
-      snapshot.seats.filter((s) => s.occupied).map((s) => ({ seatId: s.seatId, hue: s.hue, seed: s.seed, folded: !s.inHand })),
+      snapshot.seats.filter((s) => s.occupied).map((s) => ({ seatId: s.seatId, hue: s.hue, seed: s.seed, character: s.character, folded: !s.inHand })),
       this.viewerSeatId,
     );
     if (events) this.handleEvents(events, snapshot);

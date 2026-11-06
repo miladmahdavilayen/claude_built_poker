@@ -1609,6 +1609,46 @@ input[type='range']::-moz-range-thumb {
   animation: card-flip-glow 0.9s ease-out forwards;
 }
 
+/* Who you'll be at the table (CharacterPicker.tsx): small pictures with names, as many as fit a row. */
+.character-picker-title {
+  margin: 8px 0 4px;
+  font-weight: 700;
+}
+.character-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.character-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 2px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.character-option img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+.character-option--selected {
+  border-color: var(--accent);
+  background: rgba(242, 189, 77, 0.16);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.seat-avatar.seat-avatar--character {
+  object-fit: cover;
+  background: #2a3442;
+}
+
 /* Heads-up: the small eye at the bottom of each of your cards (CardEye.tsx). */
 .card-with-eye {
   position: relative;

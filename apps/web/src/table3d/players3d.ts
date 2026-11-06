@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { BoneName } from './humanBody.js';
 import { avatarLook, buildPlayerAvatar, setBlink, type PlayerAvatar } from './playerAvatar.js';
+import { PlayerCharacter } from './playerCharacter.js';
 import type { SeatPlacement3d } from './seatLayout3d.js';
 
 // The other players, sitting at the table: a body in each occupied chair
@@ -46,6 +47,15 @@ interface Body {
   /** The viewer's own body: in their own chair, under their eyes. */
   own: boolean;
   avatar: PlayerAvatar;
+  /** The built-in figure's meshes: hidden under a character, or for a player on camera. */
+  figure: THREE.Object3D[];
+  /** The character they picked; on camera, it's taken out of memory until they're off it. */
+  characterId: string | null;
+  /** Whichever is showing or on its way — a newer choice wins over one still loading. */
+  characterWanted: string | null;
+  character: PlayerCharacter | null;
+  /** Counts each load asked for: only the latest may land (A, B, A again mustn't leave two of A). */
+  characterLoad: number;
   /** When the next blink starts (seconds, scene time). */
   nextBlink: number;
   /** Whether their camera screen is over their head (scene.ts's fitFaces moves it off when there's no room there). */
@@ -247,6 +257,8 @@ export interface SeatedPlayer {
   seed: number;
   /** Out of the hand: sitting back a little. */
   folded: boolean;
+  /** The character they picked, or null: the built-in figure. */
+  character: string | null;
 }
 
 export class SeatedPlayers {
@@ -288,7 +300,11 @@ export class SeatedPlayers {
       if (!body) {
         const root = new THREE.Group();
         const avatar = buildPlayerAvatar(root, avatarLook(p.hue, p.seed), { castShadows: this.castShadows, detail: this.detail });
-        body = { root, bones: avatar.bones, disposables: avatar.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false, avatar, nextBlink: (p.seed % 400) / 100, faceOverHead: true, faceShown: true };
+        const figure: THREE.Object3D[] = [];
+        root.traverse((o) => {
+          if ((o as THREE.Mesh).isMesh) figure.push(o);
+        });
+        body = { figure, characterId: p.character, characterWanted: null, character: null, characterLoad: 0, root, bones: avatar.bones, disposables: avatar.disposables, phase: (p.seed % 628) / 100, key, face: null, own: false, avatar, nextBlink: (p.seed % 400) / 100, faceOverHead: true, faceShown: true };
         this.bodies.set(p.seatId, body);
         this.group.add(root);
       }
@@ -303,9 +319,50 @@ export class SeatedPlayers {
         b.rotation.set((e[0] + (name === 'spine' ? lean : 0)) * DEG, e[1] * DEG, e[2] * DEG);
       }
       restArms(body, place);
+      body.characterId = p.character;
+      body.character?.pose(body.root, body.bones);
     }
     for (const id of [...this.bodies.keys()]) if (!wanted.has(id)) this.remove(id);
     this.attachFaces();
+    this.syncCharacters();
+  }
+
+  /**
+   * Who shows in each chair. A player on camera: nobody, just the seat behind their screen — their character out of
+   * memory until they're off it. Otherwise the character they picked, once it's arrived, the built-in figure until
+   * then (and for good, if it can't be loaded).
+   */
+  private syncCharacters(): void {
+    for (const [seatId, b] of this.bodies) {
+      const onCamera = this.videos.has(seatId);
+      const want = onCamera ? null : b.characterId;
+      if (b.characterWanted !== want) {
+        b.characterWanted = want;
+        b.character?.dispose();
+        b.character = null;
+        b.characterLoad++;
+        if (want) this.loadCharacter(seatId, b, want, b.characterLoad);
+      }
+      const showFigure = !onCamera && !b.character;
+      for (const m of b.figure) m.visible = showFigure;
+    }
+  }
+
+  private loadCharacter(seatId: number, b: Body, id: string, load: number): void {
+    void PlayerCharacter.load(id, b.root, b.bones, this.castShadows)
+      .then((c) => {
+        // Gone, or they've chosen otherwise (or turned their camera on) while it loaded.
+        if (this.bodies.get(seatId) !== b || b.characterLoad !== load) {
+          c.dispose();
+          return;
+        }
+        b.character = c;
+        c.pose(b.root, b.bones);
+        for (const m of b.figure) m.visible = false;
+      })
+      .catch((err: unknown) => {
+        console.warn('A player character could not load; the built-in figure stays.', err);
+      });
   }
 
   /** The players on camera, by seat (the viewer's own is never here: they have no body). */
@@ -319,6 +376,7 @@ export class SeatedPlayers {
   setVideos(videos: ReadonlyMap<number, MediaStream>): void {
     this.videos = new Map(videos);
     this.attachFaces();
+    this.syncCharacters();
   }
 
   /** Each body gets the screen for its stream — a new one when the stream changes, none when it's gone. */
@@ -383,15 +441,19 @@ export class SeatedPlayers {
     const t = time / 1000;
     for (const b of this.bodies.values()) {
       const chest = b.bones.get('chest')!;
-      chest.rotation.x = (SEATED.chest![0] + Math.sin(t * 1.3 + b.phase) * 1.2) * DEG;
+      const breath = Math.sin(t * 1.3 + b.phase) * 1.2;
+      chest.rotation.x = (SEATED.chest![0] + breath) * DEG;
       const head = b.bones.get('head')!;
       if (b.own) {
         // Your own head turns where you drag, not on its own.
         head.visible = !this.ownHeadless;
         head.rotation.y = 0;
+        b.character?.setHeadless(this.ownHeadless);
+        b.character?.idle(breath, 0);
         continue;
       }
       head.rotation.y = Math.sin(t * 0.23 + b.phase * 3) * 14 * DEG * Math.max(0, Math.sin(t * 0.11 + b.phase));
+      b.character?.idle(breath, head.rotation.y);
       // A blink every few seconds, now and then a double one.
       if (t > b.nextBlink + BLINK_S) b.nextBlink = t + 2.2 + ((b.phase * 7.3 + t * 0.37) % 1) * 3.6 - (((b.phase + t) % 1) < 0.15 ? 2.1 : 0);
       const k = (t - b.nextBlink) / BLINK_S;
@@ -460,6 +522,10 @@ export class SeatedPlayers {
     const b = this.bodies.get(seatId);
     if (!b) return;
     b.face?.dispose();
+    b.characterWanted = null;
+    b.characterLoad++;
+    b.character?.dispose();
+    b.character = null;
     this.group.remove(b.root);
     for (const d of b.disposables) d.dispose();
     this.bodies.delete(seatId);

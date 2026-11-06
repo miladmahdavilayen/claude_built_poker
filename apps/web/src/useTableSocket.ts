@@ -39,10 +39,12 @@ export interface TableSocketApi {
   isPractice: boolean;
   /** An open-invite table this viewer came to with its link: they pick their own seat (and can join the waitlist). Sent with canManageTable. */
   canTakeSeat: boolean;
+  /** Came by a seat invite that's already theirs (null until the table has answered). */
+  seatInviteUsed: boolean | null;
   /** The table's recent chat has arrived (it follows the first state) — what came before it is history, not news. */
   chatHistoryLoaded: boolean;
   joinTable: (tableId: string, inviteCode?: string, seatInvite?: string) => void;
-  takeSeat: (tableId: string, seatId: number, buyIn: number, displayName?: string) => void;
+  takeSeat: (tableId: string, seatId: number, buyIn: number, displayName?: string, character?: string) => void;
   /** Resolves only once the server has actually cleared the seat — safe to navigate away (and tear down this socket) only after it resolves, not before. See DECISIONS.md. */
   leaveTable: () => Promise<void>;
   sitOut: () => void;
@@ -70,7 +72,9 @@ export interface TableSocketApi {
   /** Owner-only (admin role) — generates a one-time, seat-and-amount-specific invite link. */
   assignSeat: (seatId: number, buyIn: number, nickname?: string) => Promise<{ ok: true; token: string } | { ok: false; code: string; message: string }>;
   /** Redeems an owner-generated invite link — the buy-in comes from the link itself. */
-  redeemSeatAssignment: (token: string) => void;
+  redeemSeatAssignment: (token: string, character?: string) => void;
+  /** Seated: switch to a free character, or to none. */
+  changeCharacter: (character: string | null) => void;
   /** Owner-only, any time — blinds/ante/straddle changed mid-hand come back `deferred: true` (they apply from the next hand). Amounts in cents. */
   updateTableSettings: (patch: UpdateTableSettingsIntent) => Promise<OwnerAck>;
   /** Owner-only — restores a deleted seat or adds a new one (up to 9). */
@@ -102,6 +106,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
   const [canManageLayout, setCanManageLayout] = useState(false);
   const [isPractice, setIsPractice] = useState(false);
   const [canTakeSeat, setCanTakeSeat] = useState(false);
+  const [seatInviteUsed, setSeatInviteUsed] = useState<boolean | null>(null);
   const [chatHistoryLoaded, setChatHistoryLoaded] = useState(false);
 
   useEffect(() => {
@@ -133,8 +138,9 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
     const onChat = (message: ChatMessageRecord): void => setChat((prev) => [...prev, message].slice(-200));
     const onError = (err: ServerError): void => setLastError(err);
     const onTableClosed = (payload: { reason: string }): void => setTableClosedReason(payload.reason);
-    const onTablePermissions = (payload: { canManageTable: boolean; canManageLayout: boolean; isPractice: boolean; canTakeSeat?: boolean }): void => {
+    const onTablePermissions = (payload: { canManageTable: boolean; canManageLayout: boolean; isPractice: boolean; canTakeSeat?: boolean; seatInviteUsed?: boolean }): void => {
       setCanTakeSeat(payload.canTakeSeat === true);
+      setSeatInviteUsed(payload.seatInviteUsed === true);
       setCanManageTable(payload.canManageTable);
       setCanManageLayout(payload.canManageLayout);
       setIsPractice(payload.isPractice);
@@ -169,11 +175,12 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       canManageLayout,
       isPractice,
       canTakeSeat,
+      seatInviteUsed,
       chatHistoryLoaded,
       joinTable: (tableId, inviteCode, seatInvite) =>
         socket?.emit('join-table', { tableId, ...(inviteCode ? { inviteCode } : {}), ...(seatInvite ? { seatInvite } : {}) }),
-      takeSeat: (tableId, seatId, buyIn, displayName) =>
-        socket?.emit('take-seat', displayName ? { tableId, seatId, buyIn, displayName } : { tableId, seatId, buyIn }),
+      takeSeat: (tableId, seatId, buyIn, displayName, character) =>
+        socket?.emit('take-seat', { tableId, seatId, buyIn, ...(displayName ? { displayName } : {}), ...(character ? { character } : {}) }),
       leaveTable: () => new Promise<void>((resolve) => (socket ? socket.emit('leave-table', () => resolve()) : resolve())),
       sitOut: () => socket?.emit('sit-out'),
       sitIn: () => socket?.emit('sit-in'),
@@ -208,7 +215,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
             (result: { ok: true; token: string } | { ok: false; code: string; message: string }) => resolve(result),
           );
         }),
-      redeemSeatAssignment: (token) => socket?.emit('redeem-seat-assignment', { token }),
+      changeCharacter: (character) => socket?.emit('change-character', { character }),
+      redeemSeatAssignment: (token, character) => socket?.emit('redeem-seat-assignment', { token, ...(character ? { character } : {}) }),
       updateTableSettings: (patch) =>
         new Promise((resolve) => (socket ? socket.emit('update-table-settings', patch, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
       addSeat: () => new Promise((resolve) => (socket ? socket.emit('add-seat', (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
@@ -223,6 +231,6 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       getInviteCode: () =>
         new Promise((resolve) => (socket ? socket.emit('get-invite-code', (r: { inviteCode: string | null }) => resolve(r.inviteCode)) : resolve(null))),
     }),
-    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice, canTakeSeat, chatHistoryLoaded],
+    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice, canTakeSeat, seatInviteUsed, chatHistoryLoaded],
   );
 }

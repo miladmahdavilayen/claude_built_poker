@@ -10,6 +10,7 @@ export interface SeatMeta {
   avatarSeed: string | null;
   isConnected: boolean;
   lastAction: { type: string; amountTo?: number } | null;
+  character?: string | null;
   timeBankMs: number;
   isBot: boolean;
   ownerNickname: string | null;
@@ -110,6 +111,7 @@ export function projectStateForSeat(
       avatarSeed: meta.avatarSeed,
       stack: s.stack,
       holeCards: showRealCards ? s.holeCards : [],
+      character: meta.character ?? null,
       shownCards: [...(ctx.shownCards?.get(s.seatId) ?? [])]
         .sort((a, b) => a - b)
         .flatMap((index) => {

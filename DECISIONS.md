@@ -3180,3 +3180,45 @@ about ten.
 - Anyone seated at a live table is left alone, whoever they are: pulling them out
   from under a game would break it (and registered players can now be seated by
   invite too). Bulk delete does the rest and says how many stayed; they stay ticked.
+
+## Characters players pick
+
+- Before sitting down at a real table, a human picks from eight characters: small
+  pictures with names (`CharacterPicker`), asked on first use of a seat invite and
+  in the sit-down dialog. Optional ("No character" keeps the built-in figure).
+  First to pick one keeps it while seated: the server refuses a taken one
+  (`CHARACTER_TAKEN`) before an invite is used up, and it's gone from everyone's
+  list at once. Coming back by a used invite, they sit straight down with the one
+  they had, if it's still free. Not on practice tables. On the 2D table the
+  picture replaces the initial on the seat.
+- **The raw downloads are too heavy to ship**: 213 MB of FBX, up to 54k triangles,
+  4K textures with normal and specular maps. Eight on a phone would crash it.
+  `scripts/build-player-characters.mjs` cuts each to a budget — about 14k triangles
+  and 512px colour-only textures, cutouts rather than blended transparency — for
+  9 MB in all, every file under 2 MB. The raw folder (`players_anime/`) stays out
+  of git; the list and names live in `packages/shared/src/characters.ts`.
+- **In the game** (`playerCharacter.ts`): the built-in figure's skeleton stays,
+  unseen, and still decides where arms rest and where a nameplate or camera screen
+  goes; a character takes the same torso size and follows that pose. Characters
+  load one at a time, the built-in figure showing until each arrives — and for good
+  if one can't load. Most of these files hold a copy of the skeleton per piece of
+  clothing: on load each copy is attached to its original, so posing one moves all.
+- **On camera there's nobody in the chair**: the character is disposed, its memory
+  freed, the built-in figure hidden, until the camera's off.
+- If the browser takes the 3D context away (out of graphics memory), the table
+  falls back to 2D instead of freezing.
+- **Switching:** a seated player can change to any character still free, or to none,
+  any time from the menu (`change-character`); it changes nothing in the game. The
+  old one is free at once. Only the latest load may land, so quick switches leave
+  one character behind, not two.
+- **The Boss** (the house dealer of that name, cut to the same budget) is a ninth
+  character, the owner's alone (`ownerOnly`): only they see it on the list, and the
+  server refuses it to anyone else, by invite, sit-down or switch.
+- **Theo deals by default** on any 3D table that hasn't chosen a dealer (first in
+  `models/dealers/index.json`), from the same small file players' Theo uses, so no
+  one downloads him twice. Marked VIP so a table with no chosen room stays in the VIP
+  room as before. He's still a character anyone can pick; a table that chose its
+  dealer keeps that dealer. Dealers from these files have their skeleton copies merged
+  on load, as players' do.
+- **Michelle moved** from the house dealers to the characters anyone can pick, cut to
+  the same budget. A table that had chosen her as dealer falls to the default, Theo.

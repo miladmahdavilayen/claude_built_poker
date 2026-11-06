@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, guestSignup, inviteToSeat } from './helpers.js';
+import { adminLogin, chooseCharacter, createTable, guestSignup, inviteToSeat } from './helpers.js';
 
 // Regression test for the owner-only chip economy end to end (see
 // DECISIONS.md): a regular player sees no self-serve seating/rebuy
@@ -85,6 +85,7 @@ test('a fresh visitor (not yet signed in) opening an invite link lands directly 
   await pageVisitor.getByLabel('Display name').fill('Fresh Visitor');
   await pageVisitor.getByLabel('I’ve read and agree to the guest terms').check();
   await pageVisitor.getByRole('button', { name: 'Play now' }).click();
+  await chooseCharacter(pageVisitor);
 
   // Lands directly on the invited table — never the lobby — and the
   // invite link's own buy-in took effect automatically.
@@ -122,6 +123,7 @@ for (const form of ['link', 'code'] as const) {
     await pageVisitor.getByLabel('Display name').fill(`Pasted ${form} Guest`);
     await pageVisitor.getByLabel('I’ve read and agree to the guest terms').check();
     await pageVisitor.getByRole('button', { name: 'Play now' }).click();
+  await chooseCharacter(pageVisitor);
     await expect(pageVisitor).toHaveURL(tableUrl);
     await expect(pageVisitor.locator('[data-testid="seat-2"] .seat-stack')).toHaveText('$90');
 

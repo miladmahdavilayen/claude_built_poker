@@ -18,6 +18,7 @@ blob-report/
 .claude/
 
 # Raw character downloads (the app uses the copies in apps/web/public/models/dealers)
+players_anime/
 /chars/
 /vipchars/
 

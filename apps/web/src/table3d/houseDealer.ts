@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { TIMINGS } from '../animationTimings.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeSkeletonCopies } from './playerCharacter.js';
 import { BONE_NAMES, buildHumanBody, type BoneName } from './humanBody.js';
 import { cardBackTexture } from './textures.js';
 
@@ -682,6 +683,8 @@ export class HouseDealer implements DealerLike {
       disposeTree(model);
       return;
     }
+    // A file shared with the player characters (Theo) has a skeleton copy per piece of clothing.
+    if (!url.toLowerCase().endsWith('.fbx')) mergeSkeletonCopies(model);
     // An exported file can carry the lights and cameras of the scene it came from (one at 1000 cd floods
     // the whole table white): the room lights her, so they go.
     const strays: THREE.Object3D[] = [];

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MAX_BALANCE_CENTS } from './money.js';
+import { PLAYER_CHARACTER_IDS } from './characters.js';
 import { TABLE_THEMES } from './types.js';
 import { MAX_SIGNATURE_DATA_URL_LENGTH } from './waiver.js';
 
@@ -49,6 +50,8 @@ export const TakeSeatSchema = z
     buyIn: z.number().int().positive(),
     /** Optional: lets the owner pick a display name for themselves right before sitting down, instead of being stuck with the fixed name their account was created with. */
     displayName: z.string().min(1).max(24).optional(),
+    /** The character they picked, if any (characters.ts) — one each at a table. */
+    character: z.enum(PLAYER_CHARACTER_IDS).optional(),
   })
   .strict();
 export type TakeSeatIntent = z.infer<typeof TakeSeatSchema>;
@@ -77,9 +80,19 @@ export type AssignSeatIntent = z.infer<typeof AssignSeatSchema>;
 export const RedeemAssignmentSchema = z
   .object({
     token: z.string().min(1),
+    /** The character they picked, if any (characters.ts) — one each at a table. */
+    character: z.enum(PLAYER_CHARACTER_IDS).optional(),
   })
   .strict();
 export type RedeemAssignmentIntent = z.infer<typeof RedeemAssignmentSchema>;
+
+/** A seated player switching to any character still free, or to none (null), any time. */
+export const ChangeCharacterSchema = z
+  .object({
+    character: z.enum(PLAYER_CHARACTER_IDS).nullable(),
+  })
+  .strict();
+export type ChangeCharacterIntent = z.infer<typeof ChangeCharacterSchema>;
 
 export const AddBotSchema = z
   .object({

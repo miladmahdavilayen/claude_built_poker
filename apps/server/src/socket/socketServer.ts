@@ -13,6 +13,8 @@ import {
   projectEvent,
   RedeemAssignmentSchema,
   RemoveBotSchema,
+  ChangeCharacterSchema,
+  mayPickCharacter,
   RevealHandSchema,
   ShowCardSchema,
   RtcSignalSchema,
@@ -480,6 +482,8 @@ export function attachSocketServer(
     if (kept === null) return fresh;
     return kept > 0 ? kept : null;
   }
+  const OWNER_CHARACTER = { code: 'ADMIN_REQUIRED', message: 'That character is the table owner’s alone.' };
+  const CHARACTER_TAKEN = { ok: false as const, code: 'CHARACTER_TAKEN', message: 'Someone just picked that character — choose another.' };
   const OUT_OF_CHIPS = { ok: false as const, code: 'OUT_OF_CHIPS', message: 'You left this table with no chips — ask the table owner to seat you with more.' };
 
   async function grantFromOwner(userId: string, amount: number, tableId: string): Promise<void> {
@@ -505,6 +509,7 @@ export function attachSocketServer(
     buyIn: number,
     ownerNickname: string | null = null,
     ownerFunded = false,
+    character: string | null = null,
   ): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
     const user = await deps.store.findUserById(userId);
     if (!user) return { ok: false, code: 'USER_NOT_FOUND', message: 'User not found.' };
@@ -515,11 +520,12 @@ export function attachSocketServer(
       table.takeSeat(
         seatId,
         user.id,
-        { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed, tableMoney },
+        { displayName: user.displayName, isGuest: user.isGuest, avatarSeed: user.avatarSeed, clientSeed: user.clientSeed, tableMoney, character },
         buyIn,
         ownerNickname,
       );
     } catch (err) {
+      if (err instanceof Error && err.message === 'CHARACTER_TAKEN') return CHARACTER_TAKEN;
       return { ok: false, code: 'SEAT_TAKEN', message: err instanceof Error ? err.message : 'Seat unavailable.' };
     }
     if (!tableMoney) {
@@ -676,6 +682,8 @@ export function attachSocketServer(
         isPractice: table.isPractice,
         // Open-invite tables: anyone who came with the link picks their own seat.
         canTakeSeat: data.userId !== null && openAccess.has(table.tableId),
+        // Coming back by a seat invite that's already theirs: they sit straight down, with the character they had.
+        seatInviteUsed: parsed.data.seatInvite !== undefined && data.userId !== null && table.seatAssignmentGuest(parsed.data.seatInvite) === data.userId,
       });
       // See registerVoiceParticipant's own doc comment — every human is
       // receive-ready from the moment they're at the table, not only once
@@ -727,6 +735,10 @@ export function attachSocketServer(
         return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
       }
       const { seatId } = parsed.data;
+      // Characters are for real tables, not practice ones.
+      const character = table.isPractice ? null : (parsed.data.character ?? null);
+      if (character && !mayPickCharacter(character, data.role === 'admin')) return emitError(OWNER_CHARACTER.code, OWNER_CHARACTER.message);
+      if (character && table.characterTaken(character)) return emitError(CHARACTER_TAKEN.code, CHARACTER_TAKEN.message);
       // Anyone by an open-invite link — a guest or a registered player alike
       // — doesn't choose a buy-in: they sit with the table's starting chips
       // the first time, and with whatever they left with after that (see
@@ -747,7 +759,7 @@ export function attachSocketServer(
           if (buyIn === null) return OUT_OF_CHIPS;
           // Invited, it's play money the owner provides, guest or registered
           // alike: it never touches an account's balance (see usesTableMoney).
-          return performTakeSeat(table, socket, userId, seatId, buyIn, null, invitedPlayer);
+          return performTakeSeat(table, socket, userId, seatId, buyIn, null, invitedPlayer, character);
         })
         .then((result) => {
           if (!result.ok) emitError(result.code, result.message);
@@ -764,6 +776,10 @@ export function attachSocketServer(
       if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed redeem payload.');
       if (table.isPractice) return emitError('PRACTICE_TABLE', 'Only computer players can join this table.');
       if (table.seatOfUser(data.userId) !== null) return emitError('ALREADY_SEATED', 'You already have a seat at this table.');
+      // Asked first, so a character someone just took doesn't use up the invite.
+      const picked = parsed.data.character ?? null;
+      if (picked && !mayPickCharacter(picked, data.role === 'admin')) return emitError(OWNER_CHARACTER.code, OWNER_CHARACTER.message);
+      if (picked && table.characterTaken(picked)) return emitError(CHARACTER_TAKEN.code, CHARACTER_TAKEN.message);
       const redeemed = table.redeemSeatAssignment(parsed.data.token, data.userId);
       if (!redeemed.ok) return emitError(redeemed.code, redeemed.message);
       const userId = data.userId;
@@ -773,7 +789,7 @@ export function attachSocketServer(
       // with instead (see sitAmountForGuest).
       void (async () => {
         const buyIn = redeemed.returning ? await sitAmountForGuest(table, userId, redeemed.buyIn) : redeemed.buyIn;
-        const result = buyIn === null ? OUT_OF_CHIPS : await performTakeSeat(table, socket, userId, redeemed.seatId, buyIn, redeemed.ownerNickname, true);
+        const result = buyIn === null ? OUT_OF_CHIPS : await performTakeSeat(table, socket, userId, redeemed.seatId, buyIn, redeemed.ownerNickname, true, picked ?? (redeemed.returning ? table.returningCharacter(userId) : null));
         if (!result.ok) emitError(result.code, result.message);
       })();
     });
@@ -1180,6 +1196,21 @@ export function attachSocketServer(
       const result = table.revealHand(seatId, parsed.data.handId);
       if (!result.ok) socket.emit('error', { code: result.code, message: result.message });
       // The successful path's broadcast already happened via LiveTable's onBroadcast -> registry callback above.
+    });
+
+    socket.on('change-character', (raw: unknown): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Not authenticated.');
+      if (!actionLimiter.consume(socket.id)) return emitError('RATE_LIMITED', 'Slow down.');
+      const parsed = ChangeCharacterSchema.safeParse(raw);
+      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed change-character payload.');
+      if (table.isPractice) return emitError('PRACTICE_TABLE', 'Characters are for tables with other players.');
+      const seatId = table.seatOfUser(data.userId);
+      if (seatId === null) return emitError('NOT_SEATED', 'You are not seated at this table.');
+      if (parsed.data.character && !mayPickCharacter(parsed.data.character, data.role === 'admin')) return emitError(OWNER_CHARACTER.code, OWNER_CHARACTER.message);
+      const result = table.changeCharacter(seatId, parsed.data.character);
+      if (!result.ok) return emitError(result.code, result.message);
+      broadcastTable(table);
     });
 
     socket.on('show-card', (raw: unknown): void => {

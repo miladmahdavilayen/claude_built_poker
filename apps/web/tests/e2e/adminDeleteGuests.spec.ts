@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { adminLogin, createTable, openAdminSection, seedRealAccount, tableMenuAction, takeSeat } from './helpers.js';
+import { adminLogin, chooseCharacter, createTable, openAdminSection, seedRealAccount, tableMenuAction, takeSeat } from './helpers.js';
 
 /** A guest comes in by a real seat invite, agreeing to the terms; `stay` leaves them seated. */
 async function inviteGuest(owner: Page, guest: Page, seatId: number, name: string, stay = false): Promise<void> {
@@ -13,6 +13,7 @@ async function inviteGuest(owner: Page, guest: Page, seatId: number, name: strin
   await guest.getByLabel('Display name').fill(name);
   await guest.getByLabel('I’ve read and agree to the guest terms').check();
   await guest.getByRole('button', { name: 'Play now' }).click();
+  await chooseCharacter(guest);
   await expect(guest.locator(`[data-testid="seat-${String(seatId)}"]`)).toHaveAttribute('data-seat-status', 'active', { timeout: 15_000 });
   if (stay) return;
   await tableMenuAction(guest, 'Leave table');

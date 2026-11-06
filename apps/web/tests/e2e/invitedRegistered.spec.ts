@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, googlePlayerLogin, startHand, tableMenuAction, takeSeat } from './helpers.js';
+import { adminLogin, chooseCharacter, createTable, googlePlayerLogin, startHand, tableMenuAction, takeSeat } from './helpers.js';
 
 // A registered player invited to a table is treated exactly like a guest: the seat and the money are what the owner
 // chose, and their account's reward balance is neither used nor added to.
@@ -22,6 +22,7 @@ test('a signed-in player opening a seat invite: the exact seat, the exact money,
   await owner.getByRole('button', { name: 'Done' }).click();
 
   await player.goto(link);
+  await chooseCharacter(player);
   const seat = player.locator('[data-testid="seat-3"]');
   await expect(seat).toHaveAttribute('data-seat-status', 'active', { timeout: 20_000 });
   await expect(seat).toContainText('Polly');

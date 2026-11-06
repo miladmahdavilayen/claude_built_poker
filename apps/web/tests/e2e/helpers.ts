@@ -188,8 +188,20 @@ export async function inviteToSeat(ownerPage: Page, targetPage: Page, seatId: nu
   await ownerPage.getByRole('button', { name: 'Done' }).click();
 
   await targetPage.goto(link);
+  await chooseCharacter(targetPage);
   // The link carries the owner's view: on a 3D owner's table, a second software-drawn 3D table is coming up, slow late in the suite.
   await expect(targetPage.locator(`[data-testid="seat-${String(seatId)}"]`)).toHaveAttribute('data-seat-status', 'active', { timeout: 40_000 });
+}
+
+/** A seat invite's first use asks who they'll be before they sit down: a character by id, or none. */
+export async function chooseCharacter(page: Page, id?: string): Promise<void> {
+  const picker = page.getByRole('dialog', { name: 'Choose your character' });
+  if (id) {
+    await picker.getByTestId(`character-${id}`).click();
+    await picker.getByRole('button', { name: 'Sit down' }).click();
+  } else {
+    await picker.getByRole('button', { name: 'No character' }).click();
+  }
 }
 
 /**

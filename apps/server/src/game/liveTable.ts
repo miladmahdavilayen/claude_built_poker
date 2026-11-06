@@ -101,6 +101,8 @@ export interface LiveSeat {
   botPolicyName: string | null;
   /** A registered player seated by an invite: these chips are the table's, nothing to do with their account (see socketServer.ts's usesTableMoney) — so no hand result reaches their account's ledger. */
   tableMoney: boolean;
+  /** The character this player picked, if any — one each at a table (see characterTaken). */
+  character: string | null;
   /** Owner-private label given to this seat's invite link at creation time — see createSeatAssignment. Never shown to anyone but the owner (see projection.ts's viewerIsAdmin gate). */
   ownerNickname: string | null;
   /**
@@ -356,6 +358,7 @@ export class LiveTable {
       sittingInNextHand: false,
       botPolicyName: null,
       tableMoney: false,
+      character: null,
       ownerNickname: null,
       pendingChips: 0,
       pendingRemoval: null,
@@ -425,12 +428,14 @@ export class LiveTable {
   takeSeat(
     seatId: number,
     userId: string,
-    meta: { displayName: string; isGuest: boolean; avatarSeed: string; clientSeed: string; tableMoney?: boolean },
+    meta: { displayName: string; isGuest: boolean; avatarSeed: string; clientSeed: string; tableMoney?: boolean; character?: string | null },
     buyIn: number,
     ownerNickname: string | null = null,
   ): void {
     const usable = this.checkSeatUsable(seatId);
     if (!usable.ok) throw new Error(usable.code);
+    if (meta.character && this.characterTaken(meta.character)) throw new Error('CHARACTER_TAKEN');
+    if (meta.character) this.lastCharacter.set(userId, meta.character);
     // Mid-hand, a new player must NOT be 'active': the engine treats every
     // 'active' seat as live in the current betting round (see
     // packages/engine/src/betting.ts), so they'd be asked to act in a hand
@@ -453,6 +458,7 @@ export class LiveTable {
       isConnected: true,
       ownerNickname,
       tableMoney: meta.tableMoney ?? false,
+      character: meta.character ?? null,
       joinsNextHand: status === 'sitting-out',
     };
     this.removeFromWaitlist(userId);
@@ -509,6 +515,31 @@ export class LiveTable {
   seatAssignmentNickname(token: string): string | null {
     return this.seatAssignments.get(hashInviteToken(token))?.ownerNickname ?? null;
   }
+
+  /** Whether someone at this table has this character: first to pick it keeps it for as long as they're seated. */
+  characterTaken(character: string): boolean {
+    return this.seats.some((s) => s.character === character);
+  }
+
+  /** A seated player switches character, or to none. It's only how they look: nothing in the game changes. */
+  changeCharacter(seatId: number, character: string | null): { ok: true } | { ok: false; code: string; message: string } {
+    const seat = this.seats[seatId];
+    if (!seat?.userId) return { ok: false, code: 'SEAT_EMPTY', message: 'That seat is empty.' };
+    if (seat.character === character) return { ok: true };
+    if (character && this.characterTaken(character)) return { ok: false, code: 'CHARACTER_TAKEN', message: 'Someone just picked that character — choose another.' };
+    seat.character = character;
+    if (character) this.lastCharacter.set(seat.userId, character);
+    else this.lastCharacter.delete(seat.userId);
+    return { ok: true };
+  }
+
+  /** The character they last sat with here, if it's still free: coming back by their invite, they have it again. */
+  returningCharacter(userId: string): string | null {
+    const last = this.lastCharacter.get(userId) ?? null;
+    return last && !this.characterTaken(last) ? last : null;
+  }
+
+  private readonly lastCharacter = new Map<string, string>();
 
   /** Whether this invite can still seat this person: unused, or already theirs. */
   seatAssignmentOpenTo(token: string, userId: string | null): boolean {
@@ -1714,6 +1745,7 @@ export class LiveTable {
     const map = new Map<number, SeatMeta>();
     for (const s of this.seats) {
       map.set(s.seatId, {
+        character: s.character,
         playerId: s.userId,
         displayName: s.displayName,
         isGuest: s.isGuest,

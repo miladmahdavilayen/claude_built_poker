@@ -586,7 +586,7 @@ describe('socketServer: live signaling and access control', () => {
     const permissionsPromise = waitFor<{ canManageTable: boolean; canManageLayout: boolean; isPractice: boolean }>(bobSocket, 'table-permissions');
     const statePromise = waitFor(bobSocket, 'state');
     bobSocket.emit('join-table', { tableId: table.tableId });
-    expect(await permissionsPromise).toEqual({ canManageTable: true, canManageLayout: false, isPractice: true, canTakeSeat: false });
+    expect(await permissionsPromise).toEqual({ canManageTable: true, canManageLayout: false, isPractice: true, canTakeSeat: false, seatInviteUsed: false });
     await statePromise;
 
     const botRemoved = waitForState<{ state: { seats: { seatId: number; status: string }[] } }>(bobSocket, (p) =>
@@ -1006,6 +1006,138 @@ describe('socketServer: live signaling and access control', () => {
       admin.close();
       sock.close();
       ownerSeat.close();
+    });
+
+    it('characters: one each at a table — a taken one is refused without using up the invite, free again when they leave, and theirs again by the same link', async () => {
+      const { table, admin, invite } = await setup();
+      const [ann, bea] = [await makeUser('Ann'), await makeUser('Bea')];
+      const [tokenA, tokenB] = [await invite(1, 100), await invite(2, 100)];
+      const a = connect(ann.token);
+      const b = connect(bea.token);
+      await Promise.all([waitFor(a, 'connect'), waitFor(b, 'connect')]);
+      for (const [sock, token] of [[a, tokenA], [b, tokenB]] as const) {
+        sock.emit('join-table', { tableId: table.tableId, seatInvite: token });
+        await waitFor(sock, 'state');
+      }
+      a.emit('redeem-seat-assignment', { token: tokenA, character: 'eve' });
+      await waitForState<{ state: { seats: { seatId: number; character: string | null }[] } }>(b, (p) => p.state.seats[1]?.character === 'eve');
+
+      // Bea asks for Eve as well: refused, and her invite's still unused.
+      const refused = waitFor<{ code: string }>(b, 'error');
+      b.emit('redeem-seat-assignment', { token: tokenB, character: 'eve' });
+      expect((await refused).code).toBe('CHARACTER_TAKEN');
+      expect(table.seatAssignmentGuest(tokenB)).toBeNull();
+      expect(table.seatOfUser(bea.userId)).toBeNull();
+
+      // A name that isn't a character never gets anywhere.
+      const bad = waitFor<{ code: string }>(b, 'error');
+      b.emit('redeem-seat-assignment', { token: tokenB, character: 'not-a-character' });
+      expect((await bad).code).toBe('INVALID_PAYLOAD');
+
+      // Ann leaves: Eve's free for Bea.
+      await emitWithAck(a, 'leave-table');
+      b.emit('redeem-seat-assignment', { token: tokenB, character: 'eve' });
+      await waitForState<{ state: { seats: { seatId: number; character: string | null }[] } }>(b, (p) => p.state.seats[2]?.character === 'eve');
+
+      // Ann back by her link: seated, Eve being taken, with no character.
+      a.emit('redeem-seat-assignment', { token: tokenA });
+      await waitForState<{ state: { seats: { seatId: number; playerId: string | null; character: string | null }[] } }>(a, (p) => p.state.seats[1]?.playerId === ann.userId);
+      expect(table.seats[1]?.character).toBeNull();
+
+      // Bea leaves, Ann leaves and returns: she has Eve again, and the table remembers it's her link.
+      await emitWithAck(b, 'leave-table');
+      await emitWithAck(a, 'leave-table');
+      const perms = waitFor<{ seatInviteUsed: boolean }>(a, 'table-permissions');
+      a.emit('join-table', { tableId: table.tableId, seatInvite: tokenA });
+      expect((await perms).seatInviteUsed).toBe(true);
+      a.emit('redeem-seat-assignment', { token: tokenA });
+      await waitForState<{ state: { seats: { seatId: number; character: string | null }[] } }>(a, (p) => p.state.seats[1]?.character === 'eve');
+
+      admin.close();
+      a.close();
+      b.close();
+    });
+
+    it('switching character while seated: any free one, or none — never a taken one, and the old one is free at once', async () => {
+      const { table, admin, invite } = await setup();
+      const [ann, bea] = [await makeUser('Ann'), await makeUser('Bea')];
+      const [tokenA, tokenB] = [await invite(1, 100), await invite(2, 100)];
+      const a = connect(ann.token);
+      const b = connect(bea.token);
+      await Promise.all([waitFor(a, 'connect'), waitFor(b, 'connect')]);
+      type S = { state: { seats: { seatId: number; character: string | null }[] } };
+      await comeBy(a, table.tableId, tokenA);
+      await waitForState<S>(a, () => table.seats[1]?.userId === ann.userId);
+      a.emit('change-character', { character: 'eve' });
+      await waitForState<S>(a, (p) => p.state.seats[1]?.character === 'eve');
+      await comeBy(b, table.tableId, tokenB);
+      await waitForState<S>(b, () => table.seats[2]?.userId === bea.userId);
+
+      const taken = waitFor<{ code: string }>(b, 'error');
+      b.emit('change-character', { character: 'eve' });
+      expect((await taken).code).toBe('CHARACTER_TAKEN');
+      expect(table.seats[2]?.character).toBeNull();
+      const bad = waitFor<{ code: string }>(b, 'error');
+      b.emit('change-character', { character: 'nobody' });
+      expect((await bad).code).toBe('INVALID_PAYLOAD');
+
+      // Ann moves on: Eve's free, and Bea takes her; everyone sees.
+      a.emit('change-character', { character: 'remy' });
+      await waitForState<S>(b, (p) => p.state.seats[1]?.character === 'remy');
+      b.emit('change-character', { character: 'eve' });
+      await waitForState<S>(a, (p) => p.state.seats[2]?.character === 'eve');
+      a.emit('change-character', { character: null });
+      await waitForState<S>(b, (p) => p.state.seats[1]?.character === null);
+      expect(table.characterTaken('remy')).toBe(false);
+
+      // Only for someone seated.
+      const watcher = connect((await makeUser('Wes')).token);
+      await waitFor(watcher, 'connect');
+      watcher.emit('join-table', { tableId: table.tableId });
+      await waitFor(watcher, 'state');
+      const notSeated = waitFor<{ code: string }>(watcher, 'error');
+      watcher.emit('change-character', { character: 'aj' });
+      expect((await notSeated).code).toBe('NOT_SEATED');
+
+      admin.close();
+      a.close();
+      b.close();
+      watcher.close();
+    });
+
+    it('The Boss is the owner’s alone: refused to a guest and a registered player, however they ask; the owner can pick it', async () => {
+      const { table, admin, invite } = await setup();
+      type S = { state: { seats: { seatId: number; character: string | null }[] } };
+      for (const [person, seatId] of [
+        [await makeUser('Gus'), 1],
+        [await makeRegisteredUser('Reg', 100), 2],
+      ] as const) {
+        const token = await invite(seatId, 100);
+        const sock = connect(person.token);
+        await waitFor(sock, 'connect');
+        sock.emit('join-table', { tableId: table.tableId, seatInvite: token });
+        await waitFor(sock, 'state');
+        // By the invite: refused, the invite still unused.
+        const byInvite = waitFor<{ code: string }>(sock, 'error');
+        sock.emit('redeem-seat-assignment', { token, character: 'the-boss' });
+        expect((await byInvite).code).toBe('ADMIN_REQUIRED');
+        expect(table.seatAssignmentGuest(token)).toBeNull();
+        // Seated, by switching: refused too.
+        sock.emit('redeem-seat-assignment', { token });
+        await waitForState<S>(sock, () => table.seats[seatId]?.userId === person.userId);
+        const bySwitch = waitFor<{ code: string }>(sock, 'error');
+        sock.emit('change-character', { character: 'the-boss' });
+        expect((await bySwitch).code).toBe('ADMIN_REQUIRED');
+        expect(table.seats[seatId]?.character).toBeNull();
+        sock.close();
+      }
+      admin.emit('take-seat', { tableId: table.tableId, seatId: 0, buyIn: 100, character: 'the-boss' });
+      await waitForState<S>(admin, (p) => p.state.seats[0]?.character === 'the-boss');
+      admin.emit('change-character', { character: 'remy' });
+      await waitForState<S>(admin, (p) => p.state.seats[0]?.character === 'remy');
+      admin.emit('change-character', { character: 'the-boss' });
+      await waitForState<S>(admin, (p) => p.state.seats[0]?.character === 'the-boss');
+      admin.close();
     });
 
     it('a private table, for a registered player and a guest alike', async () => {

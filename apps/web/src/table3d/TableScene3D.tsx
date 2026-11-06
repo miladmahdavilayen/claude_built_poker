@@ -176,6 +176,13 @@ export default function TableScene3D({
       onFail();
       return;
     }
+    // Out of graphics memory, the browser takes the 3D canvas away: the 2D table, not a frozen screen.
+    const onContextLost = (e: Event): void => {
+      e.preventDefault();
+      console.error('The 3D table lost its graphics context; showing the 2D table instead.');
+      onFail();
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost);
     sceneRef.current = s;
     sceneGen.current++;
     setScene(s);
@@ -185,6 +192,7 @@ export default function TableScene3D({
     s.resize(wrap.clientWidth, wrap.clientHeight);
     if (import.meta.env.DEV) (window as unknown as { __scene3d?: TableScene }).__scene3d = s;
     return () => {
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       ro.disconnect();
       potAnimatorRef.current = null;
       sceneRef.current = null;
@@ -257,6 +265,7 @@ export default function TableScene3D({
           // Their own, a hand shown down — or just the card(s) shown mid-hand, the other still face down.
           faces: s.holeCards.length > 0 ? s.holeCards : [0, 1].map((i) => s.shownCards.find((c) => c.index === i)?.card ?? null),
           bet: s.committedThisStreet,
+          character: s.character,
           hue: avatarHue(s.avatarSeed ?? s.displayName ?? 'x'),
           seed: stableNumber(s.playerId ?? s.displayName ?? String(s.seatId)),
         })),

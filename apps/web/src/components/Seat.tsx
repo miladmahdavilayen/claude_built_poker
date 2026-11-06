@@ -5,6 +5,7 @@ import { TIMINGS } from '../animationTimings.js';
 import { avatarHue } from '../avatarColor.js';
 import { formatChips } from '../chips.js';
 import { CardEye } from './CardEye.js';
+import { characterIconUrl } from './CharacterPicker.js';
 import { PlayingCard } from './PlayingCard.js';
 import { StreamMedia } from './StreamMedia.js';
 
@@ -272,12 +273,16 @@ export function Seat({
   const showHoleCardsOnVideo = holeCards !== null && anyFaceUp;
   const nameRow = (
     <div className="seat-name">
-      <span
-        className="seat-avatar"
-        style={{ background: `hsl(${String(avatarHue(seat.avatarSeed ?? seat.displayName ?? 'x'))}, 55%, 42%)` }}
-      >
-        {(seat.displayName ?? '?').slice(0, 1).toUpperCase()}
-      </span>
+      {seat.character ? (
+        <img className="seat-avatar seat-avatar--character" src={characterIconUrl(seat.character)} alt="" data-testid="seat-character" />
+      ) : (
+        <span
+          className="seat-avatar"
+          style={{ background: `hsl(${String(avatarHue(seat.avatarSeed ?? seat.displayName ?? 'x'))}, 55%, 42%)` }}
+        >
+          {(seat.displayName ?? '?').slice(0, 1).toUpperCase()}
+        </span>
+      )}
       {!seat.isConnected && <span className="disconnected-dot" title="Disconnected" />}
       {seat.displayName ?? 'Player'}
       {/* Server-redacted to null for every viewer except the owner themselves — see projection.ts's viewerIsAdmin gate — so this simply never renders for anyone else, no client-side role check needed. */}

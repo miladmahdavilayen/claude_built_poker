@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { adminLogin, createTable, openAdminSection } from './helpers.js';
+import { adminLogin, chooseCharacter, createTable, openAdminSection } from './helpers.js';
 
 const API = 'http://localhost:4210';
 
@@ -25,6 +25,7 @@ test('a guest ticks "I agree" to join by an invite, and the owner finds them —
   await expect(play).toBeDisabled();
   await guest.getByLabel('I’ve read and agree to the guest terms').check();
   await play.click();
+  await chooseCharacter(guest);
   await expect(guest.locator('[data-testid="seat-1"]')).toHaveAttribute('data-seat-status', 'active', { timeout: 10_000 });
 
   // The owner: Players, filtered to invited guests, finds them by the name they gave the invite.

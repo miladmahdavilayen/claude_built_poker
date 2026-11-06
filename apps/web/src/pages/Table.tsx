@@ -30,6 +30,8 @@ import type { PotAnimator } from '../table3d/TableScene3D.js';
 import { useTableView } from '../table3d/useTableView.js';
 import type { ChatMessageRecord } from '../types.js';
 import { requestSeatAlerts, useSeatOfferAlert } from '../useSeatOfferAlert.js';
+import { PLAYER_CHARACTERS } from '@pokerclause/shared/characters';
+import { CharacterPicker, freeCharacters } from '../components/CharacterPicker.js';
 import { RevealHandButton } from '../components/RevealHandButton.js';
 import { Seat, type SeatVoiceStream } from '../components/Seat.js';
 import { UnseatedTile, VoicePanel } from '../components/VoicePanel.js';
@@ -278,6 +280,12 @@ export function TablePage(): React.JSX.Element {
   const [assignError, setAssignError] = useState<string | null>(null);
   const assignToken = searchParams.get('assign');
   // Kept once the address is cleaned up (below): a reconnect still comes in by the invite.
+  // Their pick for a seat invite: undefined until they've answered, null for no character.
+  const [inviteCharacter, setInviteCharacter] = useState<string | null | undefined>(undefined);
+  const [pendingCharacter, setPendingCharacter] = useState<string | null>(null);
+  const [seatCharacter, setSeatCharacter] = useState<string | null>(null);
+  // Switching character while seated: open, and what's highlighted.
+  const [characterSwitch, setCharacterSwitch] = useState<{ selected: string | null } | null>(null);
   const seatInviteRef = useRef(assignToken);
   if (assignToken) seatInviteRef.current = assignToken;
   const [redeemedTokens, setRedeemedTokens] = useState<Set<string>>(new Set());
@@ -313,8 +321,12 @@ export function TablePage(): React.JSX.Element {
   useEffect(() => {
     if (!assignToken || !connected || redeemedTokens.has(assignToken)) return;
     if (sock.state?.viewerSeatId !== null) return;
+    // First the character: wait for their pick, unless they've used this invite before or none are left.
+    if (sock.seatInviteUsed === null) return;
+    const mustChoose = !sock.seatInviteUsed && freeCharacters(sock.state.seats, user?.role === 'admin').length > 0;
+    if (mustChoose && inviteCharacter === undefined) return;
     setRedeemedTokens((prev) => new Set(prev).add(assignToken));
-    sock.redeemSeatAssignment(assignToken);
+    sock.redeemSeatAssignment(assignToken, inviteCharacter ?? undefined);
     // The URL is cleaned up right away rather than waiting on a result —
     // a page refresh shouldn't redeem it again (the link itself is kept as
     // rejoinPath, above, for coming back after leaving).
@@ -326,7 +338,29 @@ export function TablePage(): React.JSX.Element {
       },
       { replace: true },
     );
-  }, [assignToken, connected, sock.state?.viewerSeatId, redeemedTokens, setSearchParams]);
+  }, [assignToken, connected, sock.state?.viewerSeatId, sock.seatInviteUsed, inviteCharacter, redeemedTokens, setSearchParams]);
+
+  // Someone took that character a moment before them: back to the choice, with the invite still in hand.
+  useEffect(() => {
+    // (Already seated, it was a switch: their list simply no longer offers it.)
+    if (sock.lastError?.code !== 'CHARACTER_TAKEN' || !seatInviteRef.current || sock.state?.viewerSeatId != null) return;
+    const token = seatInviteRef.current;
+    setInviteCharacter(undefined);
+    setPendingCharacter(null);
+    setRedeemedTokens((prev) => {
+      const next = new Set(prev);
+      next.delete(token);
+      return next;
+    });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('assign', token);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [sock.lastError, setSearchParams]);
 
   // The table closed out from under us — an owner's "Terminate table," or
   // (for a spectator who happened to be watching, or any other viewer,
@@ -618,6 +652,7 @@ export function TablePage(): React.JSX.Element {
   const unseatedVoicePeers = voice.peers.filter((p) => p.stream !== null && !state.seats.some((s) => s.playerId === p.userId));
 
   const openSeatModal = (seatId: number): void => {
+    setSeatCharacter(null);
     setBuyIn(state.settings.minBuyIn);
     setSeatDisplayName(user.displayName);
     setSeatModal(seatId);
@@ -627,7 +662,7 @@ export function TablePage(): React.JSX.Element {
     if (seatModal === null || !tableId) return;
     const trimmedName = seatDisplayName.trim();
     const renamed = trimmedName.length > 0 && trimmedName !== user.displayName;
-    sock.takeSeat(tableId, seatModal, Number(buyIn) || 0, renamed ? trimmedName : undefined);
+    sock.takeSeat(tableId, seatModal, Number(buyIn) || 0, renamed ? trimmedName : undefined, seatCharacter ?? undefined);
     if (renamed) setDisplayName(trimmedName);
     setSeatModal(null);
   };
@@ -968,6 +1003,17 @@ export function TablePage(): React.JSX.Element {
               {mySeat && (
                 <button type="button" onClick={() => (sittingOut ? sock.sitIn() : sock.sitOut())}>
                   {sittingOut ? 'Sit in' : 'Sit out next hand'}
+                </button>
+              )}
+              {mySeat && !sock.isPractice && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setCharacterSwitch({ selected: mySeat.character });
+                  }}
+                >
+                  Change character
                 </button>
               )}
               <button
@@ -1405,6 +1451,65 @@ export function TablePage(): React.JSX.Element {
         />
       )}
 
+      {/* Seated: switch to any character no one else has, or to none. */}
+      {characterSwitch && mySeat && (
+        <div className="modal-backdrop" onClick={() => setCharacterSwitch(null)}>
+          <div className="modal character-picker-modal" role="dialog" aria-label="Change your character" onClick={(e) => e.stopPropagation()}>
+            <h3>Change your character</h3>
+            <CharacterPicker
+              // Yours stays on the list, with everyone else's taken ones gone from it as they're picked.
+              characters={PLAYER_CHARACTERS.filter((c) => c.id === mySeat.character || freeCharacters(state.seats, user.role === 'admin').some((f) => f.id === c.id))}
+              selected={characterSwitch.selected}
+              onSelect={(id) => setCharacterSwitch({ selected: id })}
+            />
+            <div className="modal-actions">
+              <button type="button" onClick={() => setCharacterSwitch(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sock.changeCharacter(null);
+                  setCharacterSwitch(null);
+                }}
+              >
+                No character
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={characterSwitch.selected === null || (characterSwitch.selected !== mySeat.character && !freeCharacters(state.seats, user.role === 'admin').some((c) => c.id === characterSwitch.selected))}
+                onClick={() => {
+                  sock.changeCharacter(characterSwitch.selected);
+                  setCharacterSwitch(null);
+                }}
+              >
+                Switch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Opening a seat invite: who they'll be, before they sit down. */}
+      {assignToken && !mySeat && sock.seatInviteUsed === false && inviteCharacter === undefined && freeCharacters(state.seats, user.role === 'admin').length > 0 && (
+        <div className="modal-backdrop">
+          <div className="modal character-picker-modal" role="dialog" aria-label="Choose your character">
+            <h3>Choose your character</h3>
+            <p className="muted">Who you&rsquo;ll be at this table. Once someone picks a character, it&rsquo;s theirs.</p>
+            <CharacterPicker characters={freeCharacters(state.seats, user.role === 'admin')} selected={pendingCharacter} onSelect={setPendingCharacter} />
+            <div className="modal-actions">
+              <button type="button" onClick={() => setInviteCharacter(null)}>
+                No character
+              </button>
+              <button type="button" className="btn-primary" disabled={pendingCharacter === null || !freeCharacters(state.seats, user.role === 'admin').some((c) => c.id === pendingCharacter)} onClick={() => setInviteCharacter(pendingCharacter)}>
+                Sit down
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {seatMenu &&
         (() => {
           const seat = state.seats.find((s) => s.seatId === seatMenu.seatId);
@@ -1480,6 +1585,12 @@ export function TablePage(): React.JSX.Element {
                   <MoneyInput minCents={state.settings.minBuyIn} maxCents={state.settings.maxBuyIn} cents={buyIn} onChange={setBuyIn} />
                 </label>
                 {!invitedMoney && <p>Your chips: {formatChips(user.chips)}</p>}
+              </>
+            )}
+            {!sock.isPractice && freeCharacters(state.seats, user.role === 'admin').length > 0 && (
+              <>
+                <p className="character-picker-title">Choose your character</p>
+                <CharacterPicker characters={freeCharacters(state.seats, user.role === 'admin')} selected={seatCharacter} onSelect={setSeatCharacter} />
               </>
             )}
             <div className="modal-actions">

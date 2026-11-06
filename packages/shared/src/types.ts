@@ -71,6 +71,8 @@ export interface ProjectedSeat {
    * while `holeCards` stays [] for the others.
    */
   shownCards: readonly { index: number; card: Card }[];
+  /** The character this player picked (characters.ts), or null: the 3D table's own figure for them. */
+  character: string | null;
   status: SeatStatus;
   committedThisStreet: number;
   committedThisHand: number;

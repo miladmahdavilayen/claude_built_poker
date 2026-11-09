@@ -174,6 +174,8 @@ export interface ProjectedTableState {
   canShowCards: boolean;
   /** A hand has been started since this table was created or reset: until then only the owner can start one. */
   gameStarted: boolean;
+  /** The table timer has run out and no hand is running: paused until the owner extends it or ends the game. */
+  timeUp: boolean;
   rakePot: number;
   /**
    * Everyone waiting for a seat, in queue order. Visible to all viewers

@@ -1898,6 +1898,7 @@ export class LiveTable {
         seatMeta: this.seatMetaMap(),
         revealedSeatIds: this.revealedSeatIds,
         gameStarted: this.gameStarted,
+        timeUp: this.timeIsUp && this.state.phase !== 'in-hand',
         shownCards: this.shownCards,
         actionDeadline: this.actionDeadline,
         nextHandAt: this.nextHandAt,

@@ -3235,9 +3235,12 @@ about ten.
   outright). Stored as `timerEndsAt`, so it survives a restart. Taking time off leaves
   at least a minute. Everyone sees a small clock top left, amber under five minutes,
   red under one. When it runs out: a hand in progress finishes and its result is seen,
-  no new hand can start, then the table ends as if terminated, everyone paid out and
-  told why. One sweep of all tables every two seconds, not a timer per table. The
-  timer and the kind of call are the owner's alone.
+  then the table **pauses** for everyone (`timeUp`): nothing deals. The owner gets a
+  choice — more time and play on, play on with no timer, or **end the game**
+  (`end-game`): everyone paid out and back to watching, the timer gone, and the table
+  left open and in the lobby for the owner to delete later. Nothing ever closes it on
+  its own. One sweep of all tables every two seconds, not a timer per table. The timer
+  and the kind of call are the owner's alone.
 - **Audio only** (`audioOnly`, a checkbox in the same places): no camera offered, none
   shown, and a camera already on goes off. Calls run browser to browser, so it's held
   by each player's app rather than the server; voice is unaffected.

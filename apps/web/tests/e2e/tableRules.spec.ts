@@ -135,3 +135,60 @@ test('audio only: no camera offered or shown; turning it on mid-call takes a cam
   await expect(guest.locator('.seat-call').getByRole('button', { name: 'Join voice' })).toBeVisible();
   await expect(guest.locator('.seat-call').getByRole('button', { name: 'Join with video' })).toHaveCount(0);
 });
+
+// Out of time: paused for everyone, never closed. The owner chooses: more time and play on, or end the game —
+// everyone paid out, the table left in the lobby.
+test('time up: the table pauses for all; the owner extends and play resumes, or ends the game and the table stays in the lobby', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const { owner, guest } = await table(browser, 'Out Of Time');
+  const tableUrl = owner.url();
+  await startHand(owner);
+  // Give it a minute, then take all of it off but the minute the timer always keeps: a minute to wait out.
+  await tableMenuAction(owner, 'Table controls');
+  const controls = owner.getByRole('dialog', { name: 'Table controls' });
+  await controls.getByLabel(/Table timer/).check();
+  await controls.getByLabel('Minutes').fill('1');
+  await controls.getByRole('button', { name: /Save/ }).click();
+  await controls.getByLabel('Close table controls').click();
+  // Play the hand out while the minute runs.
+  for (let i = 0; i < 300; i++) {
+    for (const p of [owner, guest]) {
+      const fold = p.getByRole('button', { name: 'Fold' });
+      if (await fold.isVisible().catch(() => false)) await fold.click().catch(() => undefined);
+    }
+    if (await owner.getByRole('dialog', { name: 'Time is up' }).isVisible().catch(() => false)) break;
+    await owner.waitForTimeout(500);
+  }
+  const dialog = owner.getByRole('dialog', { name: 'Time is up' });
+  await expect(dialog).toBeVisible({ timeout: 90_000 });
+  // Everyone: paused, nothing to deal, and still at the table.
+  await expect(guest.getByTestId('time-up-banner')).toBeVisible();
+  await expect(guest.getByTestId('table-clock')).toContainText('Paused');
+  await expect(guest.getByRole('button', { name: 'Play Hand' })).toHaveCount(0);
+  await expect(guest.locator('[data-testid="seat-3"]')).not.toHaveAttribute('data-seat-status', 'empty');
+  await owner.screenshot({ path: '/tmp/charshots/time-up.png' });
+
+  // More time: everyone's playing again.
+  await dialog.getByRole('button', { name: '+15 min' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(guest.getByTestId('time-up-banner')).toHaveCount(0, { timeout: 10_000 });
+  await expect(guest.getByTestId('table-clock')).toContainText(/14:\d\d|15:00/);
+  await expect(guest.getByRole('button', { name: 'Play Hand' })).toBeEnabled({ timeout: 10_000 });
+
+  // Back to a minute, wait it out again, and this time end the game.
+  await tableMenuAction(owner, 'Table controls');
+  await controls.getByLabel('Set to (minutes)').fill('1');
+  await controls.getByRole('button', { name: 'Set', exact: true }).click();
+  await controls.getByLabel('Close table controls').click();
+  await expect(dialog).toBeVisible({ timeout: 90_000 });
+  await dialog.getByRole('button', { name: 'End the game' }).click();
+  await dialog.getByRole('button', { name: 'Yes, end the game' }).click();
+  await expect(guest.getByTestId('game-ended-banner')).toBeVisible({ timeout: 10_000 });
+  await expect(guest.locator('[data-testid="seat-3"]')).toHaveAttribute('data-seat-status', 'empty');
+  await expect(owner.getByTestId('table-clock')).toHaveCount(0);
+  // Still a table, and still in the lobby.
+  await owner.goto('/lobby');
+  await expect(owner.locator('.table-card', { hasText: 'Out Of Time' })).toBeVisible();
+  await owner.goto(tableUrl);
+  await expect(owner.locator('[data-testid="seat-0"]')).toBeVisible();
+});

@@ -10,6 +10,7 @@ import { ChipStack } from '../components/ChipStack.js';
 import { DealAnimation } from '../components/DealAnimation.js';
 import { HandBreakPanel } from '../components/HandBreakPanel.js';
 import { TableClock } from '../components/TableClock.js';
+import { TimeUpDialog } from '../components/TimeUpDialog.js';
 import { MoneyInput } from '../components/MoneyInput.js';
 import { OwnerMenu } from '../components/OwnerMenu.js';
 import { SeatActionMenu, useSeatDoubleTap, useSeatMenuGesture, type SeatAction } from '../components/SeatActionMenu.js';
@@ -286,6 +287,12 @@ export function TablePage(): React.JSX.Element {
   const [pendingCharacter, setPendingCharacter] = useState<string | null>(null);
   const [seatCharacter, setSeatCharacter] = useState<string | null>(null);
   // Switching character while seated: open, and what's highlighted.
+  // The owner chose "Decide later" on this pause: the dialog waits for the next one.
+  const [timeUpLater, setTimeUpLater] = useState(false);
+  const pausedNow = sock.state?.timeUp === true;
+  useEffect(() => {
+    if (!pausedNow) setTimeUpLater(false);
+  }, [pausedNow]);
   const [characterSwitch, setCharacterSwitch] = useState<{ selected: string | null } | null>(null);
   const seatInviteRef = useRef(assignToken);
   if (assignToken) seatInviteRef.current = assignToken;
@@ -1171,6 +1178,20 @@ export function TablePage(): React.JSX.Element {
         )}
         {voiceNotice.shown && <ErrorBanner message={voiceNotice.shown} onClose={voiceNotice.dismiss} />}
         {tableNotice.shown && <ErrorBanner message={tableNotice.shown} onClose={tableNotice.dismiss} />}
+        {/* A timed table out of time: paused for everyone while the owner decides (they get TimeUpDialog). */}
+        {state.timeUp && (user.role !== 'admin' || timeUpLater) && (
+          <div className="pending-settings-banner" data-testid="time-up-banner" role="status">
+            {user.role === 'admin' ? 'Time’s up — the table is paused. Extend the timer from table controls to play on.' : 'Time’s up — the game is paused while the owner decides.'}
+          </div>
+        )}
+        {sock.gameEnded && (
+          <div className="pending-settings-banner" data-testid="game-ended-banner" role="status">
+            {sock.gameEnded}{' '}
+            <button type="button" className="link-button" onClick={sock.dismissGameEnded}>
+              OK
+            </button>
+          </div>
+        )}
         {suggest3d && (
           <div className="view-hint-banner" role="status" data-testid="suggest-3d">
             <span>With {playerCount} players, the 3D table is recommended for a better experience.</span>
@@ -1251,7 +1272,7 @@ export function TablePage(): React.JSX.Element {
             />
           </Suspense>
         )}
-        {state.settings.timerEndsAt !== undefined && <TableClock endsAt={state.settings.timerEndsAt} />}
+        {state.settings.timerEndsAt !== undefined && <TableClock endsAt={state.settings.timerEndsAt} paused={state.timeUp} />}
         {!fairnessUnderBoard && state.handCommitment && (
           <div className="fairness-commitment" data-testid="fairness-commitment" title={state.handCommitment}>
             Fairness commitment: {state.handCommitment.slice(0, 12)}&hellip;
@@ -1299,6 +1320,7 @@ export function TablePage(): React.JSX.Element {
         {state.phase !== 'in-hand' && (
           <HandBreakPanel
             waitingForOwner={!sock.isPractice && !state.gameStarted && user.role !== 'admin'}
+            paused={state.timeUp}
             nextHandAt={state.nextHandAt} canStartHand={state.canStartHand} amSeated={!!mySeat || (user.role === 'admin' && !sock.isPractice && !state.gameStarted)} onStartHand={() => sock.startHand()} />
         )}
         {!is3d &&
@@ -1458,6 +1480,15 @@ export function TablePage(): React.JSX.Element {
           }
           theme={tableTheme(dealerCharacters, state.settings)}
           onTheme={(theme) => void sock.updateTableSettings({ tableTheme: theme })}
+        />
+      )}
+
+      {state.timeUp && user.role === 'admin' && !timeUpLater && (
+        <TimeUpDialog
+          onExtend={(minutes) => void sock.updateTableSettings({ timerMinutes: minutes })}
+          onNoTimer={() => void sock.updateTableSettings({ timerMinutes: null })}
+          onEndGame={() => void sock.endGame()}
+          onLater={() => setTimeUpLater(true)}
         />
       )}
 

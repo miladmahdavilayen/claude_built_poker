@@ -19,6 +19,7 @@ export function HandBreakPanel({
   canStartHand,
   amSeated,
   waitingForOwner = false,
+  paused = false,
   onStartHand,
 }: {
   nextHandAt: number | null;
@@ -26,6 +27,8 @@ export function HandBreakPanel({
   amSeated: boolean;
   /** A new or reset table: its owner starts the first hand, and everyone else waits for them. */
   waitingForOwner?: boolean;
+  /** A timed table out of time: nothing deals until the owner decides. */
+  paused?: boolean;
   onStartHand: () => void;
 }): React.JSX.Element {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
@@ -70,6 +73,10 @@ export function HandBreakPanel({
           </div>
           <span className="start-hand-hint">Shuffling&hellip; next hand in {Math.ceil(remainingMs / 1000)}s</span>
         </>
+      ) : paused ? (
+        <span className="start-hand-hint" data-testid="time-up-paused">
+          Time&rsquo;s up &mdash; paused
+        </span>
       ) : waitingForOwner ? (
         <span className="start-hand-hint" data-testid="waiting-for-owner">
           Waiting for the table&rsquo;s owner to start the game&hellip;

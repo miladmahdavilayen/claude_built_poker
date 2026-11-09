@@ -1010,34 +1010,66 @@ describe('socketServer: live signaling and access control', () => {
       adminSock.close();
     });
 
-    it('time up: a hand in progress finishes, no new one starts, then the table ends for everyone and pays out', async () => {
+    it('time up: a hand in progress finishes, then the table pauses for everyone — never closes; the owner extends, or ends the game and it stays open', async () => {
       const table = await registry.createTable('Ending', SETTINGS, null, null);
       const owner = await makeAdminUser('Owner');
       const guest = await makeUser('Gus', 0);
       const other = await makeUser('Ola', 0);
       const adminSock = await joined(owner.token, table.tableId);
+      const g = await joined(guest.token, table.tableId);
       table.takeSeat(0, guest.userId, { displayName: 'Gus', isGuest: true, avatarSeed: 'a', clientSeed: 'c' }, 100);
       table.takeSeat(1, other.userId, { displayName: 'Ola', isGuest: true, avatarSeed: 'b', clientSeed: 'd' }, 100);
       adminSock.emit('start-hand');
       await waitForState<S>(adminSock, (p) => p.state.phase === 'in-hand');
 
-      // Time runs out mid-hand: the table's still there a sweep later.
-      table.settings = { ...table.settings, timerEndsAt: Date.now() - 1 };
-      await new Promise((r) => setTimeout(r, 2500));
-      expect(registry.get(table.tableId)).not.toBeNull();
-      expect(table.state.phase).toBe('in-hand');
+      const timeUp = (): boolean => table.projectionFor(null).timeUp;
+      const foldIfRunning = (): void => {
+        const seat = table.state.phase === 'in-hand' ? table.state.betting.actingSeat : null;
+        if (seat !== null) table.applyPlayerAction(seat, { seatId: seat, type: 'fold' });
+      };
 
-      const closed = waitFor<{ reason: string }>(adminSock, 'table-closed');
-      const acting = table.state.betting.actingSeat!;
-      table.applyPlayerAction(acting, { seatId: acting, type: 'fold' });
-      await vi.waitFor(() => expect(table.state.phase).toBe('hand-complete'));
+      // Time runs out mid-hand: the hand plays on, and the table isn't paused while it does.
+      const pausedForGuest = waitForState<S>(g, (p) => (p.state as { timeUp?: boolean }).timeUp === true);
+      table.settings = { ...table.settings, timerEndsAt: Date.now() - 1 };
+      expect(timeUp()).toBe(false);
+
+      // It ends: paused for everyone, and stays so — no new hand, and the table never goes.
+      foldIfRunning();
+      await pausedForGuest;
       const refused = waitFor<{ code: string }>(adminSock, 'error');
       adminSock.emit('start-hand');
       expect((await refused).code).toBe('TIME_IS_UP');
-      expect((await closed).reason).toContain('Time’s up');
-      expect(registry.get(table.tableId)).toBeNull();
+      expect((table.projectionFor(null) as { canStartHand: boolean }).canStartHand).toBe(false);
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(registry.get(table.tableId)).not.toBeNull();
+
+      // The owner gives it 30 minutes more: playing again, for everyone.
+      expect((await ack(adminSock, 'update-table-settings', { timerMinutes: 30 })).ok).toBe(true);
+      expect(timeUp()).toBe(false);
+      await vi.waitFor(() => expect(table.projectionFor(0).canStartHand).toBe(true), { timeout: 15_000 });
+      const dealt = waitForState<S>(g, (p) => p.state.phase === 'in-hand');
+      g.emit('start-hand');
+      await dealt;
+
+      // Run out again; this time the owner ends the game: everyone paid out, the timer gone, the table still open.
+      foldIfRunning();
+      table.settings = { ...table.settings, timerEndsAt: Date.now() - 1 };
+      await vi.waitFor(() => expect(timeUp()).toBe(true), { timeout: 15_000 });
+      const message = waitFor<{ reason: string }>(g, 'game-ended');
+      await new Promise<void>((resolve) => adminSock.emit('end-game', () => resolve()));
+      expect((await message).reason).toContain('ended');
+      expect(registry.get(table.tableId)).not.toBeNull();
+      expect(table.seats.every((s) => s.userId === null)).toBe(true);
+      expect(table.settings.timerEndsAt).toBeUndefined();
+      expect(table.gameStarted).toBe(false);
+      expect((await store.findUserById(guest.userId))?.chips ?? 0).toBeGreaterThanOrEqual(0);
+      // Only the owner can end it.
+      const notYours = waitFor<{ code: string }>(g, 'error');
+      g.emit('end-game');
+      expect((await notYours).code).toBe('ADMIN_REQUIRED');
       adminSock.close();
-    }, 30_000);
+      g.close();
+    }, 40_000);
 
     it('audio only: the owner’s setting, seen by everyone at the table', async () => {
       const table = await registry.createTable('Quiet', SETTINGS, null, null);

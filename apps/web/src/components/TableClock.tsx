@@ -26,13 +26,20 @@ export function useTimeLeft(endsAt: number | undefined): number | null {
 }
 
 /** The table timer's small clock, top left of the table, for everyone at it: how long before the table ends. */
-export function TableClock({ endsAt }: { endsAt: number }): React.JSX.Element | null {
+export function TableClock({ endsAt, paused = false }: { endsAt: number; paused?: boolean }): React.JSX.Element | null {
   const left = useTimeLeft(endsAt);
   if (left === null) return null;
   const up = left <= 0;
+  if (paused) {
+    return (
+      <div className="table-clock table-clock--last" data-testid="table-clock" role="timer" aria-label="Time is up: the table is paused">
+        <span aria-hidden="true">⏸</span> Paused
+      </div>
+    );
+  }
   const tone = left < 60_000 ? ' table-clock--last' : left < 300_000 ? ' table-clock--soon' : '';
   return (
-    <div className={`table-clock${tone}`} data-testid="table-clock" role="timer" title="Time left before this table ends" aria-label={up ? 'Time is up: the table ends after this hand' : `Time left before this table ends: ${clockText(left)}`}>
+    <div className={`table-clock${tone}`} data-testid="table-clock" role="timer" title="Time left before this table ends" aria-label={up ? 'Time is up: the table pauses after this hand' : `Time left before this table ends: ${clockText(left)}`}>
       <span aria-hidden="true">⏱</span> {up ? 'Last hand' : clockText(left)}
     </div>
   );

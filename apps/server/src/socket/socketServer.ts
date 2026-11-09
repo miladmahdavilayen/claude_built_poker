@@ -1008,12 +1008,32 @@ export function attachSocketServer(
       void terminateTable(table.tableId).then(() => callback?.());
     });
 
+    // The owner ends a timed table's game when its time is up: everyone paid out and back to watching, the timer gone,
+    // and the table left open and in the lobby for the owner to delete later, or play on.
+    socket.on('end-game', (callback?: () => void): void => {
+      const table = currentTable();
+      if (!table) return;
+      if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can end the game.');
+      void resetForEveryone(table).then(() => {
+        table.updateSettings({ timerMinutes: null });
+        persistTable(table);
+        io.to(spectatorRoom(table.tableId)).emit('game-ended', { reason: 'The game has ended. Thanks for playing!' });
+        broadcastTable(table);
+        callback?.();
+      });
+    });
+
     socket.on('reset-table', (callback?: () => void): void => {
       const table = currentTable();
       if (!table) return;
       if (data.role !== 'admin') return emitError('ADMIN_REQUIRED', 'Only the table owner can reset a table.');
+      void resetForEveryone(table).then(() => callback?.());
+    });
+
+    /** Cashes everyone out and empties the seats, the table itself staying put (see LiveTable.resetTable). */
+    async function resetForEveryone(table: LiveTable): Promise<void> {
       const previousSeatIds = table.seats.filter((s) => s.userId !== null).map((s) => s.seatId);
-      void (async () => {
+      await (async () => {
         const refunds = table.resetTable();
         for (const r of refunds) await cashOut(table, r.userId, r.stack);
         // Every previously-seated player's socket is still in its old
@@ -1024,9 +1044,8 @@ export function attachSocketServer(
         syncSeatOffer(table);
         const freshState = table.projectionFor(null);
         io.to(spectatorRoom(table.tableId)).emit('state', { state: freshState, events: [] });
-        callback?.();
       })();
-    });
+    }
 
     // A seated player moving to an empty seat — anyone seated, the admin
     // included; a taken seat is never anyone's to take (only the admin can
@@ -1306,14 +1325,18 @@ export function attachSocketServer(
   }
 
   // The table timer: every open table's clock, checked here rather than one timer per table, so a table that was just
-  // created, restored after a restart or had its time changed needs nothing more. A hand running when time runs out
-  // finishes, its result is seen, and then the table ends for everyone.
-  const endingTables = new Set<string>();
+  // created, restored after a restart or had its time changed needs nothing more. When it runs out, a hand running
+  // finishes, and then the table pauses — for everyone, nothing dealt — until the owner extends the time or ends the
+  // game ('end-game'). It never closes on its own: the table stays in the lobby.
+  const pausedTables = new Set<string>();
   const timerSweep = setInterval(() => {
     for (const table of registry.all()) {
-      if (table.isPractice || !table.timeIsUp || !table.readyToEnd || endingTables.has(table.tableId)) continue;
-      endingTables.add(table.tableId);
-      void closeTableWithNotice(table.tableId, 'Time’s up — this table has ended.', 'the table’s timer ran out').finally(() => endingTables.delete(table.tableId));
+      const paused = !table.isPractice && table.timeIsUp && table.readyToEnd;
+      if (paused === pausedTables.has(table.tableId)) continue;
+      if (paused) pausedTables.add(table.tableId);
+      else pausedTables.delete(table.tableId);
+      // Everyone's screen goes to (or out of) the pause.
+      broadcastTable(table);
     }
   }, 2000);
   timerSweep.unref();

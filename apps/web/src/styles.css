@@ -1609,6 +1609,21 @@ input[type='range']::-moz-range-thumb {
   animation: card-flip-glow 0.9s ease-out forwards;
 }
 
+/* A text-looking button inside a notice. */
+.link-button {
+  border: 0;
+  padding: 0 0 0 4px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.time-up-dialog .table-timer-buttons button {
+  flex: 1;
+}
+
 /* The table timer's clock, top left (TableClock.tsx); the fairness line moves down to make room. */
 .table-clock {
   position: absolute;

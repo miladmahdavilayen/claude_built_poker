@@ -67,6 +67,11 @@ export interface TableSocketApi {
   terminateTable: () => Promise<void>;
   /** Owner-only (admin role) — empties every seat and refunds seated humans, but keeps the table itself alive. */
   resetTable: () => Promise<void>;
+  /** The owner, when a timed table's time is up: everyone paid out, the timer gone, the table left open. */
+  endGame: () => Promise<void>;
+  /** The owner ended the game ('end-game'): a message for everyone, until it's dismissed. */
+  gameEnded: string | null;
+  dismissGameEnded: () => void;
   /** Owner-only (admin role) — rebuys a specific seat's occupant. Self-serve rebuy no longer exists. */
   adminRebuy: (seatId: number, amount: number) => void;
   /** Owner-only (admin role) — generates a one-time, seat-and-amount-specific invite link. */
@@ -106,6 +111,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
   const [canManageLayout, setCanManageLayout] = useState(false);
   const [isPractice, setIsPractice] = useState(false);
   const [canTakeSeat, setCanTakeSeat] = useState(false);
+  const [gameEnded, setGameEnded] = useState<string | null>(null);
   const [seatInviteUsed, setSeatInviteUsed] = useState<boolean | null>(null);
   const [chatHistoryLoaded, setChatHistoryLoaded] = useState(false);
 
@@ -138,6 +144,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
     const onChat = (message: ChatMessageRecord): void => setChat((prev) => [...prev, message].slice(-200));
     const onError = (err: ServerError): void => setLastError(err);
     const onTableClosed = (payload: { reason: string }): void => setTableClosedReason(payload.reason);
+    const onGameEnded = (payload: { reason: string }): void => setGameEnded(payload.reason);
+    socket.on('game-ended', onGameEnded);
     const onTablePermissions = (payload: { canManageTable: boolean; canManageLayout: boolean; isPractice: boolean; canTakeSeat?: boolean; seatInviteUsed?: boolean }): void => {
       setCanTakeSeat(payload.canTakeSeat === true);
       setSeatInviteUsed(payload.seatInviteUsed === true);
@@ -160,6 +168,7 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       socket.off('error', onError);
       socket.off('table-closed', onTableClosed);
       socket.off('table-permissions', onTablePermissions);
+      socket.off('game-ended', onGameEnded);
     };
   }, [socket]);
 
@@ -201,6 +210,9 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       showCard: (handId, cardIndex) => socket?.emit('show-card', { handId, cardIndex }),
       sendChat: (message) => socket?.emit('chat', { message }),
       terminateTable: () => new Promise<void>((resolve) => (socket ? socket.emit('terminate-table', () => resolve()) : resolve())),
+      endGame: () => new Promise<void>((resolve) => (socket ? socket.emit('end-game', () => resolve()) : resolve())),
+      gameEnded,
+      dismissGameEnded: () => setGameEnded(null),
       resetTable: () => new Promise<void>((resolve) => (socket ? socket.emit('reset-table', () => resolve()) : resolve())),
       adminRebuy: (seatId, amount) => socket?.emit('admin-rebuy', { seatId, amount }),
       assignSeat: (seatId, buyIn, nickname) =>
@@ -231,6 +243,6 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       getInviteCode: () =>
         new Promise((resolve) => (socket ? socket.emit('get-invite-code', (r: { inviteCode: string | null }) => resolve(r.inviteCode)) : resolve(null))),
     }),
-    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice, canTakeSeat, seatInviteUsed, chatHistoryLoaded],
+    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice, canTakeSeat, seatInviteUsed, chatHistoryLoaded, gameEnded],
   );
 }

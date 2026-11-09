@@ -33,6 +33,8 @@ export interface ProjectionContext {
   revealedSeatIds: ReadonlySet<number>;
   /** A hand has been started since the table was created or reset. Absent: taken as yes. */
   gameStarted?: boolean;
+  /** The table timer ran out and no hand is running (see LiveTable.timeIsUp). */
+  timeUp?: boolean;
   /** Which of its cards each seat has chosen to show mid-hand, heads-up (LiveTable.showCard): only these faces go to other viewers. */
   shownCards?: ReadonlyMap<number, ReadonlySet<number>>;
   actionDeadline: number | null;
@@ -155,7 +157,7 @@ export function projectStateForSeat(
   const dealtInCount = state.seats.filter((s) => s.status !== 'empty' && s.status !== 'sitting-out' && s.stack > 0).length;
   const hasHuman = state.seats.some((s) => (ctx.seatMeta.get(s.seatId) ?? EMPTY_SEAT_META).playerId !== null);
   const breakOver = ctx.nextHandAt === null || ctx.now >= ctx.nextHandAt;
-  const canStartHand = state.phase !== 'in-hand' && dealtInCount >= 2 && hasHuman && breakOver;
+  const canStartHand = state.phase !== 'in-hand' && dealtInCount >= 2 && hasHuman && breakOver && !ctx.timeUp;
 
   return {
     tableId: ctx.tableId,
@@ -181,6 +183,7 @@ export function projectStateForSeat(
     revealEligibleSeatId: ctx.revealEligibleSeatId,
     canShowCards: mayShowCards(state, viewerSeatId, ctx.revealedSeatIds),
     gameStarted: ctx.gameStarted ?? true,
+    timeUp: ctx.timeUp ?? false,
     rakePot: ctx.rakePot,
     waitlist: ctx.waitlist,
     removedSeatIds: ctx.removedSeatIds ?? [],

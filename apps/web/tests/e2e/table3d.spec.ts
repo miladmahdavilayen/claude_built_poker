@@ -289,3 +289,34 @@ test('seated: your buttons wait for each street to be dealt and seen', async ({ 
   // It got to act on every street.
   expect([...seen].sort()).toEqual([0, 3, 4, 5]);
 });
+
+test('seated: the pot shows from the first chip in — the blinds, before anyone acts — in its own place clear of the board strip', async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await view3d(page, 'seated');
+  await adminLogin(page);
+  await createTable(page, { name: 'Pot In Sight', smallBlind: 1, bigBlind: 2, maxSeats: 9, isPrivate: false });
+  await addBot(page, 4, 'calling-station', 200);
+  await takeSeat(page, 0, 200);
+  const pot = page.getByTestId('pot-hud');
+  // Nothing in yet: no pot.
+  await expect(pot).toHaveCount(0);
+  await startHand(page);
+  // The blinds alone — still in front of the players, nothing swept to the middle.
+  await expect(pot).toContainText('$3', { timeout: 20_000 });
+  // Every chip put in counts at once, and the pot stays up through the hand.
+  // (Heads-up, whoever has the small blind calls first: you, or the computer player — then it's yours to check.)
+  const act = page.getByRole('button', { name: /^(Call|Check)/ });
+  await expect(act).toBeVisible({ timeout: 30_000 });
+  await act.click();
+  await expect(pot).toContainText('$4', { timeout: 20_000 });
+  if (await act.isVisible().catch(() => false)) await act.click();
+  // The board's out: the pot is under its strip, not on it, and wholly on screen.
+  await expect(page.getByTestId('board-hud')).toBeVisible({ timeout: 40_000 });
+  await expect(pot).toBeVisible();
+  const strip = (await page.getByTestId('board-hud').boundingBox())!;
+  const box = (await pot.boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(strip.y + strip.height);
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+});

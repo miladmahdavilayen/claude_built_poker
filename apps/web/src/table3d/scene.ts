@@ -68,7 +68,7 @@ export interface SceneCallbacks {
   onPerf?: (avgFrameMs: number) => void;
   /** Settled positions of the seats, pot and board on screen. */
   onLayout?: (layout: ScreenLayout) => void;
-  /** The amount shown in the middle (0 once it's been pushed to the winners). */
+  /** The pot's label (see labelPot): the whole pot, bets in front of the players included; 0 once it's been pushed to the winners. */
   onPotShown?: (amount: number) => void;
   /** The seated viewer has turned to look somewhere other than the table (or back). */
   onLookAway?: (away: boolean) => void;
@@ -105,7 +105,7 @@ const FLOOR_Y = -1.56;
 /** A box on screen, px. */
 type Rect = { x0: number; y0: number; x1: number; y1: number };
 
-const OBSTACLES = '.start-hand-panel > *, .table-corner, .table-clock, .fairness-commitment, .fairness-link, .board-hud, .action-ticker';
+const OBSTACLES = '.start-hand-panel > *, .table-corner, .table-clock, .fairness-commitment, .fairness-link, .board-hud, .pot-hud, .action-ticker';
 /** Small round buttons a camera screen keeps clear of when it can — but covers rather than not be seen at all. */
 const SOFT_OBSTACLES = '.table3d-recenter, .table3d-whole, .table-menu-button';
 
@@ -180,6 +180,9 @@ export class TableScene {
   private potWanted = 0;
   /** How much of it has already been pushed to winners this hand. */
   private potPaid = 0;
+  /** Everything put in this hand (bets still in front of the players included), and what the pot's label last said. */
+  private potTotal = 0;
+  private potLabel = 0;
   /** Between a hand's end and the next one's start: its bets are in the pot, whatever the last state still says each player put in. */
   private handOver = false;
   private potHoldUntil = 0;
@@ -1088,7 +1091,7 @@ export class TableScene {
     this.potShown = Math.max(0, this.potShown - total);
     if (this.potShown > 0) this.chips.setStack('pot', 0, HOUSE.potZ, this.potShown, 36);
     else this.potGone = true;
-    this.cb.onPotShown?.(this.potShown);
+    this.labelPot();
   }
 
   /** Raises the given cards (a split pot's winning hands) while it's announced. */
@@ -1157,6 +1160,7 @@ export class TableScene {
           this.externalPot = false;
           this.potShown = 0;
           this.potPaid = 0;
+          this.potTotal = 0;
           this.handOver = false;
           for (const key of this.chips.stackKeys()) this.chips.setStack(key, 0, 0, 0);
           buttonSeat = e.buttonSeat;
@@ -1287,7 +1291,9 @@ export class TableScene {
     }
     // The pot in the middle.
     this.potWanted = Math.max(0, snap.potTotal - bets);
+    this.potTotal = snap.potTotal;
     if (performance.now() >= this.potHoldUntil) this.showPot();
+    this.labelPot();
 
     // The dealer button: put where the game state says, no correction (the hand-start slide is in handleEvents).
     const btn = snap.buttonSeat !== null ? (this.placementBySeat.get(snap.buttonSeat) ?? null) : null;
@@ -1306,10 +1312,23 @@ export class TableScene {
 
   private showPot(): void {
     const want = this.potGone ? 0 : Math.max(0, this.potWanted - this.potPaid);
-    if (want === this.potShown) return;
-    this.potShown = want;
-    this.chips.setStack('pot', 0, HOUSE.potZ, this.potShown, 36);
-    this.cb.onPotShown?.(this.potShown);
+    if (want !== this.potShown) {
+      this.potShown = want;
+      this.chips.setStack('pot', 0, HOUSE.potZ, this.potShown, 36);
+    }
+    this.labelPot();
+  }
+
+  /**
+   * The pot's label: the whole pot from the first chip in — the bets still in
+   * front of the players too, not only what's been swept to the middle — less
+   * whatever's already been pushed to a winner.
+   */
+  private labelPot(): void {
+    const label = this.potGone ? 0 : Math.max(0, this.potTotal - this.potPaid);
+    if (label === this.potLabel) return;
+    this.potLabel = label;
+    this.cb.onPotShown?.(label);
   }
 
   // --- Pointer: hovering and clicking an empty chair. ---
@@ -1678,7 +1697,7 @@ export class TableScene {
     for (const el of hidden) this.place(el, null);
     // The edge markers keep clear of every nameplate and camera screen on screen.
     this.placeEdgeMarkers(away, [...seats.map((a) => ({ x0: a.x - a.w / 2, y0: a.y - a.h / 2, x1: a.x + a.w / 2, y1: a.y + a.h / 2 })), ...fitted.values()]);
-    // Each bet's amount just in front of its chips, toward the viewer; the pot's below the pot.
+    // Each bet's amount just in front of its chips, toward the viewer.
     const toward = { x: Math.sin(this.rig.yaw), z: Math.cos(this.rig.yaw) };
     for (const p of this.placements) {
       const o = this.overlays.get(`bet:${String(p.seatId)}`);
@@ -1699,10 +1718,8 @@ export class TableScene {
       o.el.classList.toggle('blind-tag--mine', p.seatId === this.viewerSeatId);
       this.place(o.el, this.onScreen(pr, 0) ? `translate(${pr.x.toFixed(1)}px, ${pr.y.toFixed(1)}px) translate(-50%, -50%)` : null);
     }
-    // The pot's amount just above its chips — never over the board.
+    // Where the pot's chips are (its amount is the page's own, fixed under the board strip: .pot-hud).
     const potAt = this.project(0, 0.3, HOUSE.potZ);
-    const pot = this.overlays.get('pot');
-    if (pot) this.place(pot.el, this.onScreen(potAt, 0) ? `translate(${potAt.x.toFixed(1)}px, ${potAt.y.toFixed(1)}px) translate(-50%, -100%)` : null);
     layout.pot = { x: potAt.x, y: potAt.y };
     const b = this.project(0, 0, HOUSE.boardZ);
     layout.board = { x: b.x, y: b.y };

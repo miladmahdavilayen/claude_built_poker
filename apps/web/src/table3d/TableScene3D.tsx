@@ -340,6 +340,17 @@ export default function TableScene3D({
               ))}
             </div>
           )}
+          {/*
+            The pot, from the first chip in: the whole of it (the bets still in front of the players too), in one
+            fixed place under the board strip — never on the felt, where from some seats it lay over the cards.
+          */}
+          {potShown > 0 && (
+            <div className="pot-display pot-hud" data-testid="pot-hud" aria-live="polite">
+              <span className="pot-hud-label">Pot</span>
+              <span className="pot-hud-amount">{formatChips(potShown)}</span>
+              {state.pots.length > 1 && <span className="side-pots">({state.pots.map((p) => formatChips(p.amount)).join(' + ')})</span>}
+            </div>
+          )}
           <ActionTicker events={events} seats={state.seats} />
           {/* Seated: a marker at the screen's edge for each player out of view — the scene shows and places them. */}
           {mode === 'seated' &&
@@ -442,14 +453,6 @@ export default function TableScene3D({
                 <span className="chip-stack-amount">{formatChips(s.committedThisStreet)}</span>
               </div>
             ))}
-          <div ref={overlayRef('pot')} className={`pot-display pot-display--3d${potShown > 0 ? '' : ' pot-display--empty'}`}>
-            {potShown > 0 && (
-              <>
-                <span>Pot: {formatChips(potShown)}</span>
-                {state.pots.length > 1 && <span className="side-pots"> ({state.pots.map((p) => formatChips(p.amount)).join(' + ')})</span>}
-              </>
-            )}
-          </div>
         </div>
       )}
     </div>

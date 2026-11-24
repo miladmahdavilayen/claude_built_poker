@@ -57,6 +57,7 @@ import { useTableLayout } from '../useTableLayout.js';
 import { fakeCameraStream } from '../devFakeCamera.js';
 import { useImmersiveMode } from '../useImmersiveMode.js';
 import { useIsCompactScreen } from '../useIsCompactScreen.js';
+import { PHONE_LANDSCAPE, PHONE_PORTRAIT, useMediaQuery } from '../useMediaQuery.js';
 import { useJustShownCards } from '../useJustShownCards.js';
 import { useJustRevealedSeats } from '../useJustRevealedSeats.js';
 import { useNoTableSelection } from '../useNoTableSelection.js';
@@ -228,6 +229,26 @@ export function TablePage(): React.JSX.Element {
     [],
   );
   const isCompactScreen = useIsCompactScreen();
+  // A phone on its side sees far more of the table: suggested, once, to anyone holding theirs upright at a table of
+  // three or more — and on its side, the seated 3D view pulls back to take in every seat (scene.ts's setFitTable).
+  const phonePortrait = useMediaQuery(PHONE_PORTRAIT);
+  const phoneLandscape = useMediaQuery(PHONE_LANDSCAPE);
+  const rotateKey = `pokerclause-rotate-hint:${String(tableId)}`;
+  const [hideRotateHint, setHideRotateHint] = useState(() => {
+    try {
+      return sessionStorage.getItem(rotateKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismissRotateHint = (): void => {
+    setHideRotateHint(true);
+    try {
+      sessionStorage.setItem(rotateKey, '1');
+    } catch {
+      // Storage blocked — it's just dismissed for now.
+    }
+  };
   useNoTableSelection();
   const navigate = useNavigate();
   const [seatModal, setSeatModal] = useState<number | null>(null);
@@ -1284,6 +1305,17 @@ export function TablePage(): React.JSX.Element {
             </button>
           </div>
         )}
+        {phonePortrait && playerCount > 2 && !hideRotateHint && (
+          <div className="view-hint-banner" role="status" data-testid="suggest-rotate">
+            <span aria-hidden="true" className="rotate-hint-icon">
+              ⟳
+            </span>
+            <span>With {playerCount} players, turn your phone sideways: you&rsquo;ll see more of the table and every player at once.</span>
+            <button type="button" className="view-hint-close" aria-label="Dismiss" onClick={dismissRotateHint}>
+              ✕
+            </button>
+          </div>
+        )}
         {suggest3d && (
           <div className="view-hint-banner" role="status" data-testid="suggest-3d">
             <span>With {playerCount} players, the 3D table is recommended for a better experience.</span>
@@ -1358,6 +1390,7 @@ export function TablePage(): React.JSX.Element {
               winningCards={splitEffects.cards}
               seatVideos={seatVideos3d}
               onLook={sendLook}
+              fitTable={phoneLandscape}
               edgeMute={(seatId) => {
                 const seat = state.seats.find((x) => x.seatId === seatId);
                 return seat ? peerMuteFor(callIdOf(seat), seat.displayName) : undefined;

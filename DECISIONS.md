@@ -3312,3 +3312,22 @@ about ten.
   What stands in front of it (the dealer, a nearer player) is drawn in front of it.
 - On the 2D table, a camera box's bigger size on a phone now goes by how many are seated,
   not by how many cameras happen to be on.
+
+## A phone held on its side
+
+- **The turn's buttons.** They were laid out for an upright phone: one thin rail, and a bet
+  slider in a single column too tall for a sideways screen, so it ran off the bottom. On its
+  side (`max-height: 500px`, landscape) the rail is wider with a full finger's height per
+  button, and the sizer opens as two columns — amount, presets and −/+ on the left, the
+  slider the full height on the right. The turn's clock moves beside the menu button.
+- **A tip to rotate.** At a table of three or more, a phone held upright is told once that
+  sideways shows more of the table and every player. It goes when the phone is turned, and
+  stays away for the session once dismissed.
+- **Seated in 3D, the whole table.** Only on a phone on its side, the seated view pulls
+  straight back (and up a little) from your chair by the least that puts every other seat in
+  view looking straight ahead, clear of the rail your buttons take (`solveTableFit`). The two
+  seats beside the house dealer (1 and 9 at a full table) don't count each other — the dealer
+  is between them, and they lean in as before — but each still has every other seat in view.
+  Pulled back, your own figure is hidden and your hand is shown above your box, since the
+  cards on the felt are too small to read from there. Upright, or on any other screen, your
+  eyes are at your seat as before.

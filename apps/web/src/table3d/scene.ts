@@ -864,7 +864,8 @@ export class TableScene {
     // Straight ahead is always measured from where you sit, leaning or not.
     const heading = Math.atan2(0 - sitting.x, HOUSE.boardZ - sitting.z);
     const p = edgePoint(own.s, -EYE.out + LEAN.forward * this.lean);
-    const eye = new THREE.Vector3(p.x, EYE.y - LEAN.down * this.lean, p.z);
+    // Pulled straight back (and up a little) from there when the view is fitting the whole table (solveTableFit).
+    const eye = new THREE.Vector3(p.x - Math.sin(heading) * this.eyeBack, EYE.y + this.eyeRise - LEAN.down * this.lean, p.z - Math.cos(heading) * this.eyeBack);
     return { eye, heading };
   }
 
@@ -896,19 +897,86 @@ export class TableScene {
   private seatPitch(): number {
     const own = this.viewerSeatId !== null ? this.placementBySeat.get(this.viewerSeatId) : undefined;
     if (!own) return -0.3;
-    const sitting = edgePoint(own.s, -EYE.out);
+    const sitting = this.homeEye(own);
+    const eyeY = sitting.y;
     const cards = edgePoint(own.s, TABLE.railWidth + SEAT_SPOTS.cardsIn + OWN_IN);
     const dOwn = Math.hypot(cards.x - sitting.x, cards.z - sitting.z);
     // Down to the near edge of your cards, and a little margin.
     // …above the band your own box takes at the bottom of the screen.
     const band = (this.ownBand() / Math.max(1, this.height)) * ((this.seatedFov() * Math.PI) / 180);
-    const toCards = Math.atan2(EYE.y, Math.max(0.2, dOwn - (CARD_H * 1.15) / 2)) + (3 * Math.PI) / 180 + band;
+    const toCards = Math.atan2(eyeY, Math.max(0.2, dOwn - (CARD_H * 1.15) / 2)) + (3 * Math.PI) / 180 + band;
     const dBoard = Math.hypot(sitting.x, sitting.z - HOUSE.boardZ);
-    const toBoard = Math.atan2(EYE.y, dBoard);
+    const toBoard = Math.atan2(eyeY, dBoard);
     const half = ((this.seatedFov() / 2) * Math.PI) / 180;
     const hi = half - toCards;
     const lo = (6 * Math.PI) / 180 - half;
     return lo > hi ? hi : Math.min(hi, Math.max(lo, -toBoard));
+  }
+
+  /** Where the seated viewer's eyes are when they sit straight (no lean): at their seat — or pulled back from it, fitting the whole table. */
+  private homeEye(own: SeatPlacement3d): THREE.Vector3 {
+    const sitting = edgePoint(own.s, -EYE.out);
+    const heading = Math.atan2(0 - sitting.x, HOUSE.boardZ - sitting.z);
+    return new THREE.Vector3(sitting.x - Math.sin(heading) * this.eyeBack, EYE.y + this.eyeRise, sitting.z - Math.cos(heading) * this.eyeBack);
+  }
+
+  private fitTable = false;
+  /** How far the seated eyes are pulled straight back from the seat, and raised, to fit the whole table (0: at the seat). */
+  private eyeBack = 0;
+  private eyeRise = 0;
+
+  /**
+   * A phone held on its side: seated, the view pulls back from your chair
+   * until every other seat is in it, so no one has to turn their head to see
+   * the table. Off (any other screen), your eyes are at your seat as ever.
+   */
+  setFitTable(on: boolean): void {
+    if (on === this.fitTable) return;
+    this.fitTable = on;
+    this.look.recenter();
+    this.look.snap();
+    this.retarget(true);
+  }
+
+  /**
+   * How far back the seated view has to be for every other seat's player to
+   * be in it, looking straight ahead: the least that does it, a step at a
+   * time. The two seats beside the house dealer (1 and 9 at a full table)
+   * don't count each other — the dealer stands between them, and they lean
+   * in to see each other, as they always have — but each still has every
+   * other seat in view. Your own figure is out of the picture then: the view
+   * is from behind where you sit.
+   */
+  private solveTableFit(): void {
+    this.eyeBack = 0;
+    this.eyeRise = 0;
+    const own = this.viewerSeatId !== null ? this.placementBySeat.get(this.viewerSeatId) : undefined;
+    if (!this.fitTable || !this.eyes || !own) {
+      this.players.setOwnHidden(false);
+      return;
+    }
+    const byDealer = (s: number): boolean => s <= 0.16 || s >= 0.84;
+    // Each other player's head, and the top of a camera screen over it.
+    const points = this.placements
+      .filter((p) => p.seatId !== own.seatId && !(byDealer(own.s) && byDealer(p.s)))
+      .flatMap((p) => [new THREE.Vector3(p.chair.x, 0.75, p.chair.z), new THREE.Vector3(p.chair.x, 1.45, p.chair.z)]);
+    const sitting = edgePoint(own.s, -EYE.out);
+    const heading = Math.atan2(0 - sitting.x, HOUSE.boardZ - sitting.z);
+    const cam = new THREE.PerspectiveCamera(this.seatedFov(), this.width / Math.max(1, this.height), 0.05, 100);
+    const v = new THREE.Vector3();
+    for (let back = 0; back <= 6; back += 0.1) {
+      this.eyeBack = back;
+      this.eyeRise = back * 0.42;
+      const pitch = this.seatPitch();
+      const eye = this.homeEye(own);
+      cam.position.copy(eye);
+      cam.lookAt(eye.x + Math.sin(heading) * Math.cos(pitch), eye.y + Math.sin(pitch), eye.z + Math.cos(heading) * Math.cos(pitch));
+      cam.updateMatrixWorld(true);
+      // Inside the screen's edges — and, on the right, inside the rail your turn's buttons take (styles.css's
+      // .bet-overlay-rail on a phone on its side): nobody sits behind your own buttons.
+      if (points.every((p) => v.copy(p).project(cam).z < 1 && v.x >= -0.9 && v.x <= 0.64 && v.y <= 0.9)) break;
+    }
+    this.players.setOwnHidden(this.eyeBack > 0.2);
   }
 
   /** Eases the lean toward its goal; true while it's still moving. */
@@ -943,6 +1011,7 @@ export class TableScene {
     this.rig.setAspect(aspect);
     this.look.enabled = this.eyes;
     this.look.zoomOnly = this.mode === 'standing' && this.viewerSeatId !== null;
+    this.solveTableFit();
     this.look.basePitch = this.seatPitch();
     // Your fingers drive the view (look, pinch) — not the page under it.
     this.canvas.style.touchAction = this.eyes || this.look.zoomOnly ? 'none' : '';
@@ -1763,6 +1832,8 @@ export class TableScene {
     if (!this.eyes || this.viewerSeatId === null) return true;
     const own = this.placementBySeat.get(this.viewerSeatId);
     if (!own) return true;
+    // Pulled back to take in the whole table, they're too small on the felt to read: the page shows them.
+    if (this.eyeBack > 0.5) return false;
     const c = edgePoint(own.s, TABLE.railWidth + SEAT_SPOTS.cardsIn + OWN_IN);
     // Both cards side by side along the rail, and their near and far edges.
     const along = { x: c.nz, z: -c.nx };
@@ -1835,7 +1906,7 @@ export class TableScene {
       return cache;
     }
     const others = this.placements.filter((p) => this.occupied.has(p.seatId) && p.seatId !== this.viewerSeatId);
-    const key = `${String(own.seatId)}|${others.map((p) => p.seatId).join(',')}|${String(this.placements.length)}|${String(this.width)}`;
+    const key = `${String(own.seatId)}|${others.map((p) => p.seatId).join(',')}|${String(this.placements.length)}|${String(this.width)}|${this.eyeBack.toFixed(1)}`;
     if (key !== this.faceFitKey) {
       this.faceFitKey = key;
       this.faceFitHeight = 0;
@@ -1855,7 +1926,7 @@ export class TableScene {
       if (at) heads.set(p.seatId, at);
     }
     const sit = edgePoint(own.s, -EYE.out);
-    const eye = new THREE.Vector3(sit.x, EYE.y, sit.z);
+    const eye = this.homeEye(own);
     const pitch = this.seatPitch();
     const fov = this.seatedFov();
     const tanHalf = Math.tan((fov * Math.PI) / 360);
@@ -2142,12 +2213,15 @@ export class TableScene {
     objects: number;
     faces: { seatId: number; front: boolean; blocked: boolean; inView: boolean; px: number }[];
     faceBoxes: { seatId: number; x0: number; y0: number; x1: number; y1: number; k: number; headX: number; headY: number }[];
+    /** How far the seated view is pulled back to fit the whole table (0: at the seat). */
+    eyeBack: number;
   } {
     let objects = 0;
     this.scene.traverse(() => objects++);
     return {
       faces: this.faceViews(),
       faceBoxes: this.faceBoxes,
+      eyeBack: this.eyeBack,
       cards: this.cards.keys(),
       stacks: this.chips.stackKeys(),
       cameraYaw: this.rig.yaw,

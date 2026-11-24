@@ -393,6 +393,12 @@ export class SeatedPlayers {
   }
 
   private ownHeadless = true;
+  private ownHidden = false;
+
+  /** The viewer's own body out of sight altogether: the seated view pulled back behind their chair looks straight through where they sit. */
+  setOwnHidden(on: boolean): void {
+    this.ownHidden = on;
+  }
 
   setVideos(videos: ReadonlyMap<number, MediaStream>): void {
     this.videos = new Map(videos);
@@ -457,6 +463,7 @@ export class SeatedPlayers {
       const breath = Math.sin(t * 1.3 + b.phase) * 1.2;
       chest.rotation.x = (SEATED.chest![0] + breath) * DEG;
       const head = b.bones.get('head')!;
+      b.root.visible = !(b.own && this.ownHidden);
       if (b.own) {
         // Your own head turns where you drag, not on its own.
         head.visible = !this.ownHeadless;

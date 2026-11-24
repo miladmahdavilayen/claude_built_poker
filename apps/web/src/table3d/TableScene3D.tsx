@@ -58,6 +58,8 @@ export interface TableScene3DProps {
   edgeMute?: ((seatId: number) => React.ReactNode) | undefined;
   /** Seated: where you're looking, as it changes — for the others' view of you (see playerLooks.ts). */
   onLook?: ((yaw: number, pitch: number) => void) | undefined;
+  /** A phone held on its side: seated, the view pulls back until every seat is in it (scene.ts's setFitTable). */
+  fitTable?: boolean | undefined;
 }
 
 /**
@@ -99,6 +101,7 @@ export default function TableScene3D({
   seatVideos,
   edgeMute,
   onLook,
+  fitTable = false,
 }: TableScene3DProps): React.JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
@@ -213,8 +216,9 @@ export default function TableScene3D({
 
   // Before the seats: the first camera placement is already the right kind.
   useLayoutEffect(() => {
+    scene?.setFitTable(fitTable);
     scene?.setMode(mode);
-  }, [scene, mode]);
+  }, [scene, mode, fitTable]);
 
   useEffect(() => {
     scene?.highlightCards(winningCards);

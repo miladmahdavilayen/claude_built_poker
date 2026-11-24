@@ -6695,3 +6695,88 @@ button.fairness-link {
   border-radius: 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
+
+/* ---- A phone held on its side: the turn's buttons, and the bet slider, laid out for a wide, short screen. ----
+   Upright, they're one thin rail down the right edge. On its side there's width to spare and no height: the
+   buttons get a wider rail and a full finger's height each, and the slider opens as two columns side by side —
+   the amount, the presets and the −/+ on the left, the slider itself the full height of the screen on the
+   right — instead of one column too tall to fit. The turn's clock moves beside the menu button, out of its way. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .table-page.immersive .action-timer {
+    top: calc(14px + env(safe-area-inset-top));
+    right: calc(66px + env(safe-area-inset-right));
+  }
+  .bet-overlay-rail {
+    width: clamp(128px, 17vw, 156px);
+    max-height: calc(100dvh - 62px - env(safe-area-inset-top));
+    gap: 7px;
+    padding: 7px;
+    padding-bottom: calc(7px + env(safe-area-inset-bottom));
+  }
+  .bet-overlay-rail > :is(.btn-fold, .btn-check, .btn-call),
+  .bet-overlay-open,
+  .bet-overlay-confirm {
+    flex: 1 0 auto;
+    min-height: clamp(48px, 15dvh, 64px);
+    font-size: 17px;
+    font-weight: 800;
+    border-radius: 12px;
+    white-space: nowrap;
+    word-break: normal;
+  }
+  .bet-overlay-rail--sizing {
+    width: auto;
+    display: grid;
+    grid-template-columns: 112px 78px;
+    grid-template-rows: auto auto auto 1fr auto;
+    grid-template-areas:
+      'close slider'
+      'input slider'
+      'presets slider'
+      '. slider'
+      'nudge slider';
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: stretch;
+    height: calc(100dvh - 62px - env(safe-area-inset-top));
+    overflow: visible;
+  }
+  .bet-overlay-rail--sizing .bet-overlay-close {
+    grid-area: close;
+    justify-self: start;
+    width: 44px;
+    height: 32px;
+  }
+  .bet-overlay-rail--sizing .bet-overlay-input {
+    grid-area: input;
+    min-height: 40px;
+  }
+  .bet-overlay-rail--sizing .bet-overlay-presets {
+    grid-area: presets;
+  }
+  .bet-overlay-rail--sizing .bet-overlay-presets button {
+    min-height: 40px;
+    font-size: 15px;
+  }
+  .bet-overlay-rail--sizing .vbs-nudge {
+    grid-area: nudge;
+  }
+  .bet-overlay-rail--sizing .vbs-nudge button {
+    height: 42px;
+    font-size: 20px;
+  }
+  .bet-overlay-rail--sizing .vbs-track {
+    grid-area: slider;
+    height: auto;
+    align-self: stretch;
+    justify-self: center;
+    max-width: 66px;
+    /* Room for the handle at either end of its travel. */
+    margin: 24px 0;
+  }
+}
+.rotate-hint-icon {
+  flex: none !important;
+  font-size: 20px;
+  line-height: 1;
+}

@@ -26,6 +26,7 @@ import {
   type SeatMeta,
   type TableSettings,
   type UpdateTableSettingsIntent,
+  type ActionClock,
   type SeatOffer,
   type WaitlistEntry,
   headsUpInHand,
@@ -119,6 +120,8 @@ export interface LiveSeat {
   joinsNextHand: boolean;
   /** Asked mid-hand to move to this empty seat (held for them meanwhile): moved when the hand ends. See moveSeat. */
   pendingMoveTo: number | null;
+  /** The owner sat them out (ownerSitOut): checked or folded on their turns, and out of every hand until they or the owner sit them back in. */
+  satOutByOwner: boolean;
 }
 
 /** A seat the table emptied on its own (a deferred owner removal finishing at hand end) — the caller refunds `refund` to `userId` and moves their socket to spectating. */
@@ -166,6 +169,17 @@ export interface LiveTableCallbacks {
 const FORCED_FOLD_DELAY_MS = 400;
 
 const DEFAULT_TIME_BANK_REFILL_MS = 15000;
+// A turn's clock, after the table's own action time (the calm stretch): a red
+// stretch, then a short final warning — then the seat is checked or folded.
+// Env-overridable so tests don't wait out real half-minutes.
+const actionRedMs = (): number => Number(process.env.ACTION_RED_MS ?? 30_000);
+const actionFinalMs = (): number => Number(process.env.ACTION_FINAL_MS ?? 10_000);
+/** What one purchase of extra time adds to the red stretch. */
+const timeBuyMs = (): number => Number(process.env.TIME_BUY_MS ?? 30_000);
+/** How many times a player can buy more time on one turn. */
+const MAX_TIME_BUYS_PER_TURN = 2;
+/** Extra time costs a big blind from a stack this many big blinds deep or more, a small blind from a shorter one. */
+const DEEP_STACK_BIG_BLINDS = 50;
 // Real dealer time to riffle-shuffle and set up the next hand — a new hand
 // can't be started until this elapses after the previous one completes.
 // Overridable so e2e tests don't genuinely burn 5s per hand (see
@@ -214,6 +228,10 @@ export class LiveTable {
   private handStartedAt: Date | null = null;
   private lastActionAt = 0;
   actionDeadline: number | null = null;
+  /** The acting seat's whole clock (see ActionClock) — null with no one, or a computer player, on it. */
+  private clock: { seatId: number; startedAt: number; normalEndsAt: number; redEndsAt: number; endsAt: number; timeBuys: number; pokedBy: Set<number> } | null = null;
+  /** What each seat has paid for extra time this hand (it's in the pot, with the antes): theirs again if the hand is voided. */
+  private handTimeBuys = new Map<number, number>();
   /** Epoch ms — a new hand can't start before this. Set on hand-complete, cleared once the next hand actually deals. See HAND_BREAK_MS. */
   nextHandAt: number | null = null;
   private clockTimer: ReturnType<typeof setTimeout> | null = null;
@@ -366,6 +384,7 @@ export class LiveTable {
       pendingRemoval: null,
       joinsNextHand: false,
       pendingMoveTo: null,
+      satOutByOwner: false,
     };
   }
 
@@ -418,7 +437,11 @@ export class LiveTable {
   voidedHandRefund(seatId: number): number {
     const seat = this.state.seats[seatId];
     if (!seat) return 0;
-    const contributed = this.inHand ? seat.committedThisHand + (seatId === this.state.lastBigBlindSeat ? this.state.anteTotal : 0) : 0;
+    // The ante pool also holds what anyone paid for extra time (buyTime): each of those goes back to who paid it.
+    const timeBought = [...this.handTimeBuys.values()].reduce((sum, v) => sum + v, 0);
+    const contributed = this.inHand
+      ? seat.committedThisHand + (seatId === this.state.lastBigBlindSeat ? this.state.anteTotal - timeBought : 0) + (this.handTimeBuys.get(seatId) ?? 0)
+      : 0;
     return this.cashOutAmount(seatId) + contributed;
   }
 
@@ -989,7 +1012,10 @@ export class LiveTable {
    */
   sitIn(seatId: number): void {
     const liveSeat = this.seats[seatId];
-    if (liveSeat) liveSeat.sittingOutRequested = false;
+    if (liveSeat) {
+      liveSeat.sittingOutRequested = false;
+      liveSeat.satOutByOwner = false;
+    }
     const engineSeat = this.state.seats[seatId];
     if (!engineSeat || engineSeat.status !== 'sitting-out') return;
     if (this.state.phase === 'in-hand') {
@@ -998,6 +1024,40 @@ export class LiveTable {
     }
     const newSeats = this.state.seats.map((s, i) => (i === seatId ? { ...s, status: 'active' as const } : s));
     this.state = { ...this.state, seats: newSeats };
+  }
+
+  /**
+   * The owner sits a player out, any time — someone who's stepped away, say.
+   * Between hands they're out at once. In a hand, it plays on without them:
+   * checked when that's free and folded otherwise, each time their turn comes
+   * (right now, if it's on them), then out of every hand after it. They stay
+   * in their seat with their chips, until they sit back in themselves — the
+   * same button as after their own sit-out — or the owner does it for them.
+   */
+  ownerSitOut(seatId: number): Result {
+    const engineSeat = this.state.seats[seatId];
+    const liveSeat = this.seats[seatId];
+    if (!engineSeat || !liveSeat || engineSeat.status === 'empty') return { ok: false, code: 'SEAT_EMPTY', message: 'That seat is empty.' };
+    if (liveSeat.pendingRemoval) return { ok: false, code: 'LEAVING', message: 'That player is leaving after this hand.' };
+    liveSeat.satOutByOwner = true;
+    liveSeat.sittingInNextHand = false;
+    this.sitOut(seatId);
+    if (this.inHand && this.state.betting.actingSeat === seatId) this.armClockOrBot();
+    return { ok: true };
+  }
+
+  /** The owner sits a player back in: between hands at once, mid-hand from the next one (see sitIn). */
+  ownerSitIn(seatId: number): Result {
+    const engineSeat = this.state.seats[seatId];
+    if (!engineSeat || engineSeat.status === 'empty') return { ok: false, code: 'SEAT_EMPTY', message: 'That seat is empty.' };
+    const wasActing = this.inHand && this.state.betting.actingSeat === seatId && this.seats[seatId]?.satOutByOwner === true;
+    this.sitIn(seatId);
+    // Back while it's on them: their own clock, rather than the check-or-fold that was on its way.
+    if (wasActing) {
+      this.clearBotMove();
+      this.armClockOrBot();
+    }
+    return { ok: true };
   }
 
   /** Between-hand cleanup: applies any queued sit-out (and sit-back-in) requests, and sits out anyone whose seat busted to zero. */
@@ -1260,6 +1320,7 @@ export class LiveTable {
     this.currentHandInitialState = this.state;
     this.handChipAdds = new Map();
     this.handLeavers = new Map();
+    this.handTimeBuys = new Map();
     this.actionLog = [];
     this.revealedSeatIds = new Set();
     this.shownCards = new Map();
@@ -1328,21 +1389,113 @@ export class LiveTable {
 
   private armClock(): void {
     this.clearClock();
-    if (this.state.phase !== 'in-hand' || this.state.betting.actingSeat === null) {
-      this.actionDeadline = null;
-      return;
-    }
-    const seat = this.seats[this.state.betting.actingSeat];
-    const baseMs = this.settings.actionSeconds * 1000;
-    this.actionDeadline = this.callbacks.now() + baseMs;
-    this.clockTimer = setTimeout(() => {
-      this.handleTimeout();
-    }, baseMs + (seat?.timeBankMsRemaining ?? 0));
+    const seatId = this.state.betting.actingSeat;
+    if (this.state.phase !== 'in-hand' || seatId === null) return;
+    const now = this.callbacks.now();
+    const normalEndsAt = now + this.settings.actionSeconds * 1000;
+    const redEndsAt = normalEndsAt + actionRedMs();
+    this.clock = { seatId, startedAt: now, normalEndsAt, redEndsAt, endsAt: redEndsAt + actionFinalMs(), timeBuys: 0, pokedBy: new Set() };
+    this.actionDeadline = normalEndsAt;
+    this.scheduleTimeout();
   }
 
+  private scheduleTimeout(): void {
+    if (this.clockTimer) clearTimeout(this.clockTimer);
+    this.clockTimer = null;
+    if (!this.clock) return;
+    this.clockTimer = setTimeout(() => {
+      this.handleTimeout();
+    }, Math.max(0, this.clock.endsAt - this.callbacks.now()));
+  }
+
+  /** Stops the clock: no one is on it until it's armed again. */
   private clearClock(): void {
     if (this.clockTimer) clearTimeout(this.clockTimer);
     this.clockTimer = null;
+    this.clock = null;
+    this.actionDeadline = null;
+  }
+
+  /**
+   * What more time costs the seat on the clock right now — a big blind from a
+   * deep stack (DEEP_STACK_BIG_BLINDS or more), a small blind from a shorter
+   * one — or null when they can't buy any: not their clock, already bought the
+   * most a turn allows, or it would take their last chip.
+   */
+  timeBuyCost(seatId: number): number | null {
+    const seat = this.state.seats[seatId];
+    if (!this.clock || this.clock.seatId !== seatId || !seat || this.clock.timeBuys >= MAX_TIME_BUYS_PER_TURN) return null;
+    const { smallBlind, bigBlind } = this.state.config;
+    const cost = seat.stack >= DEEP_STACK_BIG_BLINDS * bigBlind ? bigBlind : smallBlind;
+    return seat.stack > cost ? cost : null;
+  }
+
+  /**
+   * The player on the clock buys more time: the price (timeBuyCost) leaves
+   * their stack for the pot — dead money, like an ante, won with the main pot
+   * — and the red stretch of their clock grows by one purchase's worth
+   * (counted from now, if the final warning had already begun). It isn't an
+   * action: the turn, and what they may do with it, are unchanged.
+   */
+  buyTime(seatId: number, handId: string): { ok: true; cost: number; seconds: number } | { ok: false; code: string; message: string } {
+    if (this.currentHandId === null || handId !== this.currentHandId || !this.inHand) {
+      return { ok: false, code: 'STALE_HAND', message: 'This refers to a hand that is not currently in progress.' };
+    }
+    if (!this.clock || this.clock.seatId !== seatId || this.state.betting.actingSeat !== seatId) {
+      return { ok: false, code: 'NOT_YOUR_TURN', message: 'It is not your turn.' };
+    }
+    const cost = this.timeBuyCost(seatId);
+    if (cost === null) {
+      const maxed = this.clock.timeBuys >= MAX_TIME_BUYS_PER_TURN;
+      return { ok: false, code: 'CANNOT_BUY_TIME', message: maxed ? 'You have bought all the extra time one turn allows.' : 'You don’t have the chips to buy more time.' };
+    }
+    this.state = {
+      ...this.state,
+      anteTotal: this.state.anteTotal + cost,
+      seats: this.state.seats.map((s, i) => (i === seatId ? { ...s, stack: s.stack - cost } : s)),
+    };
+    this.handTimeBuys.set(seatId, (this.handTimeBuys.get(seatId) ?? 0) + cost);
+    const added = timeBuyMs();
+    this.clock.timeBuys += 1;
+    this.clock.redEndsAt = Math.max(this.clock.redEndsAt, this.callbacks.now()) + added;
+    this.clock.endsAt = this.clock.redEndsAt + actionFinalMs();
+    this.scheduleTimeout();
+    this.broadcastAll([]);
+    return { ok: true, cost, seconds: Math.round(added / 1000) };
+  }
+
+  /**
+   * Another player nudges whoever is on the clock, once it has run past its
+   * first stretch: one poke each per turn, from people to a person (a
+   * computer player neither pokes nor needs it). Changes nothing in the game.
+   */
+  poke(fromSeatId: number): { ok: true; targetSeatId: number } | { ok: false; code: string; message: string } {
+    const clock = this.clock;
+    const target = clock ? this.seats[clock.seatId] : undefined;
+    if (!clock || !this.inHand || !target?.userId) return { ok: false, code: 'NO_ONE_TO_POKE', message: 'No one is on the clock.' };
+    if (!this.seats[fromSeatId]?.userId) return { ok: false, code: 'NOT_SEATED', message: 'You must be seated to poke a player.' };
+    if (fromSeatId === clock.seatId) return { ok: false, code: 'CANNOT_POKE', message: 'It’s your own turn.' };
+    if (this.callbacks.now() < clock.normalEndsAt) return { ok: false, code: 'TOO_EARLY', message: 'Give them a little longer first.' };
+    if (clock.pokedBy.has(fromSeatId)) return { ok: false, code: 'ALREADY_POKED', message: 'You’ve already poked them this turn.' };
+    clock.pokedBy.add(fromSeatId);
+    this.broadcastAll([]);
+    return { ok: true, targetSeatId: clock.seatId };
+  }
+
+  private actionClock(): ActionClock | null {
+    const c = this.clock;
+    if (!c) return null;
+    return {
+      seatId: c.seatId,
+      startedAt: c.startedAt,
+      normalEndsAt: c.normalEndsAt,
+      redEndsAt: c.redEndsAt,
+      endsAt: c.endsAt,
+      timeBuys: c.timeBuys,
+      timeBuyCost: this.timeBuyCost(c.seatId),
+      timeBuySeconds: Math.round(timeBuyMs() / 1000),
+      pokedBy: [...c.pokedBy].sort((a, b) => a - b),
+    };
   }
 
   /** Arms the human action-timeout clock, unless the seat now on the clock is a computer player — then schedules its move instead. */
@@ -1350,24 +1503,28 @@ export class LiveTable {
     const actingSeat = this.state.betting.actingSeat;
     if (this.state.phase === 'in-hand' && actingSeat !== null) {
       const liveSeat = this.seats[actingSeat];
-      if (liveSeat?.pendingRemoval) {
+      if (liveSeat?.pendingRemoval || liveSeat?.satOutByOwner) {
         // The owner removed this player — fold for them (always legal for
-        // an active seat; see computeLegalActions). Reuses the bot-move
+        // an active seat; see computeLegalActions) — or sat them out: a
+        // check where that's free, a fold otherwise. Reuses the bot-move
         // timer slot: every path that cancels a pending bot move (hand
         // end, reset, dispose) must cancel this too.
         this.clearClock();
-        this.actionDeadline = null;
         this.clearBotMove();
         this.botMoveTimer = setTimeout(() => {
           this.botMoveTimer = null;
           if (this.state.phase !== 'in-hand' || this.state.betting.actingSeat !== actingSeat) return;
-          this.applyPlayerAction(actingSeat, { seatId: actingSeat, type: 'fold' }, true);
+          const seatNow = this.seats[actingSeat];
+          // Sat back in during the pause: it's their turn to play after all.
+          if (!seatNow?.pendingRemoval && !seatNow?.satOutByOwner) return this.armClockOrBot();
+          const toCall = this.state.betting.currentBet - (this.state.seats[actingSeat]?.committedThisStreet ?? 0);
+          const type = !seatNow.pendingRemoval && toCall <= 0 ? 'check' : 'fold';
+          this.applyPlayerAction(actingSeat, { seatId: actingSeat, type }, true);
         }, FORCED_FOLD_DELAY_MS);
         return;
       }
       if (liveSeat?.botPolicyName) {
         this.clearClock();
-        this.actionDeadline = null;
         this.scheduleBotMove(actingSeat, liveSeat.botPolicyName);
         return;
       }
@@ -1414,10 +1571,7 @@ export class LiveTable {
     const actingSeatId = this.state.betting.actingSeat;
     if (actingSeatId === null || this.state.phase !== 'in-hand') return;
     const seat = this.seats[actingSeatId];
-    if (seat) {
-      seat.consecutiveTimeouts += 1;
-      seat.timeBankMsRemaining = 0;
-    }
+    if (seat) seat.consecutiveTimeouts += 1;
     // On timeout: check if free, otherwise fold.
     const toCall = this.state.betting.currentBet - (this.state.seats[actingSeatId]?.committedThisStreet ?? 0);
     const action: PlayerAction = toCall <= 0 ? { seatId: actingSeatId, type: 'check' } : { seatId: actingSeatId, type: 'fold' };
@@ -1480,7 +1634,6 @@ export class LiveTable {
       this.foldWinSeatId = this.computeFoldWinSeatId(result.events);
       this.clearClock();
       this.clearBotMove();
-      this.actionDeadline = null;
       this.nextHandAt = this.callbacks.now() + HAND_BREAK_MS;
       // canStartHand() is derived fresh on every projection, but nothing
       // else naturally prompts a NEW broadcast once the break elapses on
@@ -1790,6 +1943,7 @@ export class LiveTable {
         movingToSeatId: s.pendingMoveTo,
         // Out of the next hand: asked to sit out, or sitting out now and not asked back in yet.
         sittingOutNextHand: s.sittingOutRequested || (this.state.seats[s.seatId]?.status === 'sitting-out' && !s.sittingInNextHand && !s.joinsNextHand),
+        satOutByOwner: s.satOutByOwner,
       });
     }
     return map;
@@ -1901,6 +2055,7 @@ export class LiveTable {
         timeUp: this.timeIsUp && this.state.phase !== 'in-hand',
         shownCards: this.shownCards,
         actionDeadline: this.actionDeadline,
+        actionClock: this.actionClock(),
         nextHandAt: this.nextHandAt,
         revealEligibleSeatId: this.revealEligibleSeatId,
         now: this.callbacks.now(),

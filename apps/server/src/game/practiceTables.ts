@@ -50,7 +50,7 @@ export async function openPracticeTable(store: Store, registry: TableRegistry, u
       straddleEnabled: false,
       minBuyIn: stakes.minBuyIn,
       maxBuyIn: stakes.maxBuyIn,
-      actionSeconds: 25,
+      actionSeconds: 30,
       timeBankSeconds: 60,
       runItTwiceEnabled: false,
       rakePercent: 0,

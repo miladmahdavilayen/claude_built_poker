@@ -1,7 +1,7 @@
 import type { GameEvent, TableState } from '@pokerclause/engine';
 import { getLegalActions } from '@pokerclause/engine';
 import type { ProjectedGameEvent } from './events.js';
-import type { PendingTableSettings, ProjectedSeat, ProjectedTableState, SeatOffer, TableSettings, WaitlistEntry } from './types.js';
+import type { ActionClock, PendingTableSettings, ProjectedSeat, ProjectedTableState, SeatOffer, TableSettings, WaitlistEntry } from './types.js';
 
 export interface SeatMeta {
   playerId: string | null;
@@ -19,6 +19,7 @@ export interface SeatMeta {
   joiningNextHand?: boolean;
   movingToSeatId?: number | null;
   sittingOutNextHand?: boolean;
+  satOutByOwner?: boolean;
 }
 
 export interface ProjectionContext {
@@ -38,6 +39,7 @@ export interface ProjectionContext {
   /** Which of its cards each seat has chosen to show mid-hand, heads-up (LiveTable.showCard): only these faces go to other viewers. */
   shownCards?: ReadonlyMap<number, ReadonlySet<number>>;
   actionDeadline: number | null;
+  actionClock?: ActionClock | null;
   /** Epoch ms — a new hand can't start before this (the post-hand shuffle break). */
   nextHandAt: number | null;
   /** See `ProjectedTableState.revealEligibleSeatId` — passed through as-is, not seat-dependent. */
@@ -139,6 +141,7 @@ export function projectStateForSeat(
       joiningNextHand: meta.joiningNextHand ?? false,
       movingToSeatId: meta.movingToSeatId ?? null,
       sittingOutNextHand: meta.sittingOutNextHand ?? false,
+      satOutByOwner: meta.satOutByOwner ?? false,
     };
   });
 
@@ -179,6 +182,7 @@ export function projectStateForSeat(
     legalActions,
     viewerSeatId,
     actionDeadline: ctx.actionDeadline,
+    actionClock: ctx.actionClock ?? null,
     nextHandAt: ctx.nextHandAt,
     revealEligibleSeatId: ctx.revealEligibleSeatId,
     canShowCards: mayShowCards(state, viewerSeatId, ctx.revealedSeatIds),

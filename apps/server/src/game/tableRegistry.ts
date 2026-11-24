@@ -57,7 +57,10 @@ export class TableRegistry {
    * (everyone was cashed out at shutdown). See index.ts.
    */
   restore(record: TableRecord): LiveTable {
-    return this.open(record.id, record.name, record.config as unknown as TableSettings, record.createdBy, record.inviteCode, false);
+    const saved = record.config as unknown as TableSettings;
+    // A table saved with the old default action time (25s) moves to the new one (30s); any other choice is the owner's.
+    const settings = saved.actionSeconds === 25 ? { ...saved, actionSeconds: 30 } : saved;
+    return this.open(record.id, record.name, settings, record.createdBy, record.inviteCode, false);
   }
 
   private open(id: string, name: string, settings: TableSettings, createdBy: string | null, inviteCode: string | null, isPractice: boolean): LiveTable {

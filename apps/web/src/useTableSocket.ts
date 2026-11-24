@@ -90,8 +90,34 @@ export interface TableSocketApi {
   deleteSeat: (seatId: number) => Promise<OwnerAck>;
   /** Owner-only — the private table's invite code, or null when it's public. */
   getInviteCode: () => Promise<string | null>;
+  /** Your own turn: more time, paid into the pot (LiveTable.buyTime; the price is `state.actionClock.timeBuyCost`). */
+  buyTime: (handId: string) => void;
+  /** Nudges whoever is on the clock once they're past its first stretch — once a turn each (LiveTable.poke). */
+  poke: () => void;
+  /** Owner-only — sits a player out (checked or folded on their turns, out of every hand) until they or the owner sit them back in. */
+  ownerSitOut: (seatId: number) => Promise<OwnerAck>;
+  ownerSitIn: (seatId: number) => Promise<OwnerAck>;
+  /** Something the table has to say to this viewer (time bought, the owner sat them out…): the latest, fresh each time. */
+  notice: TableNotice | null;
+  /** The latest poke at the table, whoever it was for. */
+  lastPoke: PokeEvent | null;
   /** Moves your own seat to an empty one — or, with `quote`, only says when and at what cost (see LiveTable.moveSeat). */
   changeSeat: (seatId: number, quote?: boolean) => Promise<ChangeSeatAck>;
+}
+
+export interface TableNotice {
+  kind: string;
+  message: string;
+  /** Who it's about, when it's about a seat. */
+  seatId?: number;
+}
+
+export interface PokeEvent {
+  fromSeatId: number;
+  fromName: string;
+  toSeatId: number;
+  toUserId: string | null;
+  toName: string;
 }
 
 export type ChangeSeatAck = { ok: true; when: 'now' | 'after-hand'; owes: number } | { ok: false; code: string; message: string };
@@ -114,6 +140,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
   const [gameEnded, setGameEnded] = useState<string | null>(null);
   const [seatInviteUsed, setSeatInviteUsed] = useState<boolean | null>(null);
   const [chatHistoryLoaded, setChatHistoryLoaded] = useState(false);
+  const [notice, setNotice] = useState<TableNotice | null>(null);
+  const [lastPoke, setLastPoke] = useState<PokeEvent | null>(null);
 
   useEffect(() => {
     if (!socket) {
@@ -146,6 +174,11 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
     const onTableClosed = (payload: { reason: string }): void => setTableClosedReason(payload.reason);
     const onGameEnded = (payload: { reason: string }): void => setGameEnded(payload.reason);
     socket.on('game-ended', onGameEnded);
+    // A fresh object each time, so the same notice twice is still news.
+    const onNotice = (payload: TableNotice): void => setNotice({ ...payload });
+    const onPoke = (payload: PokeEvent): void => setLastPoke({ ...payload });
+    socket.on('table-notice', onNotice);
+    socket.on('poke', onPoke);
     const onTablePermissions = (payload: { canManageTable: boolean; canManageLayout: boolean; isPractice: boolean; canTakeSeat?: boolean; seatInviteUsed?: boolean }): void => {
       setCanTakeSeat(payload.canTakeSeat === true);
       setSeatInviteUsed(payload.seatInviteUsed === true);
@@ -169,6 +202,8 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       socket.off('table-closed', onTableClosed);
       socket.off('table-permissions', onTablePermissions);
       socket.off('game-ended', onGameEnded);
+      socket.off('table-notice', onNotice);
+      socket.off('poke', onPoke);
     };
   }, [socket]);
 
@@ -236,6 +271,14 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
         new Promise((resolve) => (socket ? socket.emit('remove-player', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
       deleteSeat: (seatId) =>
         new Promise((resolve) => (socket ? socket.emit('delete-seat', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      buyTime: (handId) => socket?.emit('buy-time', { handId }),
+      poke: () => socket?.emit('poke'),
+      ownerSitOut: (seatId) =>
+        new Promise((resolve) => (socket ? socket.emit('owner-sit-out', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      ownerSitIn: (seatId) =>
+        new Promise((resolve) => (socket ? socket.emit('owner-sit-in', { seatId }, (r: OwnerAck) => resolve(r)) : resolve(NOT_CONNECTED))),
+      notice,
+      lastPoke,
       changeSeat: (seatId, quote) =>
         new Promise((resolve) =>
           socket ? socket.emit('change-seat', quote ? { seatId, quote: true } : { seatId }, (r: ChangeSeatAck) => resolve(r)) : resolve({ ok: false, code: 'NOT_CONNECTED', message: 'Not connected.' }),
@@ -243,6 +286,6 @@ export function useTableSocket(socket: Socket | null): TableSocketApi {
       getInviteCode: () =>
         new Promise((resolve) => (socket ? socket.emit('get-invite-code', (r: { inviteCode: string | null }) => resolve(r.inviteCode)) : resolve(null))),
     }),
-    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice, canTakeSeat, seatInviteUsed, chatHistoryLoaded, gameEnded],
+    [socket, state, chat, recentEvents, latestEvents, lastError, tableClosedReason, canManageTable, canManageLayout, isPractice, canTakeSeat, seatInviteUsed, chatHistoryLoaded, gameEnded, notice, lastPoke],
   );
 }

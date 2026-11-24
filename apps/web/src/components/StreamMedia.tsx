@@ -27,18 +27,21 @@ export function StreamMedia({
   isLocal,
   showVideo = true,
   peerId,
+  audio = true,
 }: {
   stream: MediaStream | null;
   isLocal: boolean;
   showVideo?: boolean;
   peerId?: string | null | undefined;
+  /** False for a player in the call: their voice plays from the page itself (callVoices.ts), not from here. */
+  audio?: boolean | undefined;
 }): React.JSX.Element | null {
   const muted = isPeerMuted(peerId, useCallAudio());
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const hasVideo = !!stream && stream.getVideoTracks().length > 0;
   const renderVideo = hasVideo && showVideo;
-  const renderAudio = !!stream && !isLocal;
+  const renderAudio = !!stream && !isLocal && audio;
 
   useEffect(() => {
     const el = videoRef.current;

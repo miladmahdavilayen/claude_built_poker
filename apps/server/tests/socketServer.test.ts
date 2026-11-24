@@ -1492,6 +1492,56 @@ describe('socketServer: live signaling and access control', () => {
     bobSocket.close();
   });
 
+  it('mentions, pokes, bought time and the owner’s sit-out reach the right people', async () => {
+    const { bob, ownerSocket, bobSocket, table } = await ownerAndPlayerSeated(100);
+
+    // A mention names who it's for; the sender isn't alerted to their own.
+    const heard = waitFor<{ message: string; mentions: string[] }>(ownerSocket, 'chat');
+    const heardByBob = waitFor<{ mentions: string[] }>(bobSocket, 'chat');
+    ownerSocket.emit('chat', { message: 'your deal @bob' });
+    expect((await heard).mentions).toEqual([bob.userId]);
+    expect((await heardByBob).mentions).toEqual([bob.userId]);
+    const plain = waitFor<{ mentions: string[] }>(bobSocket, 'chat');
+    bobSocket.emit('chat', { message: 'thanks' });
+    expect((await plain).mentions).toEqual([]);
+
+    ownerSocket.emit('start-hand');
+    await waitForState<{ state: { phase: string } }>(ownerSocket, (p) => p.state.phase === 'in-hand');
+    const acting = table.state.betting.actingSeat!;
+    const [actor, other] = acting === 0 ? [ownerSocket, bobSocket] : [bobSocket, ownerSocket];
+
+    // Too soon to poke; and nobody buys time on someone else's turn.
+    const early = waitFor<{ code: string }>(other, 'error');
+    other.emit('poke');
+    expect((await early).code).toBe('TOO_EARLY');
+    const notYours = waitFor<{ code: string }>(other, 'error');
+    other.emit('buy-time', { handId: table.handId });
+    expect((await notYours).code).toBe('NOT_YOUR_TURN');
+
+    // The player on the clock buys time: everyone's told, and it's in the pot.
+    const told = waitFor<{ kind: string; message: string }>(other, 'table-notice');
+    actor.emit('buy-time', { handId: table.handId });
+    expect(await told).toMatchObject({ kind: 'time-bought' });
+    expect(table.state.anteTotal).toBeGreaterThan(0);
+
+    // Only the owner sits a person out; the player is told why.
+    expect(await request(bobSocket, 'owner-sit-out', { seatId: 0 })).toMatchObject({ ok: false, code: 'ADMIN_REQUIRED' });
+    const notice = waitFor<{ kind: string }>(bobSocket, 'table-notice');
+    expect(await request(ownerSocket, 'owner-sit-out', { seatId: 1 })).toEqual({ ok: true });
+    expect((await notice).kind).toBe('sat-out');
+    expect(table.seats[1]?.satOutByOwner).toBe(true);
+    expect(await request(ownerSocket, 'owner-sit-in', { seatId: 1 })).toEqual({ ok: true });
+    expect(table.seats[1]?.satOutByOwner).toBe(false);
+
+    // Where a player looks is passed on to the others, not back to them.
+    const look = waitFor<{ userId: string; yaw: number }>(ownerSocket, 'player-look');
+    bobSocket.emit('look', { yaw: 0.5, pitch: 0 });
+    expect(await look).toMatchObject({ userId: bob.userId, yaw: 0.5 });
+
+    ownerSocket.close();
+    bobSocket.close();
+  });
+
   it('a mid-hand rebuy debits the player now and, if they are removed before the hand ends, comes back with their refund', async () => {
     const { bob, ownerSocket, bobSocket, table } = await ownerAndPlayerSeated(100);
     ownerSocket.emit('start-hand');

@@ -1,9 +1,35 @@
+import type { ActionClock } from '@pokerclause/shared';
 import { useEffect, useRef, useState } from 'react';
 
 const RADIUS = 18;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
+export type ClockPhase = 'calm' | 'red' | 'final';
+
+/** Where a turn's clock stands at `now`: which stretch it's in, when that started and ends. */
+export function clockPhase(clock: ActionClock, now: number): { phase: ClockPhase; from: number; to: number; remainingMs: number } {
+  if (now < clock.normalEndsAt) return { phase: 'calm', from: clock.startedAt, to: clock.normalEndsAt, remainingMs: clock.normalEndsAt - now };
+  if (now < clock.redEndsAt) return { phase: 'red', from: Math.min(clock.normalEndsAt, clock.redEndsAt), to: clock.redEndsAt, remainingMs: clock.redEndsAt - now };
+  return { phase: 'final', from: clock.redEndsAt, to: clock.endsAt, remainingMs: Math.max(0, clock.endsAt - now) };
+}
+
+/** The clock's stretch right now, re-read a few times a second — only the component using it re-renders. */
+export function useClockPhase(clock: ActionClock | null): ReturnType<typeof clockPhase> | null {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!clock) return;
+    const id = setInterval(() => tick((n) => n + 1), 200);
+    return () => clearInterval(id);
+  }, [clock]);
+  return clock ? clockPhase(clock, Date.now()) : null;
+}
+
 /**
+ * The clock on whoever's turn it is: the table's action time (30 seconds) in
+ * a calm colour, then 30 more in red, then a 10-second final warning,
+ * flashing — each stretch its own sweep of the ring and its own countdown.
+ * Time a player buys lengthens the red stretch.
+ *
  * Isolated on purpose: this used to be a `setInterval` tick living in
  * `TablePage`'s own state, which re-rendered the ENTIRE table page (every
  * seat, the felt, position labels, voice stream lookups — everything)
@@ -11,75 +37,43 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
  * tick local to this one small component means a countdown only ever
  * re-renders itself.
  *
- * Two more remount-flash bugs lived here after that fix, both worth
- * recording because neither showed up in a static screenshot or a
- * DOM-mutation-count check — they're about an element being destroyed
- * and recreated, not a static structural difference:
- *
- * 1. The ring's sweep used to be driven by JS setting `strokeDashoffset`
- *    on every 200ms tick, animated via a CSS `transition:
- *    stroke-dashoffset 0.2s`. A 200ms tick racing a 200ms transition
- *    means each new tick's target routinely lands before the previous
- *    transition finishes, so the property keeps getting retargeted
- *    mid-flight instead of ever settling into one smooth sweep.
- * 2. Fixing (1) with `key={deadline}` on the `<circle>` (forcing a fresh
- *    element so a CSS `@keyframes` animation restarts cleanly) traded
- *    one bug for a worse one: `state.actionDeadline` goes `null`
- *    whenever the acting seat is a COMPUTER PLAYER (no reason to show a
- *    human action-clock for a bot's own think-time — see
- *    `armClockOrBot` in liveTable.ts) — not just once between hands, but
- *    on every single handoff to or from a bot. This component used to
- *    `return null` whenever `remainingMs` was `null`, which tore the
- *    entire `.action-timer` div/svg/circle subtree out of the DOM and
- *    reinserted it fresh on every bot-to-human or human-to-bot turn
- *    change — in a hand with any bot seats, that's most turns, each one
- *    a real visible flash.
- *
- * Fixed by keeping the DOM structure permanently mounted for the whole
- * hand (only toggling a CSS opacity class, never actually
- * mounting/unmounting) and driving the ring's sweep with the Web
- * Animations API directly on a persistent ref — a fresh `.animate()`
- * call per turn (cancelling the previous one) restarts the sweep
- * cleanly without ever destroying the element it's animating.
+ * The DOM structure stays mounted for the whole hand (only a CSS opacity
+ * class changes — the clock is null on every computer player's turn, and
+ * mounting and unmounting on each handoff was a visible flash), and the
+ * ring's sweep is driven by the Web Animations API on a persistent ref: a
+ * fresh `.animate()` per stretch restarts it cleanly without destroying the
+ * element it animates.
  */
-export function ActionTimer({ deadline, totalSeconds }: { deadline: number | null; totalSeconds: number }): React.JSX.Element {
-  const [remainingMs, setRemainingMs] = useState<number | null>(null);
+export function ActionTimer({ clock }: { clock: ActionClock | null }): React.JSX.Element {
+  const now = useClockPhase(clock);
   const arcRef = useRef<SVGCircleElement>(null);
+  const phase = now?.phase ?? null;
+  const from = now?.from ?? 0;
+  const to = now?.to ?? 0;
 
   useEffect(() => {
-    if (deadline === null) {
-      setRemainingMs(null);
-      return;
-    }
-    const tick = (): void => setRemainingMs(Math.max(0, deadline - Date.now()));
-    tick();
-    const id = setInterval(tick, 200);
-    return () => clearInterval(id);
-  }, [deadline]);
-
-  useEffect(() => {
-    if (deadline === null || !arcRef.current) return;
+    if (phase === null || !arcRef.current || to <= from) return;
     const animation = arcRef.current.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: CIRCUMFERENCE }], {
-      duration: totalSeconds * 1000,
+      duration: to - from,
       easing: 'linear',
       fill: 'forwards',
     });
+    // Picked up partway through (a reconnect, a purchase of more time): the ring starts where the clock is.
+    animation.currentTime = Math.max(0, Math.min(to - from, Date.now() - from));
     return () => animation.cancel();
-  }, [deadline, totalSeconds]);
+  }, [phase, from, to]);
 
-  const visible = remainingMs !== null;
-  const seconds = remainingMs !== null ? Math.ceil(remainingMs / 1000) : 0;
-  const fraction = remainingMs !== null && totalSeconds > 0 ? Math.min(1, Math.max(0, remainingMs / (totalSeconds * 1000))) : 0;
-  // Calm by default; only shifts toward red as time genuinely runs low,
-  // rather than being a solid alarming red for the entire duration.
-  const urgency = fraction < 0.25 ? 'urgent' : fraction < 0.5 ? 'warning' : 'calm';
+  const visible = now !== null;
+  const seconds = now ? Math.ceil(now.remainingMs / 1000) : 0;
+  const label = !now ? undefined : now.phase === 'final' ? `Final warning: ${String(seconds)} seconds` : `${String(seconds)} seconds to act`;
 
   return (
     <div
-      className={`action-timer action-timer-${urgency}${visible ? '' : ' action-timer-hidden'}`}
+      className={`action-timer action-timer-${phase ?? 'calm'}${visible ? '' : ' action-timer-hidden'}`}
       role="timer"
+      data-phase={phase ?? undefined}
       aria-hidden={!visible}
-      aria-label={visible ? `${String(seconds)} seconds to act` : undefined}
+      aria-label={label}
     >
       <svg viewBox="0 0 40 40" className="action-timer-ring">
         <circle className="action-timer-track" cx="20" cy="20" r={RADIUS} />

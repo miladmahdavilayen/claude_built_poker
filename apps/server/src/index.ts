@@ -40,7 +40,7 @@ async function seedDefaultTables(registry: TableRegistry, log: FastifyBaseLogger
     straddleEnabled: false,
     minBuyIn: 8_000,
     maxBuyIn: 20_000,
-    actionSeconds: 25,
+    actionSeconds: 30,
     timeBankSeconds: 60,
     runItTwiceEnabled: false,
     rakePercent: 0,

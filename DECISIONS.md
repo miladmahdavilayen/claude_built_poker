@@ -3244,3 +3244,71 @@ about ten.
 - **Audio only** (`audioOnly`, a checkbox in the same places): no camera offered, none
   shown, and a camera already on goes off. Calls run browser to browser, so it's held
   by each player's app rather than the server; voice is unaffected.
+
+## Everyone hears the table, always
+
+- A player who hadn't turned on their own mic or camera could miss someone talking. Every
+  remote voice played from an `<audio>` element inside that player's seat box, so it went
+  with the box (a camera turning on, the 2D and 3D tables swapping, a player out of view) —
+  and an iPhone only lets an element start by itself if that same element was once played
+  from a tap, or the page is using the mic: which is why joining the call "fixed" it.
+- Voices now play from the page itself (`callVoices.ts`), one element per connection, from a
+  small pool that every tap primes. A primed element can be handed a new voice and play it at
+  once, so whoever talks next is heard with no further tap. Seat boxes show video only.
+  "Tap to hear the table" still covers a browser that has had no tap at all.
+- Connections are sturdier too: receiving no longer needs this browser to be able to use a
+  mic (a plain-http page can listen), a dropped connection is tried again twice before it's
+  given up on, our own reconnect starts everyone afresh, and a player briefly present twice
+  after reconnecting is taken by the connection that's carrying something.
+
+## Chat mentions, and notes over the table
+
+- Typing `@` in the chat offers the people seated; tapping a message's author starts a
+  mention too. The server works out who a message names (`mentionedNames`, longest name
+  first) and sends their ids with it. A mention is picked out in the chat for everyone.
+- A new chat line shows over the table for a few seconds when the chat is closed. A mention
+  of you is louder: a highlighted note that stays longer, a sound that ignores the table's
+  mute, and a vibration — with the chat open or not.
+- **Where notes go** (`FreeSpot.tsx`): not a fixed place — the top middle is a seat on some
+  tables. The page measures every seat, the board, pot, bets, buttons, clock and notices,
+  and on the 3D table the camera screens (the scene reports them), and puts the notes in the
+  free spot nearest the top middle. They stay put unless the table changes under them.
+
+## The turn clock: 30 seconds, 30 in red, a 10-second final warning
+
+- A turn is the table's action time (30s by default now; a table saved with the old 25s
+  default moves to 30), then 30 seconds shown in red, then a 10-second final warning that
+  flashes and beeps for the player on the clock. Only then are they checked or folded
+  (`ActionClock`). The old hidden time bank is gone, and its setting with it.
+- **Buying time.** From the red stretch on, the player on the clock can buy 30 more seconds,
+  twice a turn at most. It costs a big blind from a stack of 50 big blinds or more, a small
+  blind from a shorter one, and never their last chip. The chips go into the pot as dead
+  money (with the antes), so nothing leaves the game; if the hand is voided they go back to
+  whoever paid. Bought during the final warning, the time counts from that moment.
+- **Poking.** Once a turn is past its first stretch, every other seated person can poke the
+  player once per turn: they get a sound, a vibration and a note; the table sees who poked.
+  Computer players neither poke nor get poked.
+
+## The owner can sit a player out
+
+- Besides removing a player (folded on their turn, gone when the hand ends), the owner can
+  sit one out from the seat's menu, mid-hand too — for someone who has stepped away. Their
+  hand is played for them (a check when it's free, otherwise a fold) and they're out of
+  every hand after it, keeping their seat and chips, until they tap "Sit in" themselves or
+  the owner sits them back in. They're told why they're out.
+
+## Camera screens on the 3D table: one size, facing the way their player faces
+
+- A screen used to be resized every frame to the biggest that fitted around the cards, bets,
+  pot and nameplates, always square-on to the viewer — so it grew and shrank all hand long.
+- Now its size is fixed by two things only: how far that seat is from yours (measured from
+  where you sit, not where you're looking) and how many are playing. Nothing in the hand
+  changes it. It stands on its player's shoulders and grows upward, so it doesn't come down
+  over the felt.
+- It is a solid thing in the scene, turned the way its player faces, and it turns with them:
+  each seated 3D viewer's look direction is shared a few times a second (`look` →
+  `player-look`, never stored), so their screen — and their figure's head — follow where
+  they look. It's never turned more than 45° from the viewer, so it can always be made out.
+  What stands in front of it (the dealer, a nearer player) is drawn in front of it.
+- On the 2D table, a camera box's bigger size on a phone now goes by how many are seated,
+  not by how many cameras happen to be on.

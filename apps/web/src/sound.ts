@@ -320,6 +320,33 @@ export function playSeatOfferAlert(): void {
   [784, 1046.5, 1568].forEach((freq, i) => playTone(now + 0.75 + i * 0.14, 0.4, freq, 0.12, 'triangle', true));
 }
 
+/** Two quick rising notes — someone mentioned you in the chat. Straight to the speaker: it's for you, whatever's muted. */
+export function playMentionSound(): void {
+  const c = getCtx();
+  if (!c) return;
+  const now = c.currentTime;
+  playTone(now, 0.18, 987.77, 0.13, 'triangle', true);
+  playTone(now + 0.12, 0.3, 1318.5, 0.13, 'triangle', true);
+}
+
+/** A double knock — another player poked you: it's your turn. */
+export function playPokeSound(): void {
+  const c = getCtx();
+  if (!c) return;
+  const now = c.currentTime;
+  for (const at of [0, 0.16]) {
+    playTone(now + at, 0.12, 220, 0.2, 'square', true);
+    playTone(now + at, 0.1, 660, 0.1, 'triangle', true);
+  }
+}
+
+/** One short, sharp beep — a second of your final warning going by (`last`: the first of them, longer). */
+export function playFinalWarningBeep(first = false): void {
+  const c = getCtx();
+  if (!c) return;
+  playTone(c.currentTime, first ? 0.5 : 0.12, first ? 880 : 1046.5, 0.14, 'square', true);
+}
+
 // ---- Trophy fanfares (see components/TrophyCelebration.tsx) ----
 //
 // One per winning-hand tier, straight (1) up to royal flush (6), each a

@@ -141,6 +141,23 @@ export const ChatMessageSchema = z
   .strict();
 export type ChatMessageIntent = z.infer<typeof ChatMessageSchema>;
 
+/** Buying more time on your own turn (LiveTable.buyTime): `handId` guards it like an action's does. */
+export const BuyTimeSchema = z
+  .object({
+    handId: z.string().min(1),
+  })
+  .strict();
+export type BuyTimeIntent = z.infer<typeof BuyTimeSchema>;
+
+/** Where a seated player is looking on the 3D table (radians from straight ahead at the table's middle): relayed to the others, never stored. */
+export const LookSchema = z
+  .object({
+    yaw: z.number().min(-Math.PI).max(Math.PI),
+    pitch: z.number().min(-1.6).max(1.6),
+  })
+  .strict();
+export type LookIntent = z.infer<typeof LookSchema>;
+
 export const MissedBlindChoiceSchema = z
   .object({
     choice: z.enum(['post', 'wait']),
@@ -161,7 +178,7 @@ export const CreateTableSchema = z
     /** Optional absolute buy-in range in cents — overrides minBuyInBB/maxBuyInBB when given. */
     minBuyIn: z.number().int().positive().optional(),
     maxBuyIn: z.number().int().positive().optional(),
-    actionSeconds: z.number().int().min(5).max(120).default(25),
+    actionSeconds: z.number().int().min(5).max(120).default(30),
     timeBankSeconds: z.number().int().min(0).max(600).default(60),
     runItTwiceEnabled: z.boolean().default(false),
     rakePercent: z.number().min(0).max(20).default(0),

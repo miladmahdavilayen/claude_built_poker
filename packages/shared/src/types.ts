@@ -106,6 +106,33 @@ export interface ProjectedSeat {
   movingToSeatId: number | null;
   /** Out of the next hand: asked to sit out, or sitting out and not yet asked back in (asking mid-hand deals them in from the next). */
   sittingOutNextHand: boolean;
+  /** The owner sat this player out (LiveTable.ownerSitOut): checked or folded on their turns, out of every hand until they — or the owner — sit them back in. */
+  satOutByOwner: boolean;
+}
+
+/**
+ * The clock on the seat whose turn it is (a person's — a computer player has
+ * none), all epoch ms: a calm first stretch (the table's action time), then a
+ * red one, then a short final warning; at `endsAt` they're checked or folded.
+ * Extra time bought (LiveTable.buyTime) lengthens the red stretch.
+ */
+export interface ActionClock {
+  seatId: number;
+  startedAt: number;
+  /** The first stretch ends: from here the clock is red, and the others may poke. */
+  normalEndsAt: number;
+  /** The red stretch ends: the final warning starts. */
+  redEndsAt: number;
+  /** Out of time. */
+  endsAt: number;
+  /** How many times they've bought more time this turn. */
+  timeBuys: number;
+  /** What buying more time costs them now (cents, into the pot) — null when they can't (bought the most allowed, or too few chips). */
+  timeBuyCost: number | null;
+  /** How long one purchase adds. */
+  timeBuySeconds: number;
+  /** The seats that have poked them this turn — one poke each. */
+  pokedBy: readonly number[];
 }
 
 /** Blind/ante/straddle changes the owner made mid-hand, applied from the next deal. */
@@ -157,8 +184,10 @@ export interface ProjectedTableState {
   /** Only ever populated when it's genuinely this viewer's own seat's turn. */
   legalActions: LegalActions | null;
   viewerSeatId: number | null;
-  /** Epoch ms absolute deadline for the current acting seat's decision, or null. */
+  /** Epoch ms: when the acting seat's first, calm stretch of time ends (see `actionClock` for the rest), or null. */
   actionDeadline: number | null;
+  /** The acting seat's whole clock, or null with no one (or a computer player) on it. */
+  actionClock: ActionClock | null;
   /** Epoch ms — a new hand can't start before this (the post-hand shuffle break), or null once it's over/not applicable. */
   nextHandAt: number | null;
   /**

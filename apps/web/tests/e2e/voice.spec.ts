@@ -79,9 +79,9 @@ test("a seated player who never joins the call still hears another player, but s
   await joinCall(pageA, true);
 
   // B hears A, with zero action on B's part...
-  await expect(pageB.locator('[data-testid="seat-0"] audio')).toHaveCount(1, { timeout: 15_000 });
+  await expect(pageB.locator('#call-voices audio[data-seat="0"]')).toHaveCount(1, { timeout: 15_000 });
   await tapToHearIfOffered(pageB);
-  await expect.poll(() => isPlayingRemoteAudio(pageB, '[data-testid="seat-0"] audio'), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => isPlayingRemoteAudio(pageB, '#call-voices audio[data-seat="0"]'), { timeout: 10_000 }).toBe(true);
   // ...but sees no camera, on A's seat or anywhere else.
   await expect(pageB.locator('.seat-video')).toHaveCount(0);
   await expect(pageB.locator('video')).toHaveCount(0);
@@ -121,7 +121,7 @@ test('the owner, without joining the call or taking a seat, sees and hears an in
     .poll(() => pageOwner.locator('[data-testid="seat-2"] .seat-video video').evaluate((v) => (v as HTMLVideoElement).videoWidth > 0), { timeout: 10_000 })
     .toBe(true);
   await tapToHearIfOffered(pageOwner);
-  await expect.poll(() => isPlayingRemoteAudio(pageOwner, '[data-testid="seat-2"] audio'), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => isPlayingRemoteAudio(pageOwner, '#call-voices audio[data-seat="2"]'), { timeout: 10_000 }).toBe(true);
 
   await ctxOwner.close();
   await ctxGuest.close();
@@ -182,8 +182,8 @@ test('mute one player from their box, or the whole call from the corner — and 
   await joinCall(pageB, false);
   await joinCall(pageC, false);
   await tapToHearIfOffered(pageA);
-  const bea = '[data-testid="seat-1"] audio';
-  const cal = '[data-testid="seat-2"] audio';
+  const bea = '#call-voices audio[data-seat="1"]';
+  const cal = '#call-voices audio[data-seat="2"]';
   await expect.poll(() => isPlayingRemoteAudio(pageA, bea), { timeout: 15_000 }).toBe(true);
   await expect.poll(() => isPlayingRemoteAudio(pageA, cal), { timeout: 15_000 }).toBe(true);
   const audioMuted = (sel: string): Promise<boolean> => pageA.locator(sel).first().evaluate((el) => (el as HTMLAudioElement).muted);

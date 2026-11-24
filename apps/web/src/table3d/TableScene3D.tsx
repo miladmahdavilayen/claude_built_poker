@@ -56,6 +56,8 @@ export interface TableScene3DProps {
   seatVideos: ReadonlyMap<number, MediaStream>;
   /** A player's mute button for this viewer (in the call, talking) — on their marker too when they're out of view. */
   edgeMute?: ((seatId: number) => React.ReactNode) | undefined;
+  /** Seated: where you're looking, as it changes — for the others' view of you (see playerLooks.ts). */
+  onLook?: ((yaw: number, pitch: number) => void) | undefined;
 }
 
 /**
@@ -96,6 +98,7 @@ export default function TableScene3D({
   winningCards,
   seatVideos,
   edgeMute,
+  onLook,
 }: TableScene3DProps): React.JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TableScene | null>(null);
@@ -128,8 +131,8 @@ export default function TableScene3D({
   const lastEventsRef = useRef<readonly ProjectedGameEvent[] | null>(null);
   const dealtRef = useRef<Set<number> | null>(null);
   // The callbacks can change every render; the scene keeps the latest without being rebuilt.
-  const cbRef = useRef({ onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onBoardShown, onDealerDoubleTap });
-  cbRef.current = { onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onBoardShown, onDealerDoubleTap };
+  const cbRef = useRef({ onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onBoardShown, onDealerDoubleTap, onLook });
+  cbRef.current = { onChairClick, onPerf, onLayout, onRequestMode, onOwnCards, onBoardShown, onDealerDoubleTap, onLook };
 
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
@@ -169,6 +172,7 @@ export default function TableScene3D({
         onOwnCardsInView: setOwnCardsInView,
         onDealerDoubleTap: () => cbRef.current.onDealerDoubleTap?.(),
         onRequestMode: (m) => cbRef.current.onRequestMode(m),
+        onLook: (yaw, pitch) => cbRef.current.onLook?.(yaw, pitch),
       }, theme);
     } catch (err) {
       console.error('The 3D table could not start; showing the 2D table instead.', err);
@@ -266,6 +270,7 @@ export default function TableScene3D({
           faces: s.holeCards.length > 0 ? s.holeCards : [0, 1].map((i) => s.shownCards.find((c) => c.index === i)?.card ?? null),
           bet: s.committedThisStreet,
           character: s.character,
+          playerId: s.playerId,
           hue: avatarHue(s.avatarSeed ?? s.displayName ?? 'x'),
           seed: stableNumber(s.playerId ?? s.displayName ?? String(s.seatId)),
         })),

@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./money": "./src/money.ts",
     "./waiver": "./src/waiver.ts",
-    "./characters": "./src/characters.ts"
+    "./characters": "./src/characters.ts",
+    "./mentions": "./src/mentions.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -4,6 +4,10 @@ import {
   AddBotSchema,
   AdminRebuySchema,
   AssignSeatSchema,
+  BuyTimeSchema,
+  LookSchema,
+  mentionedNames,
+  formatMoney,
   ChangeSeatSchema,
   MoveBotSchema,
   ChatMessageSchema,
@@ -400,6 +404,13 @@ export function attachSocketServer(
       broadcastTable(table);
     }
     return result;
+  }
+
+  /** Sends one event to everyone at a table: every seated person, and everyone watching. */
+  function emitToTable(table: LiveTable, event: string, payload: unknown, exceptSocketId?: string): void {
+    const rooms = [spectatorRoom(table.tableId), ...table.seats.filter((s) => s.userId !== null).map((s) => seatRoom(table.tableId, s.seatId))];
+    const target = io.to(rooms);
+    (exceptSocketId ? target.except(exceptSocketId) : target).emit(event, payload);
   }
 
   function broadcastTable(table: LiveTable): void {
@@ -956,6 +967,41 @@ export function attachSocketServer(
       });
     }
 
+    // The owner sitting a player out (stepped away mid-hand, say) and back in — see LiveTable.ownerSitOut. A person is
+    // the owner's alone to sit out, like removing them; a computer player, anyone's who manages the table.
+    for (const [event, out] of [
+      ['owner-sit-out', true],
+      ['owner-sit-in', false],
+    ] as const) {
+      socket.on(event, (raw: unknown, callback?: Ack): void => {
+        const table = currentTable();
+        const parsed = SeatTargetSchema.safeParse(raw);
+        if (!table || !parsed.success) {
+          callback?.({ ok: false, code: 'INVALID_PAYLOAD', message: 'Malformed seat payload.' });
+          return;
+        }
+        const { seatId } = parsed.data;
+        if (!canChangeSeat(table, seatId)) {
+          callback?.({ ok: false, code: 'ADMIN_REQUIRED', message: 'Only the table owner can do that.' });
+          return;
+        }
+        const result = out ? table.ownerSitOut(seatId) : table.ownerSitIn(seatId);
+        if (!result.ok) {
+          callback?.(result);
+          return;
+        }
+        // Told in their own words, so coming back they know why they're out and how to get back in.
+        if (table.seats[seatId]?.userId) {
+          io.to(seatRoom(table.tableId, seatId)).emit('table-notice', {
+            kind: out ? 'sat-out' : 'sat-in',
+            message: out ? 'The table’s owner sat you out for now. Tap “Sit in” when you’re back.' : 'The table’s owner sat you back in.',
+          });
+        }
+        broadcastTable(table);
+        callback?.({ ok: true });
+      });
+    }
+
     // Takes an optional ack callback so the client can wait for the
     // server to actually finish processing before navigating away and
     // tearing down this very socket connection — navigating first would
@@ -1212,6 +1258,53 @@ export function attachSocketServer(
       // The successful path's broadcast already happened via LiveTable's onBroadcast -> registry callback above.
     });
 
+    // More time on your own turn, paid into the pot — see LiveTable.buyTime.
+    socket.on('buy-time', (raw: unknown): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Not authenticated.');
+      if (!actionLimiter.consume(socket.id)) return emitError('RATE_LIMITED', 'Slow down.');
+      const parsed = BuyTimeSchema.safeParse(raw);
+      if (!parsed.success) return emitError('INVALID_PAYLOAD', 'Malformed buy-time payload.');
+      const seatId = table.seatOfUser(data.userId);
+      if (seatId === null) return emitError('NOT_SEATED', 'You are not seated at this table.');
+      const result = table.buyTime(seatId, parsed.data.handId);
+      if (!result.ok) return emitError(result.code, result.message);
+      const name = table.seats[seatId]?.displayName ?? 'A player';
+      emitToTable(table, 'table-notice', { kind: 'time-bought', seatId, message: `${name} bought ${String(result.seconds)} more seconds for ${formatMoney(result.cost)}.` });
+    });
+
+    // A nudge for whoever is taking their time — see LiveTable.poke.
+    socket.on('poke', (): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Not authenticated.');
+      if (!actionLimiter.consume(socket.id)) return emitError('RATE_LIMITED', 'Slow down.');
+      const seatId = table.seatOfUser(data.userId);
+      if (seatId === null) return emitError('NOT_SEATED', 'You must be seated to poke a player.');
+      const result = table.poke(seatId);
+      if (!result.ok) return emitError(result.code, result.message);
+      emitToTable(table, 'poke', {
+        fromSeatId: seatId,
+        fromName: table.seats[seatId]?.displayName ?? 'A player',
+        toSeatId: result.targetSeatId,
+        toUserId: table.seats[result.targetSeatId]?.userId ?? null,
+        toName: table.seats[result.targetSeatId]?.displayName ?? 'a player',
+      });
+    });
+
+    // Where a seated player is looking on the 3D table, passed on to the others so their camera screen (and their
+    // figure's head) turns with them. Never stored; at most a few a second each, the rest dropped.
+    let lastLookAt = 0;
+    socket.on('look', (raw: unknown): void => {
+      const table = currentTable();
+      if (!table || !data.userId) return;
+      const now = Date.now();
+      if (now - lastLookAt < 90) return;
+      const parsed = LookSchema.safeParse(raw);
+      if (!parsed.success || table.seatOfUser(data.userId) === null) return;
+      lastLookAt = now;
+      emitToTable(table, 'player-look', { userId: data.userId, yaw: parsed.data.yaw, pitch: parsed.data.pitch }, socket.id);
+    });
+
     socket.on('reveal-hand', (raw: unknown): void => {
       const table = currentTable();
       if (!table || !data.userId) return emitError('AUTH_REQUIRED', 'Not authenticated.');
@@ -1270,11 +1363,12 @@ export function attachSocketServer(
       }
 
       const filtered = filterProfanity(parsed.data.message, true);
+      // Who it mentions (`@Name`, anyone seated): they're alerted, wherever they're looking (see the web Table page).
+      const seated = table.seats.filter((s) => s.userId !== null && s.displayName !== null);
+      const named = new Set(mentionedNames(filtered, seated.map((s) => s.displayName!)).map((n) => n.toLowerCase()));
+      const mentions = seated.filter((s) => named.has(s.displayName!.toLowerCase()) && s.userId !== data.userId).map((s) => s.userId!);
       void deps.store.recordChatMessage(table.tableId, data.userId, filtered).then((record) => {
-        io.to(spectatorRoom(table.tableId)).emit('chat', record);
-        for (const seat of table.seats) {
-          if (seat.userId) io.to(seatRoom(table.tableId, seat.seatId)).emit('chat', record);
-        }
+        emitToTable(table, 'chat', { ...record, mentions });
       });
     });
 

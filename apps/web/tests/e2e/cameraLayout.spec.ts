@@ -270,10 +270,11 @@ test('4 human cameras during an active hand on a phone screen never overlap the 
   await closeAll(contexts);
 });
 
-// Two players on camera, across the table from each other (seated): each one's camera screen is as big as the room
-// around it allows, not a small window on their head — exactly over their seat (never moved sideways, their head
-// always inside it), and over nothing: the board strip, the page's controls, anyone's nameplate (scene.ts's
-// fitFaces). A hand shown down over their head is the board strip's own size.
+// Two players on camera, across the table from each other (seated): the other's camera screen is big, not a small
+// window on their head — over their seat (never moved sideways), and over nothing of the page's: its controls,
+// anyone's nameplate, the place the board strip goes (scene.ts's faceFits). And it is one size: the same before a
+// hand, with cards and chips on the felt, and with the board out. A hand shown down over their head is the board
+// strip's own size.
 for (const [label, viewport] of [
   ['laptop', LAPTOP_VIEWPORT],
   ['phone', PHONE_VIEWPORT],
@@ -291,13 +292,14 @@ for (const [label, viewport] of [
     await closeTableMenu(owner);
     type Box = { seatId: number; x0: number; y0: number; x1: number; y1: number; k: number; headX: number; headY: number };
     const boxes = (): Promise<Box[]> => owner.evaluate(() => (window as unknown as { __scene3d?: { debugState: () => { faceBoxes: Box[] } } }).__scene3d?.debugState().faceBoxes ?? []);
-    await expect.poll(async () => (await boxes()).find((b) => b.seatId === 4)?.k ?? 0, { timeout: 60_000 }).toBeGreaterThan(1.6);
+    await expect.poll(async () => (await boxes()).find((b) => b.seatId === 4)?.k ?? 0, { timeout: 60_000 }).toBeGreaterThan(1.2);
     await owner.waitForTimeout(800);
     const face = (await boxes()).find((b) => b.seatId === 4)!;
-    // On their seat: their head well inside it (centred on them, or slid only as far as the screen's edge makes it).
+    // Big enough to see a face: a good part of the screen's height.
+    expect(face.y1 - face.y0).toBeGreaterThan(viewport.height * 0.2);
+    // On their seat: over them, not off to a side — and by them, not somewhere down the table.
     expect(Math.abs((face.x0 + face.x1) / 2 - face.headX)).toBeLessThan((face.x1 - face.x0) * 0.33);
-    expect(face.headY).toBeGreaterThan(face.y0);
-    expect(face.headY).toBeLessThan(face.y1);
+    expect(face.y0 - face.headY).toBeLessThan(face.y1 - face.y0);
     const r = { left: face.x0, right: face.x1, top: face.y0, bottom: face.y1 } as DOMRect;
     const canvas = (await owner.getByTestId('table-3d').boundingBox())!;
     for (const sel of ['[data-testid^="seat-"]', '.table-corner', '.board-hud', '.table-menu-button', '.table3d-whole']) {
@@ -308,9 +310,28 @@ for (const [label, viewport] of [
         expect(rectsOverlap(r, other), `${label}: the camera screen over ${sel}`).toBe(false);
       }
     }
-    // Played to a showdown: their cards over their head, the board strip's size.
+    // One size, all hand long: with cards and bets down, and with the whole board out, it's exactly as it was.
+    const sizeOf = async (): Promise<{ w: number; h: number; k: number } | null> => {
+      const b = (await boxes()).find((x) => x.seatId === 4);
+      return b ? { w: Math.round(b.x1 - b.x0), h: Math.round(b.y1 - b.y0), k: Number(b.k.toFixed(3)) } : null;
+    };
+    const before = (await sizeOf())!;
     await startHand(owner);
+    await expect(owner.getByTestId('pot-hud')).toBeVisible({ timeout: 15_000 });
+    await owner.waitForTimeout(2500);
+    expect((await sizeOf())?.k, `${label}: the same size once cards and chips are down`).toBe(before.k);
     await playHandToCompletion(pages);
+    await expect(owner.getByTestId('board-hud').locator('.card')).toHaveCount(5, { timeout: 30_000 });
+    await owner.waitForTimeout(800);
+    expect((await sizeOf())?.k, `${label}: the same size with the board out`).toBe(before.k);
+    // …and the board strip isn't on it.
+    const after = (await boxes()).find((b) => b.seatId === 4)!;
+    const strip = (await owner.getByTestId('board-hud').boundingBox())!;
+    expect(
+      rectsOverlap({ left: after.x0, right: after.x1, top: after.y0, bottom: after.y1 } as DOMRect, { left: strip.x - canvas.x, right: strip.x - canvas.x + strip.width, top: strip.y - canvas.y, bottom: strip.y - canvas.y + strip.height } as DOMRect),
+      `${label}: the camera screen under the board strip`,
+    ).toBe(false);
+    // Played to a showdown: their cards over their head, the board strip's size.
     const shown = owner.getByTestId('showdown-cards').locator('.card').first();
     await expect(shown).toBeVisible({ timeout: 15_000 });
     await owner.waitForTimeout(800);

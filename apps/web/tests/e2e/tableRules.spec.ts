@@ -128,7 +128,7 @@ test('audio only: no camera offered or shown; turning it on mid-call takes a cam
   await expect(guest.locator('.seat-call').getByRole('button', { name: /Camera/ })).toHaveCount(0);
   await expect(guest.locator('.seat-call').getByRole('button', { name: 'Mute', exact: true })).toBeVisible();
   // Voice still flows: the guest's sound reaches the owner.
-  await expect(owner.locator('[data-testid="seat-3"] audio')).toHaveCount(1);
+  await expect(owner.locator('#call-voices audio[data-seat="3"]')).toHaveCount(1);
 
   // Out of the call: only voice on offer.
   await guest.locator('.seat-call').getByRole('button', { name: 'Leave call' }).click();

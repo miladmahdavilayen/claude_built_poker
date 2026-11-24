@@ -46,7 +46,7 @@ test('under strict autoplay rules, an owner who has not clicked anything still s
   await expect.poll(() => video.evaluate((v) => (v as HTMLVideoElement).videoWidth > 0), { timeout: 10_000 }).toBe(true);
 
   // Sound is held back, and the page says so instead of staying silent.
-  const audio = pageOwner.locator('[data-testid="seat-1"] audio');
+  const audio = pageOwner.locator('#call-voices audio[data-seat="1"]');
   await expect(audio).toHaveCount(1);
   const unlock = pageOwner.getByRole('button', { name: '🔊 Tap to hear the table' });
   await expect(unlock).toBeVisible({ timeout: 10_000 });

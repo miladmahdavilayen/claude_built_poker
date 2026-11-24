@@ -4,6 +4,9 @@ import { useAuth } from '../AuthContext.js';
 import { ActionBar } from '../components/ActionBar.js';
 import { ActionLog } from '../components/ActionLog.js';
 import { ActionTimer } from '../components/ActionTimer.js';
+import { TurnClockBanner } from '../components/TurnClockBanner.js';
+import { TableToasts, useTableToasts } from '../components/TableToasts.js';
+import { FreeSpot } from '../components/FreeSpot.js';
 import { BoardAndPot } from '../components/BoardAndPot.js';
 import { ChatPanel } from '../components/ChatPanel.js';
 import { ChipStack } from '../components/ChipStack.js';
@@ -22,7 +25,7 @@ import { DealerVoiceIcon } from '../components/DealerVoiceIcon.js';
 import { MuteAllCallsButton, PeerMuteButton } from '../components/CallAudioButtons.js';
 import { TableSoundButton } from '../components/TableSoundButton.js';
 import { LeaveTableButton, SitOutButton } from '../components/SeatPresenceButtons.js';
-import { setTableSoundMuted } from '../sound.js';
+import { playMentionSound, playPokeSound, setTableSoundMuted } from '../sound.js';
 import { SeatCallControls } from '../components/SeatCallControls.js';
 import { DealerPicker } from '../components/DealerPicker.js';
 import { SeatMoveModal } from '../components/SeatMoveModal.js';
@@ -60,6 +63,8 @@ import { useNoTableSelection } from '../useNoTableSelection.js';
 import { useSocket } from '../useSocket.js';
 import { useTableSocket } from '../useTableSocket.js';
 import { useVoiceChat } from '../useVoiceChat.js';
+import { useCallVoices } from '../callVoices.js';
+import { clearPlayerLooks, setPlayerLook } from '../table3d/playerLooks.js';
 import { ErrorBanner } from '../components/ErrorBanner.js';
 import { parseViewChoice, saveViewChoice, withInviterView } from '../table3d/quality.js';
 
@@ -113,6 +118,8 @@ export function TablePage(): React.JSX.Element {
   const { socket, connected } = useSocket(accessToken);
   const sock = useTableSocket(socket);
   const voice = useVoiceChat(socket);
+  // Everyone at the table hears whoever is talking, from the moment they arrive — mic and camera off or on.
+  useCallVoices(voice.peers, (userId) => sock.state?.seats.find((s) => s.playerId === userId)?.seatId ?? null);
   const audioBlocked = useMediaBlocked();
   // The house dealer's spoken calls (see dealerVoice.ts) — the voice is the viewer's choice, in the menu.
   const dealerVoiceChoice = useDealerVoiceChoice();
@@ -456,7 +463,7 @@ export function TablePage(): React.JSX.Element {
       stream = voice.localStream;
       isLocal = true;
     } else if (seat.playerId) {
-      stream = voice.peers.find((p) => p.userId === seat.playerId)?.stream ?? null;
+      stream = voice.peers.find((p) => p.userId === seat.playerId && p.stream)?.stream ?? null;
     }
     if (stream && stream.getVideoTracks().length > 0) {
       humanCameraSeats.push({
@@ -510,7 +517,9 @@ export function TablePage(): React.JSX.Element {
   // visually overlap the board/pot and the fairness-commitment banner on
   // a real phone width, found by actually screenshotting that exact
   // scenario, not by tsc/eslint. See .felt-video-boost.
-  const videoBoostActive = isCompactScreen && humanCameraSeats.length >= 1 && humanCameraSeats.length <= 3;
+  // By how many are playing, not how many are on camera: a box doesn't change size as cameras come and go.
+  const seatedCount = sock.state?.seats.filter((s) => s.status !== 'empty').length ?? 0;
+  const videoBoostActive = isCompactScreen && seatedCount >= 1 && seatedCount <= 3;
 
   // Same hook-ordering constraint as `positions`/`humanCameraSeats` above —
   // sock.state can be null pre-connect.
@@ -536,6 +545,63 @@ export function TablePage(): React.JSX.Element {
     () => (dealerChat.length === 0 ? sock.chat : [...sock.chat, ...dealerChat].sort((a, b) => a.createdAt.localeCompare(b.createdAt))),
     [sock.chat, dealerChat],
   );
+
+  // Where the others are looking on their own 3D table: their camera screen and their figure's head turn with them.
+  useEffect(() => {
+    if (!socket) return;
+    const onLook = (p: { userId: string; yaw: number; pitch: number }): void => setPlayerLook(p.userId, p.yaw, p.pitch);
+    socket.on('player-look', onLook);
+    return () => {
+      socket.off('player-look', onLook);
+      clearPlayerLooks();
+    };
+  }, [socket]);
+  // …and where this viewer is looking, for them. Off the 3D table (or standing), that's straight ahead again.
+  const sendLook = useCallback((yaw: number, pitch: number) => socket?.emit('look', { yaw, pitch }), [socket]);
+  const lookingAround = is3d && sock.state?.viewerSeatId != null;
+  useEffect(() => {
+    if (!lookingAround) sendLook(0, 0);
+  }, [lookingAround, sendLook]);
+
+  // Passing notes over the table: a chat line while the chat is closed, a mention of you, a poke, a word from the table.
+  const { toasts, push: pushToast, dismiss: dismissToast } = useTableToasts();
+  const myUserId = user?.id ?? null;
+  const toastedChatId = useRef<string | null | undefined>(undefined);
+  const chatSeenRef = useRef(chatSeen);
+  chatSeenRef.current = chatSeen;
+  useEffect(() => {
+    if (!sock.chatHistoryLoaded) return;
+    // What was said before this viewer arrived is history, not news.
+    if (toastedChatId.current === undefined) {
+      toastedChatId.current = latestChatId;
+      return;
+    }
+    const from = sock.chat.findIndex((m) => m.id === toastedChatId.current);
+    toastedChatId.current = latestChatId;
+    for (const m of sock.chat.slice(from + 1)) {
+      if (m.userId !== null && m.userId === myUserId) continue;
+      const mentioned = myUserId !== null && !!m.mentions?.includes(myUserId);
+      if (mentioned) {
+        // Heard and felt wherever they're looking — the chat open or not.
+        playMentionSound();
+        navigator.vibrate?.([120, 60, 120]);
+      }
+      if (chatSeenRef.current) continue;
+      pushToast({ kind: mentioned ? 'mention' : 'chat', title: mentioned ? `${m.displayName ?? 'Someone'} mentioned you` : (m.displayName ?? 'System'), text: m.message });
+    }
+  }, [latestChatId, sock.chatHistoryLoaded, myUserId, pushToast]);
+  useEffect(() => {
+    const p = sock.lastPoke;
+    if (!p) return;
+    if (p.toUserId !== null && p.toUserId === myUserId) {
+      playPokeSound();
+      navigator.vibrate?.([80, 60, 80, 60, 160]);
+      pushToast({ kind: 'poke', title: `${p.fromName} poked you`, text: 'It’s your turn — the table is waiting.' });
+    } else pushToast({ kind: 'info', text: `${p.fromName} poked ${p.toName}.` });
+  }, [sock.lastPoke, myUserId, pushToast]);
+  useEffect(() => {
+    if (sock.notice) pushToast({ kind: 'info', text: sock.notice.message });
+  }, [sock.notice, pushToast]);
 
   if (!user) {
     return <div className="page-centered">Sign in to view this table.</div>;
@@ -640,8 +706,9 @@ export function TablePage(): React.JSX.Element {
       return { stream: voice.localStream, isLocal: true };
     }
     if (seat.playerId) {
-      const peer = voice.peers.find((p) => p.userId === seat.playerId);
-      if (peer?.stream) return { stream: peer.stream, isLocal: false, userId: peer.userId };
+      // (A player who reconnected can briefly be here twice: the connection that's carrying something is theirs.)
+      const peer = voice.peers.find((p) => p.userId === seat.playerId && p.stream) ?? voice.peers.find((p) => p.userId === seat.playerId);
+      if (peer?.stream) return { stream: peer.stream, isLocal: false, userId: peer.userId, audio: false };
     }
     return null;
   };
@@ -752,6 +819,14 @@ export function TablePage(): React.JSX.Element {
         label: seat.isBot ? 'Add chips' : 'Rebuy (add chips)',
         onSelect: () => openRebuyModal(id, seat.stack, seat.pendingChips),
       });
+      // Stepped away, or holding the table up: out of the hands (played for them in this one) until they're back.
+      if (seat.seatId !== state.viewerSeatId && !seat.leavingAfterHand) {
+        const out = seat.satOutByOwner || seat.sittingOutNextHand;
+        actions.push({
+          label: out ? 'Sit back in' : 'Sit out (pause player)',
+          onSelect: () => void (out ? sock.ownerSitIn(id) : sock.ownerSitOut(id)),
+        });
+      }
       if (seat.isBot) {
         actions.push({
           label: 'Move to another seat',
@@ -1158,11 +1233,28 @@ export function TablePage(): React.JSX.Element {
               label={p.displayName}
               canSeeVideo={canSeeVideo}
               peerId={p.userId}
+              audio={false}
               mute={peerMuteFor(p.userId, p.displayName)}
             />
           ))}
         </div>
       )}
+
+      {/* Passing notes — a slow turn, a chat line, a mention, a poke — wherever the table has room for them right now. */}
+      <FreeSpot>
+      {/* A slow turn: your own time running out (and more of it to buy), or someone else's to poke. */}
+        <TurnClockBanner
+          clock={state.actionClock}
+          viewerSeatId={state.viewerSeatId}
+          actorIsMe={state.actionClock !== null && state.actionClock.seatId === state.viewerSeatId}
+          actorName={state.seats.find((s) => s.seatId === state.actionClock?.seatId)?.displayName ?? 'A player'}
+          onBuyTime={() => {
+            if (state.handId) sock.buyTime(state.handId);
+          }}
+          onPoke={sock.poke}
+        />
+        <TableToasts toasts={toasts} onOpenChat={() => openSheet('chat')} onDismiss={dismissToast} />
+      </FreeSpot>
 
       {/* Notices, floating at the top of the table rather than taking rows of the screen. */}
       <div className="table-notices">
@@ -1265,6 +1357,7 @@ export function TablePage(): React.JSX.Element {
               potAnimatorRef={potAnimatorRef}
               winningCards={splitEffects.cards}
               seatVideos={seatVideos3d}
+              onLook={sendLook}
               edgeMute={(seatId) => {
                 const seat = state.seats.find((x) => x.seatId === seatId);
                 return seat ? peerMuteFor(callIdOf(seat), seat.displayName) : undefined;
@@ -1291,7 +1384,7 @@ export function TablePage(): React.JSX.Element {
             actor being assigned), reproducing exactly the remount-flash bug
             ActionTimer.tsx's own fix was written to eliminate — see its
             doc comment and DECISIONS.md. */}
-        <ActionTimer deadline={state.actionDeadline} totalSeconds={state.settings.actionSeconds} />
+        <ActionTimer clock={state.actionClock} />
         {chatButton}
         {/* The 3D table deals its own cards and moves its own chips. */}
         {!is3d && <DealAnimation events={sock.latestEvents} positions={placedPositions} />}
@@ -1416,7 +1509,13 @@ export function TablePage(): React.JSX.Element {
               </button>
             </div>
             {bottomTab === 'chat' ? (
-              <ChatPanel messages={chatWithDealer} onSend={sock.sendChat} />
+              <ChatPanel
+                messages={chatWithDealer}
+                onSend={sock.sendChat}
+                people={state.seats.filter((s) => s.status !== 'empty' && !s.isBot && s.displayName).map((s) => s.displayName!)}
+                myUserId={user.id}
+                myName={mySeat?.displayName ?? user.displayName}
+              />
             ) : (
               <ActionLog events={sock.recentEvents} seats={state.seats} />
             )}

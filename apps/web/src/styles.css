@@ -1463,11 +1463,35 @@ input[type='range']::-moz-range-thumb {
 .action-timer-calm .action-timer-arc {
   stroke: var(--good);
 }
-.action-timer-warning .action-timer-arc {
-  stroke: var(--accent);
-}
-.action-timer-urgent .action-timer-arc {
+/* Past the first stretch: red, ring and number both. */
+.action-timer-red .action-timer-arc,
+.action-timer-final .action-timer-arc {
   stroke: var(--danger);
+}
+.action-timer-red .action-timer-number,
+.action-timer-final .action-timer-number {
+  color: #ff8a80;
+}
+.action-timer-red .action-timer-track,
+.action-timer-final .action-timer-track {
+  stroke: rgba(255, 90, 80, 0.35);
+}
+/* The final warning: the whole clock pulses. */
+.action-timer-final {
+  animation: action-timer-final 0.6s ease-in-out infinite;
+}
+.action-timer-final .action-timer-track {
+  fill: rgba(120, 12, 12, 0.75);
+}
+@keyframes action-timer-final {
+  50% {
+    transform: scale(1.22);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-timer-final {
+    animation: none;
+  }
 }
 .action-timer-number {
   position: absolute;
@@ -6460,4 +6484,214 @@ button.fairness-link {
 }
 .start-hand-panel button {
   pointer-events: auto;
+}
+
+
+/* ---- A slow turn (TurnClockBanner.tsx): time running out, more of it to buy, a poke. ---- */
+.turn-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(14, 18, 26, 0.94);
+  border: 1px solid rgba(255, 110, 100, 0.6);
+  color: var(--text);
+  padding: 7px 8px 7px 14px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.turn-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.turn-banner--mine {
+  border-color: #ff6e64;
+}
+.turn-banner--final {
+  background: rgba(92, 12, 12, 0.96);
+  border-color: #ff8a80;
+}
+.turn-banner--mine.turn-banner--final {
+  font-size: 15px;
+  animation: turn-banner-final 0.6s ease-in-out infinite;
+}
+@keyframes turn-banner-final {
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 90, 80, 0.45), 0 6px 18px rgba(0, 0, 0, 0.4);
+  }
+}
+.turn-banner-button {
+  flex: none;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--accent);
+  color: #10151c;
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.turn-banner-done {
+  flex: none;
+  padding: 0 8px;
+  color: var(--muted, #9aa6b8);
+  font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-banner--mine.turn-banner--final {
+    animation: none;
+  }
+}
+
+/* ---- Passing notes (TableToasts.tsx): a chat line, a mention, a poke — in the notices' stack, so never on one another. ---- */
+.table-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: auto;
+  max-width: 100%;
+  text-align: left;
+  background: rgba(14, 18, 26, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text);
+  padding: 7px 12px 7px 10px;
+  font-size: 13px;
+  line-height: 1.3;
+  font-weight: 400;
+  animation: table-toast-in 0.18s ease-out;
+}
+.table-toast-icon {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-weight: 800;
+}
+.table-toast-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.table-toast-title {
+  color: var(--accent);
+  font-size: 12px;
+}
+.table-toast-text {
+  /* Two lines at most: a toast is a glance, the chat has the rest. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.table-toast--mention,
+.table-toast--poke {
+  background: rgba(58, 40, 4, 0.97);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(242, 189, 77, 0.35), 0 6px 18px rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+}
+.table-toast--mention .table-toast-icon {
+  color: var(--accent);
+}
+@keyframes table-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .table-toast {
+    animation: none;
+  }
+}
+
+/* ---- Mentions in the chat (ChatPanel.tsx). ---- */
+.chat-form {
+  position: relative;
+}
+.chat-mention {
+  color: #8fc7ff;
+  font-weight: 600;
+}
+.chat-mention--me {
+  color: #10151c;
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.chat-message--mentions-me {
+  background: rgba(242, 189, 77, 0.14);
+  border-left: 3px solid var(--accent);
+  margin-left: -8px;
+  padding-left: 5px;
+}
+.chat-author--tap {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  min-height: 0;
+}
+.chat-mention-list {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.4);
+}
+.chat-mention-option {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+}
+.chat-mention-option--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.chat-form .chat-mention-button {
+  flex: none;
+  width: 36px;
+  padding: 0;
+  font-weight: 800;
+}
+.form-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted, #9aa6b8);
+}
+
+/* ---- Where the passing notes go (FreeSpot.tsx): the free spot nearest the top middle, found by measuring. ---- */
+.free-spot {
+  position: fixed;
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: max-content;
+  max-width: min(92vw, 400px);
+  pointer-events: none;
+}
+.free-spot:empty {
+  display: none;
+}
+.free-spot > * {
+  pointer-events: auto;
+  margin: 0;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }

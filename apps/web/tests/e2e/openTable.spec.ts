@@ -82,7 +82,7 @@ test('the owner double-taps a player’s seat (holds an empty one) or right-clic
   // Right-click: the occupied seat's options only.
   await seat.click({ button: 'right' });
   const menu = owner.getByRole('menu');
-  await expect(menu.getByRole('menuitem')).toHaveText(['Rebuy (add chips)', 'Remove player', 'Delete seat']);
+  await expect(menu.getByRole('menuitem')).toHaveText(['Rebuy (add chips)', 'Sit out (pause player)', 'Remove player', 'Delete seat']);
   await owner.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
 
@@ -91,7 +91,7 @@ test('the owner double-taps a player’s seat (holds an empty one) or right-clic
   await owner.waitForTimeout(500);
   await expect(menu).toHaveCount(0);
   await seat.dblclick();
-  await expect(menu.getByRole('menuitem')).toHaveText(['Rebuy (add chips)', 'Remove player', 'Delete seat']);
+  await expect(menu.getByRole('menuitem')).toHaveText(['Rebuy (add chips)', 'Sit out (pause player)', 'Remove player', 'Delete seat']);
   await owner.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
 

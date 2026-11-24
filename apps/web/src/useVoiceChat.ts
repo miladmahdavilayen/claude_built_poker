@@ -126,6 +126,9 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
   const negotiationRef = useRef<Map<string, NegotiationState>>(new Map());
 
   const supported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia && typeof RTCPeerConnection !== 'undefined';
+  // Hearing the table needs only the connections themselves — not this browser's own mic or camera (which a page
+  // that isn't https can't have at all).
+  const canReceive = typeof RTCPeerConnection !== 'undefined';
 
   const closePeer = useCallback((socketId: string): void => {
     pcsRef.current.get(socketId)?.close();
@@ -148,7 +151,12 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
 
   const createPeerConnection = useCallback(
     (info: RtcParticipant): RTCPeerConnection => {
+      // One connection per peer: a second announcement of the same one (our own reconnect) replaces the first.
+      pcsRef.current.get(info.socketId)?.close();
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      let restarts = 0;
+      // A track that arrives with no stream of its own still has to be heard: it gets one here.
+      const loose = new MediaStream();
       // Deterministic per pair, agreed by both sides independently with no
       // extra signaling — whichever socket id sorts first is "polite"
       // (backs off on a colliding offer instead of racing it).
@@ -159,7 +167,11 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
       if (stream) for (const track of stream.getTracks()) capVideoSender(pc.addTrack(track, stream));
 
       pc.ontrack = (e): void => {
-        const [remoteStream] = e.streams;
+        let [remoteStream] = e.streams;
+        if (!remoteStream) {
+          loose.addTrack(e.track);
+          remoteStream = loose;
+        }
         setPeers((prev) => {
           const next = new Map(prev);
           const existing = next.get(info.socketId);
@@ -176,7 +188,7 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
         // that quietly lost it, and the video box would never hide. A
         // fresh Map (same entries, new reference) is enough to make
         // everything depending on `voice.peers` re-evaluate.
-        remoteStream?.addEventListener('removetrack', () => {
+        remoteStream.addEventListener('removetrack', () => {
           setPeers((prev) => (prev.has(info.socketId) ? new Map(prev) : prev));
         });
       };
@@ -186,7 +198,15 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
         }
       };
       pc.onconnectionstatechange = (): void => {
-        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') closePeer(info.socketId);
+        // Replaced by a newer connection to the same peer: nothing of this one is theirs to close.
+        if (pcsRef.current.get(info.socketId) !== pc) return;
+        // A dropped connection (a phone changing networks) is tried again before it's given up on: closed for
+        // good, this viewer would hear nothing more of that player until one of them reloaded.
+        if (pc.connectionState === 'failed' && restarts < 2 && typeof pc.restartIce === 'function') {
+          restarts += 1;
+          pc.restartIce();
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') closePeer(info.socketId);
+        else if (pc.connectionState === 'connected') restarts = 0;
       };
       // Fires whenever there's something new to negotiate — a track added
       // (at creation, if we were already sending, OR later via joinCall)
@@ -220,7 +240,7 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
   );
 
   useEffect(() => {
-    if (!socket || !supported) return;
+    if (!socket || !canReceive) return;
 
     const onPeers = (existing: RtcParticipant[]): void => {
       for (const p of existing) createPeerConnection(p);
@@ -261,18 +281,23 @@ export function useVoiceChat(socket: Socket | null): VoiceChatApi {
       })();
     };
 
+    // Our own connection dropped: the server has forgotten us, and on the way back in it sends everyone at the
+    // table afresh — so nothing stale is kept (someone who left meanwhile would otherwise stay, silent, for good).
+    const onDisconnect = (): void => closeAllPeers();
+    socket.on('disconnect', onDisconnect);
     socket.on('rtc-peers', onPeers);
     socket.on('rtc-peer-joined', onPeerJoined);
     socket.on('rtc-peer-left', onPeerLeft);
     socket.on('rtc-signal', onSignal);
 
     return () => {
+      socket.off('disconnect', onDisconnect);
       socket.off('rtc-peers', onPeers);
       socket.off('rtc-peer-joined', onPeerJoined);
       socket.off('rtc-peer-left', onPeerLeft);
       socket.off('rtc-signal', onSignal);
     };
-  }, [socket, supported, createPeerConnection, closePeer, peers]);
+  }, [socket, canReceive, createPeerConnection, closePeer, closeAllPeers, peers]);
 
   // Full teardown when the socket itself goes away (navigated off the
   // table, logged out) — every peer connection, not just "if a call was

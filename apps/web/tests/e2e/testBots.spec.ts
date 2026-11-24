@@ -78,7 +78,7 @@ test('only the owner sees the test players to add', async ({ page }) => {
 });
 
 // The players right beside you sit side-on to you (both facing into the table): turn your head to one and their camera
-// shows — square-on to you, like anyone's (players3d.ts, scene.ts's fitFaces).
+// shows — turned toward the table as they are, never so far that you can't make it out (players3d.ts).
 test('seated on the 3D table, turning to the player beside you shows their camera — either side', async ({ page }) => {
   test.setTimeout(150_000);
   await page.setViewportSize({ width: 390, height: 844 });

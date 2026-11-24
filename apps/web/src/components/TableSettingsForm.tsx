@@ -144,17 +144,8 @@ export function TableSettingsFields({
             onChange={(e) => set('actionSeconds', e.target.value === '' ? '' : Number(e.target.value))}
           />
         </label>
-        <label>
-          Time bank (seconds)
-          <input
-            type="number"
-            min={0}
-            max={600}
-            value={form.timeBankSeconds}
-            onChange={(e) => set('timeBankSeconds', e.target.value === '' ? '' : Number(e.target.value))}
-          />
-        </label>
       </div>
+      <p className="form-note">After that a player gets 30 more seconds in red, then a 10-second final warning. On their turn they can buy more time with chips.</p>
       {/* An open-invite table is always private — only its link gets anyone in. */}
       {!openSeating && (
         <label className="checkbox-label">

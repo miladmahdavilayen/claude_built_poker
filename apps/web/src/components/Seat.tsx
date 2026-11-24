@@ -62,6 +62,8 @@ export interface SeatVoiceStream {
   isLocal: boolean;
   /** Whose it is (their user id) — for the viewer's own mutes (see callAudio.ts). */
   userId?: string | null;
+  /** False for a player in the call: their voice plays from the page itself (callVoices.ts) — only a test player's clip sounds from its box. */
+  audio?: boolean;
 }
 
 export function Seat({
@@ -212,10 +214,10 @@ export function Seat({
         {!isViewer && peerMute && <div className="seat-peer-mute">{peerMute}</div>}
         {voice && hasCam && (
           <div className="seat-video">
-            <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} />
+            <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} audio={voice.audio} />
           </div>
         )}
-        {voice && !hasCam && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} showVideo={false} />}
+        {voice && !hasCam && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} audio={voice.audio} showVideo={false} />}
         {/* A hand shown down: the cards, big, over their head — what everyone at the table wants to see. */}
         {!isViewer && anyFaceUp && (
           <div className="seat-compact-cards" data-testid="showdown-cards">
@@ -294,6 +296,8 @@ export function Seat({
       {seat.isBot && <span className="seat-tag seat-tag-bot" title="Computer player">🤖 bot</span>}
       {inVoiceCall && !showSeatVideo && <span className="seat-voice-badge" title="In voice call">🎤</span>}
       {seat.status === 'sitting-out' && !seat.joiningNextHand && <span className="seat-tag">sitting out</span>}
+      {/* Sat out by the owner mid-hand: still in it on paper, played for them until it ends. */}
+      {seat.satOutByOwner && seat.status !== 'sitting-out' && <span className="seat-tag">away</span>}
       {/* Owner changes made mid-hand that land when it ends — see LiveTable.applyHandEndChanges. */}
       {seat.joiningNextHand && <span className="seat-tag seat-tag-pending">next hand</span>}
       {seat.leavingAfterHand && <span className="seat-tag seat-tag-leaving">leaving</span>}
@@ -326,7 +330,7 @@ export function Seat({
       {positionLabel && !isButton && <div className="position-label">{positionLabel}</div>}
       {voice && showSeatVideo && (
         <div className="seat-video">
-          <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} />
+          <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} audio={voice.audio} />
           {/* The video now fills the ENTIRE seat card (not just a small box
               inset within it) — the same frame that was already drawn
               around the whole seat (the viewer's own green outline, or an
@@ -350,7 +354,7 @@ export function Seat({
           {isViewer ? holeCards : <div className="seat-cards-zoom">{holeCards}</div>}
         </div>
       )}
-      {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} showVideo={false} />}
+      {voice && !showSeatVideo && <StreamMedia stream={voice.stream} isLocal={voice.isLocal} peerId={voice.userId} audio={voice.audio} showVideo={false} />}
       {!showSeatVideo && (
         <>
           {holeCards &&
